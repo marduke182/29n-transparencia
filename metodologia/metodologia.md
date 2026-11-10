@@ -9,7 +9,7 @@ Desde el entorno de verificación **no fueron accesibles newtral.es ni interior.
 
 ## Por qué estos cinco partidos
 
-La selección de los cinco partidos es una decisión del autor del sitio. El criterio está pendiente de concretarse y se publicará aquí.
+Son los partidos más relevantes para estas elecciones.
 
 El Frente Amplio es una coalición constituida para las elecciones del 29-N el 16 de octubre de 2026 por 11 organizaciones, entre ellas Izquierda Unida, Movimiento Sumar, Catalunya en Comú y Más Madrid; su candidata es Ada Colau. Sus marcas regionales se agrupan aquí bajo Frente Amplio. La web de Movimiento Sumar es la de un partido miembro, no la de la coalición.
 
@@ -94,7 +94,7 @@ El gráfico de cada tarjeta no es una estimación: es un **recuento**.
 - **Qué mide**: el reparto de temas de política pública en los teletipos de **EFE y Europa Press** sobre cada partido, del **5 de octubre al 8 de noviembre de 2026** (de la convocatoria al último día completo antes del corte). Mismo periodo, mismas agencias y mismas reglas para los cinco.
 - **Cómo**: cada teletipo se abrió y se leyó (titular y entradilla) y recibió un solo tema de una lista común, construida a partir de las categorías de «principales problemas» del **barómetro del CIS**. Los teletipos se localizaron con plantillas de búsqueda idénticas para todos, sin palabras de tema.
 - **Qué se cuenta**: actos y declaraciones, no teletipos. Cuando dos teletipos de agencia (EFE o Europa Press) cuentan el mismo acto o la misma declaración de un partido, el mismo día o el siguiente, se agrupan y cuentan **una sola vez**, con un único tema. Solo se agrupan cuando el titular lo deja claro; en la duda, cada teletipo cuenta por separado. Un teletipo conjunto (por ejemplo, el acuerdo de PP y Vox para el Senado) cuenta una vez para cada partido. De 295 teletipos quedan 259 actos.
-- **Qué se excluye**: los actos sobre la propia campaña (pactos, listas, actos, encuestas, ataques al rival), que son entre el **52 % y el 74 %** del total según el partido. El porcentaje de cada uno aparece bajo su gráfico.
+- **Qué se excluye**: este gráfico no cuenta las noticias sobre la propia campaña (pactos, listas, mítines, encuestas, ataques al rival), que son entre el **52 % y el 74 %** del total según el partido; esa información está en la ficha de cada partido. El porcentaje excluido aparece bajo cada gráfico.
 - **Bases pequeñas**: quedan entre **9 y 34 actos** sobre políticas por partido. Un acto más o menos puede mover entre 6 y 11 puntos en los partidos con menos base: las cifras son orientativas. Cada tarjeta muestra su base.
 - **Umbral**: se muestran los temas con al menos un **5 %**; el resto se agrupa en «Otros» (el detalle aparece al pasar el ratón).
 - **Redondeo**: los porcentajes se redondean a enteros por el método del mayor resto, para que cada gráfico sume exactamente 100 %. Por eso dos temas con el mismo número de actos pueden diferir en un punto.
