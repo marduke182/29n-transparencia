@@ -373,6 +373,10 @@
             "externo"
           ],
           "description": "Solo en \"criticos-defensores\": si procede de la propia candidatura."
+        },
+        "contexto": {
+          "type": "boolean",
+          "description": "Nota de contexto: dato de fondo relevante para la pregunta de su sección, sin declaración ni acción del partido. Nunca lleva veredicto (criterios/preguntas.md)."
         }
       },
       "allOf": [
@@ -388,6 +392,25 @@
             "required": [
               "matiz"
             ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "contexto"
+            ],
+            "properties": {
+              "contexto": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "veredicto"
+              ]
+            }
           }
         }
       ]

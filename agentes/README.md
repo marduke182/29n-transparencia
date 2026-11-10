@@ -24,7 +24,11 @@ Solo las rutas de la máquina local, sustituidas por marcadores:
 | `<CRITERIOS>` | La carpeta del criterio escrito; su contenido está en [`../criterios/`](../criterios/). |
 | `<REPO_SITIO>` | El repositorio (privado) del sitio, donde están las fichas de partido. |
 
-Los nombres de archivo de los scripts han perdido el sufijo de identificador de ejecución. El texto de los prompts, los esquemas y las constantes es literal.
+Los nombres de archivo de los scripts han perdido el sufijo de identificador de ejecución. El texto de los prompts, los esquemas y las constantes es literal, salvo la clasificación por preguntas de 04 y 05 (ver más abajo).
+
+## Clasificación por preguntas
+
+Desde el 10 nov 2026 los prompts que clasifican material ([04](04-verificar-y-diagnosticar.md), [05](05-verificar-candidatos-2.md) y los agentes `clasificador`, `redactor-hechos` y `adjudicador` de [08](08-diario.md)) clasifican **primero por pregunta del votante** (`pregunta`, de `Q1` a `Q8`, o ninguna) y después por sección, con los criterios de admisión de [`../criterios/preguntas.md`](../criterios/preguntas.md). Marcan también las notas de contexto (`contexto: true`). En 04 y 05 es un cambio posterior a la ejecución, anotado en cada documento y en la cabecera de su script; el resto de su texto sigue siendo literal. En 08 el código ([`preguntas.ts`](../recogida/src/preguntas.ts), usado por `fusionar.ts` y `diario.ts`) rechaza una propuesta cuya `pregunta` no corresponde a su `seccion`, y el resumen diario agrupa los cambios por pregunta.
 
 ## Cómo se ejecutan
 

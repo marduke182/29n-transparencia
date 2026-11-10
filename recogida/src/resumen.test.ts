@@ -80,16 +80,48 @@ describe('resumen', () => {
     }
   });
 
-  it('agrupa añadidos, cambios y descartes por sección y estado', () => {
+  it('agrupa añadidos, cambios y descartes por pregunta, sección y estado', () => {
     const pp = resumen(entrada).split(/^## /m).find((b) => b.startsWith('PP'))!;
-    expect(pp).toContain('### Añadidos (2)');
-    expect(pp).toContain('- `temas` · VERIFICADO (1)\n  - 2.3');
-    expect(pp).toContain('- `criticos-defensores` · PARCIAL (1)\n  - N2');
+    expect(pp).toContain('### Añadidos (2)\n\n- **Q2 · ¿Qué dicen que harán?** (1)\n  - `temas` · VERIFICADO (1)\n    - 2.3');
+    expect(pp).toContain('- **Q6 · ¿Qué dicen de ellos?** (1)\n  - `criticos-defensores` · PARCIAL (1)\n    - N2');
     expect(pp).toContain('### Modificados (1)');
-    expect(pp).toContain('  - 2.1: campos: texto');
-    expect(pp).toContain('### Pasados a descartados (1)\n\n- `temas` · NO VERIFICABLE (1)\n  - 2.2: No se pudo abrir.');
-    expect(pp).toContain('### Pasados a en espera (1)\n\n- `cambios` · PARCIAL (1)\n  - 7.1: Cambio pendiente de la transcripción.');
+    expect(pp).toContain('    - 2.1: campos: texto');
+    expect(pp).toContain('### Pasados a descartados (1)\n\n- **Q2 · ¿Qué dicen que harán?** (1)\n  - `temas` · NO VERIFICABLE (1)\n    - 2.2: No se pudo abrir.');
+    expect(pp).toContain('### Pasados a en espera (1)\n\n- **Q5 · ¿Han cambiado de opinión?** (1)\n  - `cambios` · PARCIAL (1)\n    - 7.1: Cambio pendiente de la transcripción.');
     expect(pp).toContain('### Retirados sin rastro (0)');
+  });
+
+  it('separa verificacion en Q3 y Q6 (por bulo) e historial en Q4 y Q8 (por la búsqueda de causas), en el orden de las preguntas', () => {
+    const conVerificacion: EntradaResumen = {
+      fecha: '2026-11-10',
+      antes: { partidos: { pp: ficha({ verificacion: [] }) }, perfiles: {} },
+      despues: {
+        partidos: { pp: ficha({ verificacion: [item('V2', { bulo: true }), item('V1', { afirmacion: 'Dijo X.' })], encuestas: [item('E1')], historial: [item('C1', { busqueda: 'diario-2026-11-10-causas' })] }) },
+        perfiles: {},
+      },
+    };
+    const pp = resumen(conVerificacion).split(/^## /m).find((b) => b.startsWith('PP'))!;
+    const anadidos = pp.slice(pp.indexOf('### Añadidos'), pp.indexOf('### Modificados'));
+    expect(anadidos).toBe(
+      [
+        '### Añadidos (4)',
+        '',
+        '- **Q3 · ¿Lo que dicen es cierto?** (1)',
+        '  - `verificacion` · PARCIAL (1)',
+        '    - V1: Texto del elemento V1.',
+        '- **Q6 · ¿Qué dicen de ellos?** (1)',
+        '  - `verificacion` · PARCIAL (1)',
+        '    - V2: Texto del elemento V2.',
+        '- **Q7 · ¿Cómo van en las encuestas?** (1)',
+        '  - `encuestas` · PARCIAL (1)',
+        '    - E1: Texto del elemento E1.',
+        '- **Q8 · ¿Tienen causas abiertas?** (1)',
+        '  - `historial` · PARCIAL (1)',
+        '    - C1: Texto del elemento C1.',
+        '',
+        '',
+      ].join('\n'),
+    );
   });
 
   it('cuenta los PARCIAL solo con prensa, las fuentes nuevas, el buzón y los recuentos', () => {

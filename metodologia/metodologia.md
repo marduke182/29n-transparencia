@@ -2,7 +2,7 @@
 
 El contenido se preparó en dos pasos, igual para los cinco partidos:
 
-1. **Una investigación por partido** con el mismo esquema: candidatura, lema, temas, programa, afirmaciones, historial, cambios de discurso, críticos y defensores, y encuestas.
+1. **Una investigación por partido** con el mismo esquema de investigación: candidatura, lema, temas, programa, afirmaciones, historial, cambios de discurso, críticos y defensores, y encuestas. Las fichas publicadas se organizan después en ocho preguntas (véase más abajo).
 2. **Una verificación independiente** que abrió cada enlace y buscó la fuente primaria siempre que existía (BOE, INE, Eurostat, CIS, Seguridad Social, Ministerio del Interior). Se descartó todo lo que solo aparecía en resúmenes de buscador, sin una página que lo respaldara.
 
 Desde el entorno de verificación **no fueron accesibles newtral.es ni interior.gob.es**. Por eso no se citan verificaciones de Newtral, y las cifras de inmigración irregular proceden de prensa que cita los informes de Interior (se indica en cada caso).
@@ -25,6 +25,23 @@ El Frente Amplio es una coalición constituida para las elecciones del 29-N el 1
 - No se publican datos personales o patrimoniales (sueldos, viviendas, vida privada). Sí los procesos judiciales y los cargos públicos.
 - En «Críticos y defensores» el número de elementos es el mismo en las cinco fichas (véase más abajo).
 
+### Las preguntas de cada ficha
+
+Cada ficha responde a las mismas ocho preguntas, en el mismo orden para los cinco partidos. Cada elemento responde a una sola, y entra solo si cumple su criterio:
+
+- **¿Quién se presenta?**: candidato, lista, coalición y alianzas.
+- **¿Qué dicen que harán?**: el lema y las frases del propio partido, los temas que impulsa o evita y lo que dice de palabra, y las propuestas escritas en sus propios documentos. Lo dicho en un mitin o una entrevista no cuenta como propuesta por escrito.
+- **¿Lo que dicen es cierto?**: verificaciones de afirmaciones hechas por el partido o su candidato. Una afirmación del propio partido nunca se presenta como bulo: si la búsqueda igual de bulos encuentra la verificación de una declaración de su propio candidato, se publica aquí como afirmación del partido, no como bulo sobre él.
+- **¿Han cumplido antes?**: lo que se prometió o anunció comparado con lo que se hizo, con fuente para las dos cosas.
+- **¿Han cambiado de opinión?**: una posición anterior y la actual del mismo actor, sobre el mismo asunto.
+- **¿Qué dicen de ellos?**: críticos y defensores con nombre, y verificaciones de bulos sobre el partido.
+- **¿Cómo van en las encuestas?**: encuestas citadas por la empresa que las hizo o el medio que las encargó.
+- **¿Tienen causas abiertas?**: causas judiciales, querellas, investigaciones o resoluciones que afectan al partido o a sus candidatos.
+
+Un dato de fondo sin declaración ni acción del partido se muestra como nota de **contexto**, junto a la pregunta con la que se relaciona, y nunca lleva veredicto. Las notas de contexto se muestran, pero no cuentan en los totales de cada página, porque no contienen ninguna declaración ni acción del partido.
+
+En el diagrama de cada página, el tamaño de cada pregunta cuenta datos, no importancia.
+
 ### La comprobación de cada elemento
 
 Cada elemento termina con una nota «Comprobación: …»:
@@ -42,7 +59,7 @@ El veredicto valora **lo que dijo el partido**, no al partido. Se muestra como �
 - **Engañoso**: el núcleo no se sostiene o los datos lo contradicen (o un verificador lo ha calificado de falso o engañoso; en ese caso se atribuye a ese verificador).
 - **Sin datos**: no se han encontrado datos que respalden la afirmación. No significa que la afirmación sea falsa.
 
-Las verificaciones de bulos **sobre** un partido (no dichos por él) van en un apartado aparte, «Verificaciones sobre el partido», donde la afirmación aparece como «Lo que circula», con el mismo formato en las cinco fichas; si no hay ninguna, se indica. Proceden de la búsqueda igual para los cinco que se describe más abajo.
+Las verificaciones de bulos **sobre** un partido (no dichos por él ni por su candidato) van en «¿Qué dicen de ellos?», en el apartado «Verificaciones sobre el partido», donde la afirmación aparece como «Lo que circula», con el mismo formato en las cinco fichas; si no hay ninguna, se indica. Proceden de la búsqueda igual para los cinco que se describe más abajo.
 
 <h3 id="criticos-defensores">Críticos y defensores</h3>
 
@@ -56,10 +73,10 @@ Cada ficha muestra el mismo número N de críticos y el mismo número N de defen
 
 <h3 id="busqueda-igual">Búsqueda igual</h3>
 
-Las verificaciones de bulos, las causas judiciales, los críticos y los defensores salen de la misma búsqueda para los cinco partidos: la misma plantilla de consulta, el mismo buscador y los mismos dominios. Solo cambia el nombre del partido y, en críticos y defensores, el apellido de su candidato principal: todos los partidos llevan un término de la misma forma, y el sitio rechaza un término vacío en un partido cuando los demás lo tienen.
+Las verificaciones de bulos (también las de declaraciones del candidato, que se publican como afirmación del partido), las causas judiciales, los críticos y los defensores salen de la misma búsqueda para los cinco partidos: la misma plantilla de consulta, el mismo buscador y los mismos dominios. Solo cambia el nombre del partido y, en críticos y defensores, el apellido de su candidato principal: todos los partidos llevan un término de la misma forma, y el sitio rechaza un término vacío en un partido cuando los demás lo tienen.
 
 - El sitio guarda un registro de búsquedas con la fecha, el periodo, las plantillas, los dominios, el número de resultados por partido y sus límites (por ejemplo, dominios que devolvieron error y no se forzaron). El repositorio público describe su estructura y las reglas que se le aplican en [`criterios/equidad.md`](https://github.com/marduke182/29n-transparencia/blob/main/criterios/equidad.md); no contiene los resultados.
-- En los datos, cada elemento de bulos, de causas judiciales y de críticos y defensores está enlazado a la búsqueda que lo encontró. La web no lo muestra.
+- En los datos, cada elemento de bulos (incluidas las declaraciones del candidato), de causas judiciales y de críticos y defensores está enlazado a la búsqueda que lo encontró. La web no lo muestra.
 - Cada hallazgo de cualquier búsqueda tiene exactamente una disposición: publicado, en espera (`en_espera`) o descartado con su motivo. El sitio lo comprueba.
 - La primera búsqueda de críticos y defensores (10 de noviembre de 2026) no usaba términos de la misma forma para todos los partidos. Se repitió con el nombre del partido y el apellido de su candidato principal para los cinco. La primera se conserva en el registro, marcada como sustituida.
 - Las verificaciones de bulos son **Verificado**, porque la página del verificador es el registro primario de su propio veredicto. La etiqueta del verificador se traduce al veredicto del sitio con una sola tabla para los cinco partidos, y el sitio rechaza una etiqueta sin correspondencia.

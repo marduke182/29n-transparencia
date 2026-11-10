@@ -228,6 +228,54 @@ describe('preparar', () => {
     expect(descartes.map((d) => d.motivo)).toEqual([expect.stringMatching(/no tiene salida para los cinco/), expect.stringMatching(/veda/)]);
   });
 
+  it('drops proposals and shared facts whose pregunta does not match the seccion, and keeps a matching pregunta', () => {
+    const hechos = {
+      hechos: [
+        { hecho: 'encuesta-cis-2026-11-09', seccion: 'encuestas', pregunta: 'Q7', partidos: ['pp', 'psoe'], item: item('Barómetro.', 'https://cis.es/b') },
+        { hecho: 'debate-rtve-2026-11-09', seccion: 'candidatura', pregunta: 'Q2', partidos: ['pp', 'psoe'], item: item('Debate.', 'https://rtve.es/d') },
+      ],
+    };
+    const { porPartido, descartes } = preparar({
+      fecha: FECHA,
+      equidad: {},
+      hechos,
+      adjudicados: [
+        {
+          archivo: 'pp.json',
+          contenido: [
+            { partido: 'pp', seccion: 'por-escrito', pregunta: 'Q2', item: item('Programa.', 'https://pp.es/programa') },
+            { partido: 'pp', seccion: 'cambios', pregunta: 'Q4', item: item('Cambio.', 'https://medio.es/c') },
+            { partido: 'pp', seccion: 'temas', pregunta: 'Q2', item: item('Dato de contexto.', 'https://ine.es/d', { contexto: true }) },
+            { partido: 'pp', seccion: 'temas', pregunta: null, item: item('Sin pregunta.', 'https://medio.es/n') },
+            { partido: 'pp', seccion: 'historial', pregunta: 'Q4', item: item('Contexto con veredicto.', 'https://medio.es/v', { contexto: true, veredicto: 'Sin datos' }) },
+          ],
+        },
+      ],
+    });
+    expect(porPartido.pp.map((p) => [(p.item as { texto: string }).texto, p.pregunta])).toEqual([
+      ['Programa.', 'Q2'],
+      ['Dato de contexto.', 'Q2'],
+      ['Barómetro.', 'Q7'],
+    ]);
+    expect(descartes.map((d) => `${d.archivo}#${d.indice}`)).toEqual(['hechos.json#1', 'pp.json#1', 'pp.json#3', 'pp.json#4']);
+    expect(descartes.map((d) => d.motivo).slice(2)).toEqual([expect.stringMatching(/no se propone/), 'una nota de contexto no lleva veredicto']);
+    expect(descartes[0]!.motivo).toMatch(/^hecho "debate-rtve-2026-11-09": pregunta Q2/);
+  });
+
+  it('accepts a court case from the causas search only as Q8', () => {
+    const urls = ['https://medio.es/causa'];
+    const equidad = { causas: Object.fromEntries(PARTIDOS.map((p) => [p, p === 'pp' ? urls : []])) };
+    const causa = item('Un juzgado admite una querella.', urls[0]!, { busqueda: 'diario-2026-11-10-causas' });
+    const { porPartido, descartes } = preparar({
+      fecha: FECHA,
+      equidad,
+      hechos: undefined,
+      adjudicados: [{ archivo: 'pp.json', contenido: [{ partido: 'pp', seccion: 'historial', pregunta: 'Q8', item: causa }, { partido: 'pp', seccion: 'historial', pregunta: 'Q4', item: causa }] }],
+    });
+    expect(porPartido.pp.map((p) => p.pregunta)).toEqual(['Q8']);
+    expect(descartes.map((d) => d.motivo)).toEqual([expect.stringMatching(/responde a Q8/)]);
+  });
+
   it('copies each shared fact identically to every party it names', () => {
     const hecho = { hecho: 'debate-rtve-2026-11-09', seccion: 'candidatura', partidos: ['psoe', 'pp', 'pp'], item: item('Debate a dos.', 'https://rtve.es/d') };
     const { porPartido, deHechos, descartes } = preparar({ fecha: FECHA, equidad: {}, adjudicados: [], hechos: { hechos: [hecho, { ...hecho }, { hecho: 'solo', seccion: 'temas', partidos: ['pp'], item: item('Uno.', 'https://a.es/x') }] } });

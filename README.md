@@ -9,7 +9,7 @@ El objetivo es que **cualquiera pueda auditar cómo se obtienen y analizan los d
 | Carpeta | Contenido |
 |---|---|
 | [`agentes/`](agentes/) | Un documento por workflow de agentes, con fecha, modelo, número de agentes, propósito, el **prompt literal** y el esquema de salida. Los scripts originales están en [`agentes/workflows/`](agentes/workflows/). |
-| [`criterios/`](criterios/) | Los criterios escritos: [correcciones](criterios/correcciones.md) (el texto literal que usaron los agentes Opus), [verificación](criterios/verificacion.md), [neutralidad](criterios/neutralidad.md), [regla de enlaces](criterios/enlaces.md), [registro de fuentes](criterios/fuentes.md) y [temas](criterios/temas.md). |
+| [`criterios/`](criterios/) | Los criterios escritos: [correcciones](criterios/correcciones.md) (el texto literal que usaron los agentes Opus), [verificación](criterios/verificacion.md), [neutralidad](criterios/neutralidad.md), [regla de enlaces](criterios/enlaces.md), [registro de fuentes](criterios/fuentes.md), [temas](criterios/temas.md) y [preguntas](criterios/preguntas.md) (a qué pregunta del votante responde cada sección y qué hace falta para entrar en ella). |
 | [`procesado/`](procesado/) | Los validadores y cálculos en TypeScript, con tests sobre datos de ejemplo que se ejecutan solos (`npx vitest run`). |
 | [`esquemas/`](esquemas/) | La estructura (JSON Schema) de los cuatro archivos de datos. |
 | [`metodologia/`](metodologia/) | La [metodología](metodologia/metodologia.md) tal como está publicada en el sitio. |
@@ -37,7 +37,9 @@ La búsqueda la hace **un agente Haiku por fuente** ([01](agentes/01-cobertura-p
 
 ### 2. Verificación y clasificación por artículo
 
-Cada artículo candidato lo abre **un agente Haiku distinto** ([04](agentes/04-verificar-y-diagnosticar.md), [05](agentes/05-verificar-candidatos-2.md)). Lo que dijo la búsqueda se trata como posiblemente erróneo: el agente lee en la página la fecha, el titular, la firma o agencia y el protagonista, decide si entra (`VERIFICADO`, `PARCIAL`, `NO_VERIFICABLE`, `DESCARTADO`) y lo clasifica: partidos, género, un tema de la taxonomía común y la sección de la ficha a la que va.
+Cada artículo candidato lo abre **un agente Haiku distinto** ([04](agentes/04-verificar-y-diagnosticar.md), [05](agentes/05-verificar-candidatos-2.md)). Lo que dijo la búsqueda se trata como posiblemente erróneo: el agente lee en la página la fecha, el titular, la firma o agencia y el protagonista, decide si entra (`VERIFICADO`, `PARCIAL`, `NO_VERIFICABLE`, `DESCARTADO`) y lo clasifica: partidos, género y un tema de la taxonomía común.
+
+La sección de la ficha se decide **primero por pregunta**: el agente elige a cuál de las ocho preguntas del votante responde el material (¿quién se presenta?, ¿qué dicen que harán?, ¿lo que dicen es cierto?, ¿han cumplido antes?, ¿han cambiado de opinión?, ¿qué dicen de ellos?, ¿cómo van en las encuestas?, ¿tienen causas abiertas?) o a ninguna, y solo después la sección dentro de esa pregunta, con los criterios de admisión de cada una: `por-escrito` solo con un documento escrito del propio partido; una afirmación del propio candidato nunca es un bulo; un cambio de opinión es del mismo actor y muestra un cambio real; el historial necesita la promesa y el resultado; una encuesta se cita por la empresa o el medio que la encargó. Un dato de fondo sin declaración del partido es una nota de contexto (`contexto: true`), sin veredicto. La correspondencia y los criterios están en [criterios/preguntas.md](criterios/preguntas.md); el código rechaza una propuesta cuya pregunta no corresponde a su sección. La pregunta no se guarda: la ficha sigue organizada por secciones.
 
 Lo ya publicado se **reverifica** igual, una afirmación por agente ([06](agentes/06-reverificar-publicados.md)): cada enlace, su URL canónica, si respalda el texto, si la cita es literal y la neutralidad de la redacción.
 

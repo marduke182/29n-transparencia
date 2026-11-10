@@ -133,6 +133,33 @@ describe('fusionar', () => {
     expect(plan.rechazados.map((r) => r.motivo)).toEqual(['PARCIAL sin matiz', 'partido desconocido "nadie"', 'fuentes: hace falta al menos una, cada una con url https y medio']);
   });
 
+  it('checks pregunta against seccion and never writes it; keeps a context note without veredicto', async () => {
+    await writeFile(
+      join(carpeta, 'a.json'),
+      JSON.stringify([
+        propuesta('pp', 'temas', 'Con pregunta.', 'https://medio.es/q2', { pregunta: 'Q2' }),
+        propuesta('pp', 'historial', 'Pregunta cruzada.', 'https://medio.es/q2h', { pregunta: 'Q2' }),
+        propuesta('pp', 'verificacion', 'Bulo como afirmación.', 'https://medio.es/bulo', { pregunta: 'Q3', item: { texto: 'b', estado: 'VERIFICADO', bulo: true, fuentes: [{ url: 'https://medio.es/bulo', medio: 'M' }] } }),
+        propuesta('pp', 'temas', 'En el item.', 'https://medio.es/item', { item: { texto: 'i', estado: 'VERIFICADO', pregunta: 'Q2', fuentes: [{ url: 'https://medio.es/item', medio: 'M' }] } }),
+        propuesta('pp', 'temas', 'Contexto.', 'https://ine.es/c', { pregunta: 'Q2', item: { texto: 'Contexto.', estado: 'VERIFICADO', contexto: true, fuentes: [{ url: 'https://ine.es/c', medio: 'INE' }] } }),
+        propuesta('pp', 'historial', 'Contexto con veredicto.', 'https://ine.es/v', { item: { texto: 'v', estado: 'VERIFICADO', contexto: true, veredicto: 'Sin datos', fuentes: [{ url: 'https://ine.es/v', medio: 'INE' }] } }),
+      ]),
+    );
+    const plan = await fusionar({ sitio, carpeta, fecha: '2026-11-10' });
+    expect(plan.rechazados.map((r) => [r.indice, r.motivo])).toEqual([
+      [1, expect.stringMatching(/no corresponde a la sección historial/)],
+      [2, expect.stringMatching(/responde a Q6/)],
+      [3, 'pregunta va en la propuesta, junto a seccion, no en el item'],
+      [5, 'una nota de contexto no lleva veredicto'],
+    ]);
+    const pp = JSON.parse(await leer('pp'));
+    const temas = pp.secciones.find((s: { id: string }) => s.id === 'temas').items;
+    expect(temas.slice(-2)).toEqual([
+      { ref: '51', texto: 'Contexto.', estado: 'VERIFICADO', contexto: true, fuentes: [{ url: 'https://ine.es/c', medio: 'INE' }] },
+      { ref: '52', texto: 'Con pregunta.', estado: 'VERIFICADO', fuentes: [{ medio: 'Medio', url: 'https://medio.es/q2' }] },
+    ]);
+  });
+
   it('writes held items to the top-level en_espera with their seccion, and dedups against them', async () => {
     await writeFile(join(carpeta, 'a.json'), JSON.stringify([propuesta('pp', 'cambios', 'Pendiente de contraste.', 'https://medio.es/espera', { en_espera: true })]));
     await fusionar({ sitio, carpeta, fecha: '2026-11-10' });

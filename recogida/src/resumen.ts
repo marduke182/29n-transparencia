@@ -3,6 +3,8 @@
  * cinco partidos (y sus perfiles de documentos, si los hay) antes y después de
  * la recogida del día y escribe un Markdown con un bloque por partido, en el
  * orden de PARTY_IDS y con los mismos encabezados en todos, aunque estén vacíos.
+ * Dentro de cada lista, los elementos se agrupan por la pregunta del votante a la
+ * que responden (preguntas.ts, criterios/preguntas.md), luego por sección y estado.
  *
  * Determinista: la fecha llega como argumento, sin reloj ni aleatoriedad, y
  * todo se ordena con Intl.Collator('es').
@@ -18,6 +20,7 @@ import { pathToFileURL } from 'node:url';
 import { urlDeArchivo } from './buzon.ts';
 import { PARTY_IDS, type PartyId } from './cache.ts';
 import { contarPalabras } from './citas.ts';
+import { IDS_PREGUNTA, PREGUNTAS, preguntaDe } from './preguntas.ts';
 
 export { PARTY_IDS };
 
@@ -192,11 +195,24 @@ interface Linea {
   estado: string;
   clave: string;
   nota: string;
+  /** Datos del elemento (para separar verificacion en Q3 y Q6 por `bulo`). */
+  datos?: Obj;
 }
+
+/** Grupo de pregunta de una línea: Q1..Q8, o «otros» para la tarjeta, el perfil y lo no publicado. */
+const OTROS = 'otros';
+const grupoPregunta = (l: Linea): string => preguntaDe(l.seccion, l.datos) ?? OTROS;
+const indicePregunta = (g: string) => {
+  const i = (IDS_PREGUNTA as string[]).indexOf(g);
+  return i === -1 ? IDS_PREGUNTA.length : i;
+};
+const tituloPregunta = (g: string) =>
+  g === OTROS ? 'Sin pregunta (tarjeta, perfil o sin sección)' : `${g} · ${PREGUNTAS[g as keyof typeof PREGUNTAS].texto}`;
 
 function ordenar(lineas: Linea[]): Linea[] {
   return [...lineas].sort(
     (a, b) =>
+      indicePregunta(grupoPregunta(a)) - indicePregunta(grupoPregunta(b)) ||
       indiceSeccion(a.seccion) - indiceSeccion(b.seccion) ||
       comparar(a.seccion, b.seccion) ||
       comparar(a.estado, b.estado) ||
@@ -209,19 +225,29 @@ const recortar = (texto: string, max = 100) => {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 };
 
-/** Lista agrupada por sección y estado: «- `seccion` · ESTADO (n)» y debajo cada elemento. */
+/**
+ * Lista agrupada por pregunta, sección y estado: «- **Qn · pregunta** (n)»,
+ * debajo «  - `seccion` · ESTADO (n)» y debajo cada elemento.
+ */
 function bloqueLista(titulo: string, lineas: Linea[], vacio: string): string[] {
   const salida = [`### ${titulo} (${lineas.length})`, ''];
   if (!lineas.length) return [...salida, vacio, ''];
+  let pregunta = '';
   let grupo = '';
   for (const l of ordenar(lineas)) {
+    const p = grupoPregunta(l);
+    if (p !== pregunta) {
+      pregunta = p;
+      grupo = '';
+      salida.push(`- **${tituloPregunta(p)}** (${lineas.filter((x) => grupoPregunta(x) === p).length})`);
+    }
     const g = `${l.seccion}\u0000${l.estado}`;
     if (g !== grupo) {
       grupo = g;
-      const n = lineas.filter((x) => x.seccion === l.seccion && x.estado === l.estado).length;
-      salida.push(`- \`${l.seccion}\` · ${l.estado} (${n})`);
+      const n = lineas.filter((x) => grupoPregunta(x) === p && x.seccion === l.seccion && x.estado === l.estado).length;
+      salida.push(`  - \`${l.seccion}\` · ${l.estado} (${n})`);
     }
-    salida.push(`  - ${l.clave}${l.nota ? `: ${l.nota}` : ''}`);
+    salida.push(`    - ${l.clave}${l.nota ? `: ${l.nota}` : ''}`);
   }
   return [...salida, ''];
 }
@@ -248,12 +274,12 @@ function bloquePartido(id: PartyId, e: EntradaResumen, emisorDe: Map<string, Emi
     if (!previo) {
       const origen = descAntes.has(clave) ? ' (antes en descartados)' : esperaAntes.has(clave) ? ' (antes en espera)' : '';
       const nombre = el.seccion.startsWith('perfil.') ? '' : clave;
-      anadidos.push({ seccion: el.seccion, estado: el.estado, clave: nombre || recortar(el.texto, 60), nota: `${recortar(el.texto)}${origen}` });
+      anadidos.push({ seccion: el.seccion, estado: el.estado, clave: nombre || recortar(el.texto, 60), nota: `${recortar(el.texto)}${origen}`, datos: el.datos });
     } else if (canonico(previo.datos) !== canonico(el.datos)) {
       const campos = camposCambiados(previo.datos, el.datos);
       const movida = previo.seccion !== el.seccion ? `; sección ${previo.seccion} → ${el.seccion}` : '';
       const estado = previo.estado !== el.estado ? `${previo.estado} → ${el.estado}` : el.estado;
-      cambiados.push({ seccion: el.seccion, estado, clave, nota: `campos: ${campos.join(', ')}${movida}` });
+      cambiados.push({ seccion: el.seccion, estado, clave, nota: `campos: ${campos.join(', ')}${movida}`, datos: el.datos });
     }
   }
 
@@ -264,7 +290,7 @@ function bloquePartido(id: PartyId, e: EntradaResumen, emisorDe: Map<string, Emi
       const seccion = esTexto(entrada.seccion) ? entrada.seccion : (antes.get(ref)?.seccion ?? '(no publicado)');
       const estado = esTexto(entrada.estado) ? entrada.estado : '—';
       const nota = entrada.motivo ?? entrada.texto ?? antes.get(ref)?.texto ?? '';
-      salida.push({ seccion, estado, clave: ref, nota: recortar(String(nota)) });
+      salida.push({ seccion, estado, clave: ref, nota: recortar(String(nota)), datos: { ...antes.get(ref)?.datos, ...entrada } });
     }
     return salida;
   };
@@ -275,7 +301,7 @@ function bloquePartido(id: PartyId, e: EntradaResumen, emisorDe: Map<string, Emi
   for (const [clave, el] of antes) {
     if (despues.has(clave) || descDespues.has(clave) || esperaDespues.has(clave)) continue;
     const nombre = el.seccion.startsWith('perfil.') ? recortar(el.texto, 60) : clave;
-    retirados.push({ seccion: el.seccion, estado: el.estado, clave: nombre, nota: el.seccion.startsWith('perfil.') ? '' : recortar(el.texto) });
+    retirados.push({ seccion: el.seccion, estado: el.estado, clave: nombre, nota: el.seccion.startsWith('perfil.') ? '' : recortar(el.texto), datos: el.datos });
   }
 
   // PARCIAL que solo se apoyan en prensa (medios y agencias del registro), en el estado de después.

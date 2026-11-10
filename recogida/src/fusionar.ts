@@ -17,6 +17,10 @@
  *   of the party file, as a full Item with its `seccion`.
  * - `corte` moves to the run date only when items are added.
  * - From 2026-11-24 (the pre-election poll ban) new `encuestas` items are refused.
+ * - A proposal may carry `pregunta` (Q1..Q8, next to `seccion`); one that does
+ *   not match its section (preguntas.ts), or is null, is refused. `pregunta` is
+ *   never written to the party file, and an item that carries it is refused.
+ * - An item may be a context note (`contexto: true`), never with a veredicto.
  *
  * Perfil files ({partido, periodo, limites, documentos, propuestas, mensajes}):
  * - A proposal adds one documento, propuesta or mensaje (`tipo`). Propuestas and
@@ -33,6 +37,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { PARTY_IDS, sha256, urlCanonica } from './cache.ts';
+import { motivoContexto, motivoPregunta, type Pregunta } from './preguntas.ts';
 
 /** First day of the ban on publishing polls (five days before the 29 Nov 2026 election). */
 export const VEDA_ENCUESTAS = '2026-11-24';
@@ -41,7 +46,7 @@ export const SECCIONES = ['candidatura', 'lema-y-frases', 'temas', 'por-escrito'
 const ESTADOS = ['VERIFICADO', 'CORREGIDO', 'PARCIAL'];
 
 /** Key order of a written item; unknown keys follow, alphabetically. */
-const ORDEN_CLAVES = ['ref', 'texto', 'estado', 'matiz', 'afirmacion', 'veredicto', 'bulo', 'antes', 'ahora', 'postura', 'perfil', 'atribucion', 'cita', 'fuentes'];
+const ORDEN_CLAVES = ['ref', 'texto', 'estado', 'matiz', 'contexto', 'afirmacion', 'veredicto', 'bulo', 'antes', 'ahora', 'postura', 'perfil', 'atribucion', 'cita', 'fuentes'];
 
 type Objeto = Record<string, unknown>;
 
@@ -50,6 +55,8 @@ export interface Propuesta {
   /** partido (default); perfil proposals are `PropuestaPerfil`. */
   destino?: 'partido';
   seccion: string;
+  /** The voter question the item answers (criterios/preguntas.md). Checked against seccion, never stored. */
+  pregunta?: Pregunta;
   item: Objeto;
   /** Held by the adjudicator: written to the party file's top-level `en_espera` (with `seccion`), not to the section. */
   en_espera?: boolean;
@@ -119,6 +126,11 @@ export function motivoRechazo(propuesta: Propuesta, fecha: string): string | und
   if (propuesta.seccion === 'encuestas' && fecha >= VEDA_ENCUESTAS) return `veda de encuestas: desde el ${VEDA_ENCUESTAS} no se añaden encuestas`;
   const item = propuesta.item;
   if (!isObjeto(item)) return 'item no es un objeto';
+  if (item.pregunta !== undefined) return 'pregunta va en la propuesta, junto a seccion, no en el item';
+  const pregunta = motivoPregunta(propuesta.pregunta, propuesta.seccion, item);
+  if (pregunta) return pregunta;
+  const contexto = motivoContexto(propuesta.seccion, item);
+  if (contexto) return contexto;
   if (typeof item.texto !== 'string' || !item.texto.trim()) return 'item sin texto';
   if (!ESTADOS.includes(item.estado as string)) return `estado "${String(item.estado)}" no publicable`;
   if (item.estado === 'PARCIAL' && (typeof item.matiz !== 'string' || !item.matiz.trim())) return 'PARCIAL sin matiz';

@@ -23,6 +23,7 @@ import { pathToFileURL } from 'node:url';
 import { PARTY_IDS, idDocumento, raizCache, rutaDeEntorno, urlCanonica, type Meta, type PartyId } from './cache.ts';
 import { accesoDesdeRegistro, leerRegistro, terminosDe, type Alias, type Candidato, type Descubrimiento, type Emisor } from './descubrir.ts';
 import { clavesDe, VEDA_ENCUESTAS } from './fusionar.ts';
+import { motivoContexto, motivoPregunta, type Pregunta } from './preguntas.ts';
 import { PARTY_SHORT } from './resumen.ts';
 import { Traedor, bloqueosDelDia, escribirBloqueados, hostDe, hostEn, leerBloqueados } from './traer.ts';
 
@@ -475,6 +476,8 @@ export interface Descarte {
 export interface Hecho {
   hecho: string;
   seccion: string;
+  /** The voter question the fact answers (criterios/preguntas.md); checked against seccion, never stored. */
+  pregunta?: Pregunta;
   partidos: string[];
   item: Objeto;
 }
@@ -501,7 +504,9 @@ const urlsFuentes = (item: Objeto) =>
  *   of that kind, complete for all five, and only with a URL that search found
  *   for that party; critics and defenders go to en_espera (`ajustar` promotes
  *   them so that the five keep the same count);
- * - no polls from the ban date.
+ * - no polls from the ban date;
+ * - a `pregunta` (Q1..Q8) that matches the `seccion` (preguntas.ts), and a valid
+ *   `contexto` flag (never with a veredicto).
  */
 export function preparar(entrada: {
   fecha: string;
@@ -526,6 +531,8 @@ export function preparar(entrada: {
       const seccion = String(propuesta.seccion);
       const item = esObjeto(propuesta.item) ? propuesta.item : {};
       if (item.hecho !== undefined) return descartar(`hecho "${String(item.hecho)}": los hechos compartidos solo salen de hechos.json`);
+      const pregunta = motivoPregunta(propuesta.pregunta, seccion, item) ?? motivoContexto(seccion, item);
+      if (pregunta) return descartar(pregunta);
       if (seccion === 'encuestas' && entrada.fecha >= VEDA_ENCUESTAS) return descartar(`veda de encuestas desde el ${VEDA_ENCUESTAS}`);
       const tipo = tipoBuscado(seccion, item);
       if (tipo) {
@@ -556,9 +563,12 @@ export function preparar(entrada: {
     const seccion = String(hecho.seccion);
     if (seccion === 'criticos-defensores' || hecho.item.bulo === true || hecho.item.busqueda !== undefined) return descartar(`hecho "${hecho.hecho}": críticos, defensores, bulos y causas salen de la búsqueda igual`);
     if (seccion === 'encuestas' && entrada.fecha >= VEDA_ENCUESTAS) return descartar(`veda de encuestas desde el ${VEDA_ENCUESTAS}`);
+    const motivo = motivoPregunta(hecho.pregunta, seccion, hecho.item) ?? motivoContexto(seccion, hecho.item);
+    if (motivo) return descartar(`hecho "${hecho.hecho}": ${motivo}`);
     const item = { ...hecho.item, hecho: hecho.hecho };
+    const pregunta = hecho.pregunta === undefined ? {} : { pregunta: hecho.pregunta };
     for (const partido of [...new Set(partidos)].sort((a, b) => PARTY_IDS.indexOf(a) - PARTY_IDS.indexOf(b))) {
-      porPartido[partido].push({ partido, seccion, item: structuredClone(item) });
+      porPartido[partido].push({ partido, seccion, ...pregunta, item: structuredClone(item) });
       deHechos++;
     }
   });
