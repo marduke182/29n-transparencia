@@ -1,0 +1,62 @@
+{
+  "partido": "vox",
+  "propuestas": [
+    {
+      "partido": "vox",
+      "seccion": "criticos-defensores",
+      "item": {
+        "texto": "La asociación Ejemplo Seis dijo el 9 de noviembre de 2026 sobre Vox: «No compartimos esa propuesta».",
+        "estado": "PARCIAL",
+        "matiz": "Según el relato de Medio C; no se ha consultado la declaración original.",
+        "fuentes": [
+          {
+            "url": "https://medio-c.example/2026/11/09/critica-vox",
+            "medio": "Medio C",
+            "consultado": "2026-11-10",
+            "via": "web"
+          }
+        ],
+        "postura": "critico",
+        "perfil": "externo",
+        "atribucion": "Medio C",
+        "cita": {
+          "texto": "No compartimos esa propuesta",
+          "url": "https://medio-c.example/2026/11/09/critica-vox"
+        },
+        "busqueda": "diario-2026-11-10-criticos"
+      }
+    },
+    {
+      "partido": "vox",
+      "seccion": "temas",
+      "item": {
+        "texto": "Santiago Abascal cerró el 9 de noviembre de 2026 un mitin en Toledo: «Vamos a ganar en Toledo».",
+        "estado": "PARCIAL",
+        "matiz": "Según el relato de Medio B; no se ha consultado la grabación original.",
+        "fuentes": [
+          {
+            "url": "https://medio-b.example/politica/2026/11/09/abascal-mitin",
+            "medio": "Medio B",
+            "consultado": "2026-11-10",
+            "via": "web"
+          }
+        ],
+        "atribucion": "Medio B"
+      }
+    }
+  ],
+  "decisiones": [
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-vox",
+      "decision": "propuesto",
+      "motivo": "Ejemplo."
+    },
+    {
+      "url": "https://medio-b.example/politica/2026/11/09/abascal-mitin",
+      "decision": "propuesto",
+      "motivo": "Ejemplo."
+    }
+  ],
+  "objeciones_hechos": [],
+  "hosts_sin_registrar": []
+}

@@ -1,0 +1,29 @@
+{
+  "busqueda": "diario-2026-11-10-criticos",
+  "tipo": "criticos",
+  "partido": "frente-amplio",
+  "consultas": [
+    {
+      "texto": "Frente Amplio critica Persona Uno noviembre 2026",
+      "estado": "ok",
+      "resultados": 0,
+      "nota": ""
+    },
+    {
+      "texto": "Frente Amplio 29N critican a Persona Uno",
+      "estado": "ok",
+      "resultados": 0,
+      "nota": ""
+    }
+  ],
+  "resultados": [
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-frente-amplio",
+      "medio": "Medio C",
+      "fecha": "2026-11-09",
+      "quien": "La asociación Ejemplo Uno",
+      "resumen": "La asociación Ejemplo Uno critica una propuesta de Frente Amplio."
+    }
+  ],
+  "nota": ""
+}

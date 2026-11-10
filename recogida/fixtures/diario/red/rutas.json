@@ -1,0 +1,82 @@
+{
+  "https://medio-a.example/2026/11/09/feijoo-iva-luz": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "medio-a-feijoo-iva-luz.html"
+  },
+  "https://medio-a.example/feed.xml": {
+    "estado": 200,
+    "tipo": "application/rss+xml",
+    "archivo": "medio-a-feed.xml"
+  },
+  "https://medio-a.example/robots.txt": {
+    "estado": 200,
+    "tipo": "text/plain",
+    "archivo": "robots.txt"
+  },
+  "https://medio-b.example/politica/2026/11/09/abascal-mitin": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "medio-b-abascal-mitin.html"
+  },
+  "https://medio-b.example/robots.txt": {
+    "estado": 200,
+    "tipo": "text/plain",
+    "archivo": "robots.txt"
+  },
+  "https://medio-c.example/2026/11/09/critica-frente-amplio": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "medio-c-critica-frente-amplio.html"
+  },
+  "https://medio-c.example/2026/11/09/critica-podemos": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "medio-c-critica-podemos.html"
+  },
+  "https://medio-c.example/2026/11/09/critica-pp-1": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "medio-c-critica-pp-1.html"
+  },
+  "https://medio-c.example/2026/11/09/critica-pp-2": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "medio-c-critica-pp-2.html"
+  },
+  "https://medio-c.example/2026/11/09/critica-psoe": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "medio-c-critica-psoe.html"
+  },
+  "https://medio-c.example/2026/11/09/critica-vox": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "medio-c-critica-vox.html"
+  },
+  "https://medio-c.example/robots.txt": {
+    "estado": 200,
+    "tipo": "text/plain",
+    "archivo": "robots.txt"
+  },
+  "https://oficial.example/robots.txt": {
+    "estado": 200,
+    "tipo": "text/plain",
+    "archivo": "robots.txt"
+  },
+  "https://oficial.example/transcripciones/debate-2026-11-09": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "oficial-debate.html"
+  },
+  "https://verificador.example/": {
+    "estado": 403,
+    "tipo": "text/html",
+    "archivo": "prohibido.html"
+  },
+  "https://verificador.example/robots.txt": {
+    "estado": 200,
+    "tipo": "text/plain",
+    "archivo": "robots.txt"
+  }
+}

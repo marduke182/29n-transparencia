@@ -1,0 +1,39 @@
+{
+  "partido": "frente-amplio",
+  "propuestas": [
+    {
+      "partido": "frente-amplio",
+      "seccion": "criticos-defensores",
+      "item": {
+        "texto": "La asociación Ejemplo Uno dijo el 9 de noviembre de 2026 sobre Frente Amplio: «No compartimos esa propuesta».",
+        "estado": "PARCIAL",
+        "matiz": "Según el relato de Medio C; no se ha consultado la declaración original.",
+        "fuentes": [
+          {
+            "url": "https://medio-c.example/2026/11/09/critica-frente-amplio",
+            "medio": "Medio C",
+            "consultado": "2026-11-10",
+            "via": "web"
+          }
+        ],
+        "postura": "critico",
+        "perfil": "externo",
+        "atribucion": "Medio C",
+        "cita": {
+          "texto": "No compartimos esa propuesta",
+          "url": "https://medio-c.example/2026/11/09/critica-frente-amplio"
+        },
+        "busqueda": "diario-2026-11-10-criticos"
+      }
+    }
+  ],
+  "decisiones": [
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-frente-amplio",
+      "decision": "propuesto",
+      "motivo": "Ejemplo."
+    }
+  ],
+  "objeciones_hechos": [],
+  "hosts_sin_registrar": []
+}

@@ -1,0 +1,58 @@
+{
+  "emisores": [
+    {
+      "id": "medio-a",
+      "nombre": "Medio A",
+      "hosts": [
+        "medio-a.example"
+      ],
+      "tipo": "medio",
+      "recogida": {
+        "metodo": "rss",
+        "url": "https://medio-a.example/feed.xml"
+      }
+    },
+    {
+      "id": "medio-b",
+      "nombre": "Medio B",
+      "hosts": [
+        "medio-b.example"
+      ],
+      "tipo": "medio"
+    },
+    {
+      "id": "medio-c",
+      "nombre": "Medio C",
+      "hosts": [
+        "medio-c.example"
+      ],
+      "tipo": "agencia"
+    },
+    {
+      "id": "oficial",
+      "nombre": "Organismo oficial de ejemplo",
+      "hosts": [
+        "oficial.example"
+      ],
+      "tipo": "oficial",
+      "recogida": {
+        "metodo": "omitir",
+        "nota": "Solo transcripciones, por transcribir --oficial."
+      }
+    },
+    {
+      "id": "web-psoe",
+      "nombre": "Web del PSOE (ejemplo)",
+      "hosts": [
+        "psoe.example"
+      ],
+      "tipo": "partido",
+      "partido": "psoe",
+      "acceso": {
+        "estado": "bloqueado",
+        "comprobado": "2026-11-10",
+        "detalle": "HTTP 403 a clientes automatizados (ejemplo)"
+      }
+    }
+  ]
+}

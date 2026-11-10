@@ -1,0 +1,29 @@
+{
+  "busqueda": "diario-2026-11-10-criticos",
+  "tipo": "criticos",
+  "partido": "vox",
+  "consultas": [
+    {
+      "texto": "Vox critica Abascal noviembre 2026",
+      "estado": "ok",
+      "resultados": 0,
+      "nota": ""
+    },
+    {
+      "texto": "Vox 29N critican a Abascal",
+      "estado": "ok",
+      "resultados": 0,
+      "nota": ""
+    }
+  ],
+  "resultados": [
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-vox",
+      "medio": "Medio C",
+      "fecha": "2026-11-09",
+      "quien": "La asociación Ejemplo Seis",
+      "resumen": "La asociación Ejemplo Seis critica una propuesta de Vox."
+    }
+  ],
+  "nota": ""
+}

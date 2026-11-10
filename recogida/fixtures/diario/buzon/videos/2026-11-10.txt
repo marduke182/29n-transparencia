@@ -1,0 +1,2 @@
+# VIDEO_URL [OFICIAL_URL], una por línea
+https://www.youtube.com/watch?v=debate20261109 https://oficial.example/transcripciones/debate-2026-11-09

@@ -1,0 +1,29 @@
+{
+  "busqueda": "diario-2026-11-10-criticos",
+  "tipo": "criticos",
+  "partido": "psoe",
+  "consultas": [
+    {
+      "texto": "PSOE critica Persona Tres noviembre 2026",
+      "estado": "ok",
+      "resultados": 0,
+      "nota": ""
+    },
+    {
+      "texto": "PSOE 29N critican a Persona Tres",
+      "estado": "ok",
+      "resultados": 0,
+      "nota": ""
+    }
+  ],
+  "resultados": [
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-psoe",
+      "medio": "Medio C",
+      "fecha": "2026-11-09",
+      "quien": "La federación Ejemplo Cinco",
+      "resumen": "La federación Ejemplo Cinco critica una propuesta de Partido Socialista Obrero Español."
+    }
+  ],
+  "nota": ""
+}

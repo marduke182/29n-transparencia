@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "partidos-alias.schema.json",
+  "title": "Alias de cada partido (src/data/partidos-alias.json)",
+  "description": "Nombres con los que se busca a cada partido en las fuentes. No se muestra en el sitio. Sin repeticiones dentro de un partido y ningún texto bajo dos partidos (sin distinguir mayúsculas): validatePartidosAlias en procesado/src/lib/partidos-alias.ts.",
+  "type": "object",
+  "required": [
+    "frente-amplio",
+    "podemos",
+    "pp",
+    "psoe",
+    "vox"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "frente-amplio": {
+      "$ref": "#/$defs/alias"
+    },
+    "podemos": {
+      "$ref": "#/$defs/alias"
+    },
+    "pp": {
+      "$ref": "#/$defs/alias"
+    },
+    "psoe": {
+      "$ref": "#/$defs/alias"
+    },
+    "vox": {
+      "$ref": "#/$defs/alias"
+    }
+  },
+  "$defs": {
+    "alias": {
+      "type": "object",
+      "required": [
+        "nombres",
+        "marcas_regionales",
+        "miembros",
+        "personas",
+        "excluir"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "nombres": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S(.*\\S)?$"
+          },
+          "minItems": 1,
+          "description": "Nombres y apodos del partido."
+        },
+        "marcas_regionales": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S(.*\\S)?$"
+          },
+          "description": "Marcas regionales."
+        },
+        "miembros": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S(.*\\S)?$"
+          },
+          "description": "Partidos miembros (coaliciones)."
+        },
+        "personas": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S(.*\\S)?$"
+          },
+          "description": "Candidatos y portavoces."
+        },
+        "excluir": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S(.*\\S)?$"
+          },
+          "description": "Nombres parecidos que no son este partido."
+        }
+      }
+    }
+  }
+}

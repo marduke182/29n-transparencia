@@ -1,0 +1,39 @@
+{
+  "partido": "podemos",
+  "propuestas": [
+    {
+      "partido": "podemos",
+      "seccion": "criticos-defensores",
+      "item": {
+        "texto": "El sindicato Ejemplo Dos dijo el 9 de noviembre de 2026 sobre Podemos: «No compartimos esa propuesta».",
+        "estado": "PARCIAL",
+        "matiz": "Según el relato de Medio C; no se ha consultado la declaración original.",
+        "fuentes": [
+          {
+            "url": "https://medio-c.example/2026/11/09/critica-podemos",
+            "medio": "Medio C",
+            "consultado": "2026-11-10",
+            "via": "web"
+          }
+        ],
+        "postura": "critico",
+        "perfil": "externo",
+        "atribucion": "Medio C",
+        "cita": {
+          "texto": "No compartimos esa propuesta",
+          "url": "https://medio-c.example/2026/11/09/critica-podemos"
+        },
+        "busqueda": "diario-2026-11-10-criticos"
+      }
+    }
+  ],
+  "decisiones": [
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-podemos",
+      "decision": "propuesto",
+      "motivo": "Ejemplo."
+    }
+  ],
+  "objeciones_hechos": [],
+  "hosts_sin_registrar": []
+}

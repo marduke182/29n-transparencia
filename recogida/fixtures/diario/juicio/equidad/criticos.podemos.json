@@ -1,0 +1,29 @@
+{
+  "busqueda": "diario-2026-11-10-criticos",
+  "tipo": "criticos",
+  "partido": "podemos",
+  "consultas": [
+    {
+      "texto": "Podemos critica Persona Dos noviembre 2026",
+      "estado": "ok",
+      "resultados": 0,
+      "nota": ""
+    },
+    {
+      "texto": "Podemos 29N critican a Persona Dos",
+      "estado": "ok",
+      "resultados": 0,
+      "nota": ""
+    }
+  ],
+  "resultados": [
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-podemos",
+      "medio": "Medio C",
+      "fecha": "2026-11-09",
+      "quien": "El sindicato Ejemplo Dos",
+      "resumen": "El sindicato Ejemplo Dos critica una propuesta de Podemos."
+    }
+  ],
+  "nota": ""
+}

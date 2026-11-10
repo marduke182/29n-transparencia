@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Daily run of 29n.jrquintana.dev at 07:00 (recogida/bin/diario.sh).
+
+  Placeholders, paths absolute and without a trailing slash (see recogida/README.md).
+  The Claude settings are not configured here: diario.sh builds them from
+  claude-settings.diario.template.json before each pass, outside every folder
+  Claude can write to.
+    __T__              this repository (29n-transparencia)
+    __N29_REPO__       checkout of the site repository
+    __N29_WORKTREES__  folder for the run worktrees
+    __N29_CACHE__      cache and run folders, outside any repository
+    __N29_BUZON__      the manual inbox
+    __PRESUPUESTO__    spending cap in dollars of each Claude pass (N29_PRESUPUESTO_USD)
+    __CLAUDE__         the claude binary
+    __PATH__           PATH with node, corepack, git, gh, perl, the claude folder
+                       and ~/.local/bin (whisper installed with pipx)
+
+  launchd runs a job missed while the Mac slept as soon as it wakes, but not one
+  missed while it was off. To wake (or power on) the Mac a few minutes before:
+
+    sudo pmset repeat wakeorpoweron MTWRFSU 06:55:00
+
+  (`pmset -g sched` shows it; `sudo pmset repeat cancel` removes it.) A day
+  that was missed anyway is run by hand, by date: see "Recuperar un día" in
+  recogida/README.md.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.29n.diario</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__T__/recogida/bin/diario.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__T__/recogida</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__PATH__</string>
+    <key>N29_REPO</key>
+    <string>__N29_REPO__</string>
+    <key>N29_WORKTREES</key>
+    <string>__N29_WORKTREES__</string>
+    <key>N29_CACHE</key>
+    <string>__N29_CACHE__</string>
+    <key>N29_BUZON</key>
+    <string>__N29_BUZON__</string>
+    <key>N29_PRESUPUESTO_USD</key>
+    <string>__PRESUPUESTO__</string>
+    <key>N29_CLAUDE</key>
+    <string>__CLAUDE__</string>
+    <key>LANG</key>
+    <string>es_ES.UTF-8</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__N29_CACHE__/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__N29_CACHE__/launchd.log</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

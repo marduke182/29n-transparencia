@@ -1,0 +1,58 @@
+{
+  "frente-amplio": {
+    "nombres": [
+      "Frente Amplio"
+    ],
+    "marcas_regionales": [],
+    "miembros": [],
+    "personas": [
+      "Persona Uno"
+    ],
+    "excluir": []
+  },
+  "podemos": {
+    "nombres": [
+      "Podemos"
+    ],
+    "marcas_regionales": [],
+    "miembros": [],
+    "personas": [
+      "Persona Dos"
+    ],
+    "excluir": []
+  },
+  "pp": {
+    "nombres": [
+      "Partido Popular",
+      "PP"
+    ],
+    "marcas_regionales": [],
+    "miembros": [],
+    "personas": [
+      "Alberto Núñez Feijóo"
+    ],
+    "excluir": []
+  },
+  "psoe": {
+    "nombres": [
+      "PSOE"
+    ],
+    "marcas_regionales": [],
+    "miembros": [],
+    "personas": [
+      "Persona Tres"
+    ],
+    "excluir": []
+  },
+  "vox": {
+    "nombres": [
+      "Vox"
+    ],
+    "marcas_regionales": [],
+    "miembros": [],
+    "personas": [
+      "Santiago Abascal"
+    ],
+    "excluir": []
+  }
+}

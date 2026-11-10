@@ -1,0 +1,60 @@
+{
+  "partido": "psoe",
+  "propuestas": [
+    {
+      "partido": "psoe",
+      "seccion": "criticos-defensores",
+      "item": {
+        "texto": "La federación Ejemplo Cinco dijo el 9 de noviembre de 2026 sobre Partido Socialista Obrero Español: «No compartimos esa propuesta».",
+        "estado": "PARCIAL",
+        "matiz": "Según el relato de Medio C; no se ha consultado la declaración original.",
+        "fuentes": [
+          {
+            "url": "https://medio-c.example/2026/11/09/critica-psoe",
+            "medio": "Medio C",
+            "consultado": "2026-11-10",
+            "via": "web"
+          }
+        ],
+        "postura": "critico",
+        "perfil": "externo",
+        "atribucion": "Medio C",
+        "cita": {
+          "texto": "No compartimos esa propuesta",
+          "url": "https://medio-c.example/2026/11/09/critica-psoe"
+        },
+        "busqueda": "diario-2026-11-10-criticos"
+      }
+    },
+    {
+      "partido": "psoe",
+      "seccion": "por-escrito",
+      "item": {
+        "texto": "El PSOE presentó el 10 de noviembre de 2026 su programa electoral con 300 medidas, según su nota de prensa.",
+        "estado": "VERIFICADO",
+        "fuentes": [
+          {
+            "url": "https://psoe.example/prensa/2026/11/10/nota-programa",
+            "medio": "Web del PSOE (ejemplo)",
+            "consultado": "2026-11-10",
+            "via": "buzon"
+          }
+        ]
+      }
+    }
+  ],
+  "decisiones": [
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-psoe",
+      "decision": "propuesto",
+      "motivo": "Ejemplo."
+    },
+    {
+      "url": "https://psoe.example/prensa/2026/11/10/nota-programa",
+      "decision": "propuesto",
+      "motivo": "Ejemplo."
+    }
+  ],
+  "objeciones_hechos": [],
+  "hosts_sin_registrar": []
+}

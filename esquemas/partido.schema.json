@@ -1,0 +1,396 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "partido.schema.json",
+  "title": "Ficha de partido (src/data/partidos/<id>.json)",
+  "description": "Una ficha por partido, con el mismo esquema para los cinco. Reglas que JSON Schema no expresa (citas de menos de 15 palabras en cualquier campo de texto, regla de enlaces, refs únicos, campos que solo valen en una sección) las comprueba validatePartido en procesado/src/lib/validate.ts.",
+  "type": "object",
+  "required": [
+    "id",
+    "nombre",
+    "corte",
+    "tarjeta",
+    "secciones",
+    "pendientes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "enum": [
+        "frente-amplio",
+        "podemos",
+        "pp",
+        "psoe",
+        "vox"
+      ],
+      "description": "Igual al nombre del archivo."
+    },
+    "nombre": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Nombre completo; solo se muestra como subtítulo."
+    },
+    "corte": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "Fecha de corte del contenido."
+    },
+    "tarjeta": {
+      "type": "object",
+      "description": "La tarjeta de portada.",
+      "required": [
+        "candidato",
+        "lema",
+        "fuente_lema",
+        "que_propone",
+        "fuente_propuesta"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "candidato": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lema": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Menos de 15 palabras."
+        },
+        "fuente_lema": {
+          "type": "string",
+          "pattern": "^https://\\S+$",
+          "description": "Puede ser la portada de la web oficial del propio partido (regla de enlaces)."
+        },
+        "que_propone": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Como máximo 20 palabras."
+        },
+        "fuente_propuesta": {
+          "type": "string",
+          "pattern": "^https://\\S+$",
+          "description": "Artículo o documento concreto."
+        },
+        "fuentes_propuesta": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^https://\\S+$"
+          },
+          "description": "Fuentes adicionales de la propuesta."
+        }
+      }
+    },
+    "secciones": {
+      "type": "array",
+      "description": "Exactamente las nueve secciones, en este orden y con estos títulos.",
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/seccion",
+          "properties": {
+            "id": {
+              "const": "candidatura"
+            },
+            "titulo": {
+              "const": "Candidato/a, lista y alianzas"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/seccion",
+          "properties": {
+            "id": {
+              "const": "lema-y-frases"
+            },
+            "titulo": {
+              "const": "Lema y frases de campaña"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/seccion",
+          "properties": {
+            "id": {
+              "const": "temas"
+            },
+            "titulo": {
+              "const": "Temas principales y qué evitan"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/seccion",
+          "properties": {
+            "id": {
+              "const": "por-escrito"
+            },
+            "titulo": {
+              "const": "Lo que hay por escrito"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/seccion",
+          "properties": {
+            "id": {
+              "const": "verificacion"
+            },
+            "titulo": {
+              "const": "Verificación de afirmaciones"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/seccion",
+          "properties": {
+            "id": {
+              "const": "historial"
+            },
+            "titulo": {
+              "const": "Historial: lo prometido frente a lo hecho"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/seccion",
+          "properties": {
+            "id": {
+              "const": "cambios"
+            },
+            "titulo": {
+              "const": "Cambios de discurso"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/seccion",
+          "properties": {
+            "id": {
+              "const": "criticos-defensores"
+            },
+            "titulo": {
+              "const": "Lo que dicen críticos y defensores"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/seccion",
+          "properties": {
+            "id": {
+              "const": "encuestas"
+            },
+            "titulo": {
+              "const": "Encuestas y escenarios"
+            }
+          }
+        }
+      ],
+      "items": false,
+      "minItems": 9
+    },
+    "pendientes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Puntos que se actualizarán después."
+    },
+    "descartados": {
+      "type": "array",
+      "description": "Rastro de auditoría: lo que no pasó la verificación. Nunca se muestra.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "estado": {
+            "enum": [
+              "NO VERIFICABLE",
+              "FALSO"
+            ]
+          },
+          "motivo": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "fuente": {
+      "type": "object",
+      "required": [
+        "url",
+        "medio"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://\\S+$",
+          "description": "Artículo o documento concreto (regla de enlaces)."
+        },
+        "medio": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Nombre visible del medio."
+        }
+      }
+    },
+    "seccion": {
+      "type": "object",
+      "required": [
+        "id",
+        "titulo",
+        "items"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "enum": [
+            "candidatura",
+            "lema-y-frases",
+            "temas",
+            "por-escrito",
+            "verificacion",
+            "historial",
+            "cambios",
+            "criticos-defensores",
+            "encuestas"
+          ]
+        },
+        "titulo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "nota_bulos": {
+          "type": "string",
+          "description": "Solo en \"verificacion\": la nota que se muestra cuando no hay verificaciones de bulos."
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "required": [
+        "ref",
+        "texto",
+        "estado",
+        "fuentes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "Identificador estable, único en la ficha."
+        },
+        "texto": {
+          "type": "string",
+          "minLength": 1
+        },
+        "estado": {
+          "enum": [
+            "VERIFICADO",
+            "CORREGIDO",
+            "PARCIAL"
+          ],
+          "description": "Solo estados publicables."
+        },
+        "matiz": {
+          "type": "string",
+          "description": "Obligatorio cuando estado es PARCIAL."
+        },
+        "fuentes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/fuente"
+          }
+        },
+        "cita": {
+          "type": "object",
+          "required": [
+            "texto",
+            "url"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "texto": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Literal, menos de 15 palabras."
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https://\\S+$"
+            }
+          }
+        },
+        "atribucion": {
+          "type": "string",
+          "description": "A quién se atribuye una interpretación («según X»)."
+        },
+        "veredicto": {
+          "enum": [
+            "Respaldado",
+            "Matizable",
+            "Engañoso",
+            "Sin datos"
+          ],
+          "description": "Solo en \"verificacion\" (obligatorio allí)."
+        },
+        "afirmacion": {
+          "type": "string",
+          "description": "Solo en \"verificacion\": lo que dijo el partido (o lo que circula, si bulo)."
+        },
+        "bulo": {
+          "const": true,
+          "description": "Solo en \"verificacion\": bulo sobre el partido, no dicho por él."
+        },
+        "antes": {
+          "type": "string",
+          "description": "Solo en \"cambios\" (obligatorio allí)."
+        },
+        "ahora": {
+          "type": "string",
+          "description": "Solo en \"cambios\" (obligatorio allí)."
+        },
+        "postura": {
+          "enum": [
+            "critico",
+            "defensor"
+          ],
+          "description": "Solo en \"criticos-defensores\" (obligatorio allí)."
+        },
+        "perfil": {
+          "enum": [
+            "interno",
+            "externo"
+          ],
+          "description": "Solo en \"criticos-defensores\": si procede de la propia candidatura."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "estado": {
+                "const": "PARCIAL"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "matiz"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

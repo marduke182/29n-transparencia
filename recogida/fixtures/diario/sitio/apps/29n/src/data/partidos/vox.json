@@ -1,0 +1,92 @@
+{
+  "id": "vox",
+  "nombre": "Vox",
+  "corte": "2026-11-09",
+  "tarjeta": {
+    "candidato": "Candidatura de ejemplo",
+    "lema": "Lema de ejemplo",
+    "fuente_lema": "https://vox.example/",
+    "que_propone": "Propuesta de ejemplo",
+    "fuente_propuesta": "https://medio-a.example/2026/10/15/vox-programa"
+  },
+  "secciones": [
+    {
+      "id": "candidatura",
+      "titulo": "Candidatura",
+      "items": []
+    },
+    {
+      "id": "lema-y-frases",
+      "titulo": "Lema y frases",
+      "items": []
+    },
+    {
+      "id": "temas",
+      "titulo": "Temas",
+      "items": []
+    },
+    {
+      "id": "por-escrito",
+      "titulo": "Por escrito",
+      "items": []
+    },
+    {
+      "id": "verificacion",
+      "titulo": "Verificación",
+      "items": []
+    },
+    {
+      "id": "historial",
+      "titulo": "Historial",
+      "items": []
+    },
+    {
+      "id": "cambios",
+      "titulo": "Cambios",
+      "items": []
+    },
+    {
+      "id": "criticos-defensores",
+      "titulo": "Críticos y defensores",
+      "items": [
+        {
+          "ref": "N1-critico",
+          "texto": "Una persona con nombre opinó sobre Vox (critico).",
+          "estado": "PARCIAL",
+          "matiz": "Según el relato de Medio A; no se ha consultado la declaración original.",
+          "fuentes": [
+            {
+              "url": "https://medio-a.example/2026/10/20/vox-critico",
+              "medio": "Medio A"
+            }
+          ],
+          "postura": "critico",
+          "perfil": "externo",
+          "busqueda": "equidad-2026-11-08-criticos"
+        },
+        {
+          "ref": "N1-defensor",
+          "texto": "Una persona con nombre opinó sobre Vox (defensor).",
+          "estado": "PARCIAL",
+          "matiz": "Según el relato de Medio A; no se ha consultado la declaración original.",
+          "fuentes": [
+            {
+              "url": "https://medio-a.example/2026/10/20/vox-defensor",
+              "medio": "Medio A"
+            }
+          ],
+          "postura": "defensor",
+          "perfil": "externo",
+          "busqueda": "equidad-2026-11-08-defensores"
+        }
+      ]
+    },
+    {
+      "id": "encuestas",
+      "titulo": "Encuestas",
+      "items": []
+    }
+  ],
+  "pendientes": [],
+  "descartados": []
+}

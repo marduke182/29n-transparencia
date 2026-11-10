@@ -1,0 +1,136 @@
+{
+  "partido": "pp",
+  "propuestas": [
+    {
+      "partido": "pp",
+      "seccion": "temas",
+      "item": {
+        "texto": "Alberto Núñez Feijóo propuso el 9 de noviembre de 2026 en un mitin bajar el IVA de la luz: «Bajaremos el IVA de la luz».",
+        "estado": "PARCIAL",
+        "matiz": "Según el relato de Medio A; no se ha consultado la transcripción original.",
+        "fuentes": [
+          {
+            "url": "https://medio-a.example/2026/11/09/feijoo-iva-luz",
+            "medio": "Medio A",
+            "consultado": "2026-11-10",
+            "via": "rss"
+          }
+        ],
+        "cita": {
+          "texto": "Bajaremos el IVA de la luz",
+          "url": "https://medio-a.example/2026/11/09/feijoo-iva-luz"
+        },
+        "atribucion": "Medio A"
+      }
+    },
+    {
+      "partido": "pp",
+      "seccion": "criticos-defensores",
+      "item": {
+        "texto": "La patronal Ejemplo Tres dijo el 9 de noviembre de 2026 sobre Partido Popular: «No compartimos esa propuesta».",
+        "estado": "PARCIAL",
+        "matiz": "Según el relato de Medio C; no se ha consultado la declaración original.",
+        "fuentes": [
+          {
+            "url": "https://medio-c.example/2026/11/09/critica-pp-1",
+            "medio": "Medio C",
+            "consultado": "2026-11-10",
+            "via": "web"
+          }
+        ],
+        "postura": "critico",
+        "perfil": "externo",
+        "atribucion": "Medio C",
+        "cita": {
+          "texto": "No compartimos esa propuesta",
+          "url": "https://medio-c.example/2026/11/09/critica-pp-1"
+        },
+        "busqueda": "diario-2026-11-10-criticos"
+      }
+    },
+    {
+      "partido": "pp",
+      "seccion": "criticos-defensores",
+      "item": {
+        "texto": "La plataforma Ejemplo Cuatro dijo el 9 de noviembre de 2026 sobre Partido Popular: «No compartimos esa propuesta».",
+        "estado": "PARCIAL",
+        "matiz": "Según el relato de Medio C; no se ha consultado la declaración original.",
+        "fuentes": [
+          {
+            "url": "https://medio-c.example/2026/11/09/critica-pp-2",
+            "medio": "Medio C",
+            "consultado": "2026-11-10",
+            "via": "web"
+          }
+        ],
+        "postura": "critico",
+        "perfil": "externo",
+        "atribucion": "Medio C",
+        "cita": {
+          "texto": "No compartimos esa propuesta",
+          "url": "https://medio-c.example/2026/11/09/critica-pp-2"
+        },
+        "busqueda": "diario-2026-11-10-criticos"
+      }
+    },
+    {
+      "partido": "vox",
+      "seccion": "temas",
+      "item": {
+        "texto": "Propuesta para otro partido.",
+        "estado": "PARCIAL",
+        "matiz": "m",
+        "fuentes": [
+          {
+            "url": "https://medio-b.example/politica/2026/11/09/abascal-mitin",
+            "medio": "Medio B"
+          }
+        ]
+      }
+    },
+    {
+      "partido": "pp",
+      "seccion": "candidatura",
+      "item": {
+        "texto": "Redacción propia de un hecho compartido.",
+        "estado": "VERIFICADO",
+        "hecho": "debate-oficial-2026-11-09",
+        "fuentes": [
+          {
+            "url": "https://oficial.example/transcripciones/debate-2026-11-09",
+            "medio": "Organismo oficial de ejemplo"
+          }
+        ]
+      }
+    }
+  ],
+  "decisiones": [
+    {
+      "url": "https://medio-a.example/2026/11/09/feijoo-iva-luz",
+      "decision": "propuesto",
+      "motivo": "Ejemplo."
+    },
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-pp-1",
+      "decision": "propuesto",
+      "motivo": "Ejemplo."
+    },
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-pp-2",
+      "decision": "propuesto",
+      "motivo": "Ejemplo."
+    },
+    {
+      "url": "https://medio-b.example/politica/2026/11/09/abascal-mitin",
+      "decision": "descartado",
+      "motivo": "Ejemplo."
+    },
+    {
+      "url": "https://oficial.example/transcripciones/debate-2026-11-09",
+      "decision": "descartado",
+      "motivo": "Ejemplo."
+    }
+  ],
+  "objeciones_hechos": [],
+  "hosts_sin_registrar": []
+}

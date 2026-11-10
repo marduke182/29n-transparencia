@@ -1,0 +1,36 @@
+{
+  "busqueda": "diario-2026-11-10-criticos",
+  "tipo": "criticos",
+  "partido": "pp",
+  "consultas": [
+    {
+      "texto": "PP critica Feijóo noviembre 2026",
+      "estado": "ok",
+      "resultados": 0,
+      "nota": ""
+    },
+    {
+      "texto": "PP 29N critican a Feijóo",
+      "estado": "ok",
+      "resultados": 0,
+      "nota": ""
+    }
+  ],
+  "resultados": [
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-pp-1",
+      "medio": "Medio C",
+      "fecha": "2026-11-09",
+      "quien": "La patronal Ejemplo Tres",
+      "resumen": "La patronal Ejemplo Tres critica una propuesta de Partido Popular."
+    },
+    {
+      "url": "https://medio-c.example/2026/11/09/critica-pp-2",
+      "medio": "Medio C",
+      "fecha": "2026-11-09",
+      "quien": "La plataforma Ejemplo Cuatro",
+      "resumen": "La plataforma Ejemplo Cuatro critica una propuesta de Partido Popular."
+    }
+  ],
+  "nota": ""
+}

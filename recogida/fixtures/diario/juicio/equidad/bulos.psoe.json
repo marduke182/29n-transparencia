@@ -1,0 +1,21 @@
+{
+  "busqueda": "diario-2026-11-10-bulos",
+  "tipo": "bulos",
+  "partido": "psoe",
+  "consultas": [
+    {
+      "texto": "PSOE bulo verificación noviembre 2026",
+      "estado": "ok",
+      "resultados": 0,
+      "nota": ""
+    },
+    {
+      "texto": "PSOE bulo desmiente",
+      "estado": "bloqueada",
+      "resultados": 0,
+      "nota": "Marcada bloqueada en la tarea: no se ejecutó."
+    }
+  ],
+  "resultados": [],
+  "nota": ""
+}

@@ -1,0 +1,29 @@
+{
+  "hechos": [
+    {
+      "hecho": "debate-oficial-2026-11-09",
+      "seccion": "candidatura",
+      "partidos": [
+        "pp",
+        "psoe"
+      ],
+      "item": {
+        "texto": "Alberto Núñez Feijóo (PP) y Persona Tres (PSOE) participaron en el debate del 9 de noviembre de 2026, según la transcripción oficial.",
+        "estado": "VERIFICADO",
+        "fuentes": [
+          {
+            "url": "https://oficial.example/transcripciones/debate-2026-11-09",
+            "medio": "Organismo oficial de ejemplo",
+            "consultado": "2026-11-10",
+            "via": "transcripcion"
+          }
+        ],
+        "cita": {
+          "texto": "Mañana empieza la campaña",
+          "url": "https://oficial.example/transcripciones/debate-2026-11-09"
+        }
+      },
+      "motivo": "Documento clasificado como relevante para PP y PSOE."
+    }
+  ]
+}

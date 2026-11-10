@@ -1,0 +1,22 @@
+{
+  "emisor": "medio-b",
+  "candidatos": [
+    {
+      "url": "https://medio-b.example/politica/2026/11/09/abascal-mitin",
+      "titulo": "Abascal cierra un mitin en Toledo",
+      "fecha": "2026-11-09",
+      "partidos": [
+        "vox"
+      ]
+    },
+    {
+      "url": "https://fuera-de-fuente.example/x",
+      "titulo": "Otro host",
+      "fecha": "2026-11-09",
+      "partidos": [
+        "vox"
+      ]
+    }
+  ],
+  "nota": ""
+}

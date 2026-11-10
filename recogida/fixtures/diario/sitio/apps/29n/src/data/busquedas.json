@@ -1,0 +1,131 @@
+{
+  "busquedas": [
+    {
+      "id": "equidad-2026-11-08-criticos",
+      "tipo": "criticos",
+      "fecha": "2026-11-08",
+      "periodo": {
+        "desde": "2026-10-05",
+        "hasta": "2026-11-08"
+      },
+      "consultas": [
+        {
+          "plantilla": "{partido} critica {termino} noviembre 2026",
+          "motor": "WebSearch",
+          "dominios": [],
+          "terminos": {
+            "frente-amplio": "Persona Uno",
+            "podemos": "Persona Dos",
+            "pp": "Feijóo",
+            "psoe": "Persona Tres",
+            "vox": "Abascal"
+          }
+        },
+        {
+          "plantilla": "{partido} 29N critican a {termino}",
+          "motor": "WebSearch",
+          "dominios": [
+            "medio-c.example"
+          ],
+          "terminos": {
+            "frente-amplio": "Persona Uno",
+            "podemos": "Persona Dos",
+            "pp": "Feijóo",
+            "psoe": "Persona Tres",
+            "vox": "Abascal"
+          }
+        }
+      ],
+      "resultados": {
+        "frente-amplio": 1,
+        "podemos": 1,
+        "pp": 1,
+        "psoe": 1,
+        "vox": 1
+      }
+    },
+    {
+      "id": "equidad-2026-11-08-defensores",
+      "tipo": "defensores",
+      "fecha": "2026-11-08",
+      "periodo": {
+        "desde": "2026-10-05",
+        "hasta": "2026-11-08"
+      },
+      "consultas": [
+        {
+          "plantilla": "{partido} {termino} respaldo apoyo noviembre 2026",
+          "motor": "WebSearch",
+          "dominios": [],
+          "terminos": {
+            "frente-amplio": "Persona Uno",
+            "podemos": "Persona Dos",
+            "pp": "Feijóo",
+            "psoe": "Persona Tres",
+            "vox": "Abascal"
+          }
+        }
+      ],
+      "resultados": {
+        "frente-amplio": 1,
+        "podemos": 1,
+        "pp": 1,
+        "psoe": 1,
+        "vox": 1
+      }
+    },
+    {
+      "id": "equidad-2026-11-08-bulos",
+      "tipo": "bulos",
+      "fecha": "2026-11-08",
+      "periodo": {
+        "desde": "2026-10-05",
+        "hasta": "2026-11-08"
+      },
+      "consultas": [
+        {
+          "plantilla": "{partido} bulo verificación noviembre 2026",
+          "motor": "WebSearch",
+          "dominios": []
+        },
+        {
+          "plantilla": "{partido} bulo desmiente",
+          "motor": "WebSearch",
+          "dominios": [
+            "verificador.example"
+          ]
+        }
+      ],
+      "resultados": {
+        "frente-amplio": 1,
+        "podemos": 1,
+        "pp": 1,
+        "psoe": 1,
+        "vox": 1
+      }
+    },
+    {
+      "id": "equidad-2026-11-08-causas",
+      "tipo": "causas",
+      "fecha": "2026-11-08",
+      "periodo": {
+        "desde": "2026-10-05",
+        "hasta": "2026-11-08"
+      },
+      "consultas": [
+        {
+          "plantilla": "{partido} causa judicial noviembre 2026",
+          "motor": "WebSearch",
+          "dominios": []
+        }
+      ],
+      "resultados": {
+        "frente-amplio": 1,
+        "podemos": 1,
+        "pp": 1,
+        "psoe": 1,
+        "vox": 1
+      }
+    }
+  ]
+}

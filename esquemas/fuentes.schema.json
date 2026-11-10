@@ -1,0 +1,382 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fuentes.schema.json",
+  "title": "Registro de fuentes (src/data/fuentes.json)",
+  "description": "Cada emisor (el sitio al que apunta un enlace) citado en las fichas, con solo valoraciones externas publicadas. Reglas cruzadas (todo host enlazado tiene un emisor, ningún host bajo dos emisores, ningún emisor sin citar salvo las webs de partido, una web por partido, puntuación MBFC dentro de la banda de su etiqueta, estudios CIS conocidos) las comprueba validateFuentes en procesado/src/lib/fuentes.ts. Tipos en procesado/src/data/fuentes.ts.",
+  "type": "object",
+  "required": [
+    "mbfc",
+    "cis_estudios",
+    "emisores"
+  ],
+  "properties": {
+    "mbfc": {
+      "type": "object",
+      "required": [
+        "nombre",
+        "metodologia"
+      ],
+      "properties": {
+        "nombre": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metodologia": {
+          "type": "string",
+          "pattern": "^https://\\S+$"
+        }
+      }
+    },
+    "cis_estudios": {
+      "type": "object",
+      "description": "Clave: número de estudio del CIS.",
+      "propertyNames": {
+        "pattern": "^\\d+$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "titulo",
+          "campo",
+          "muestra",
+          "url"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "titulo": {
+            "type": "string",
+            "minLength": 1
+          },
+          "campo": {
+            "type": "string",
+            "pattern": "\\b\\d{4}\\b",
+            "description": "Fechas del trabajo de campo, con el año."
+          },
+          "muestra": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "url": {
+            "type": "string",
+            "pattern": "^https://\\S+$"
+          },
+          "datos": {
+            "type": "string",
+            "pattern": "^https://\\S+$",
+            "description": "Archivo de datos publicado, si existe."
+          }
+        }
+      }
+    },
+    "emisores": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/emisor"
+      }
+    }
+  },
+  "$defs": {
+    "emisor": {
+      "type": "object",
+      "required": [
+        "id",
+        "nombre",
+        "hosts",
+        "tipo"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Único; ancla en /fuentes/."
+        },
+        "nombre": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hosts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^(?!www\\.)[a-z0-9.-]+$"
+          },
+          "description": "Hosts exactos, en minúsculas y sin www."
+        },
+        "tipo": {
+          "enum": [
+            "medio",
+            "verificador",
+            "agencia",
+            "oficial",
+            "partido",
+            "datos"
+          ]
+        },
+        "partido": {
+          "enum": [
+            "frente-amplio",
+            "podemos",
+            "pp",
+            "psoe",
+            "vox"
+          ],
+          "description": "Solo en tipo \"partido\"."
+        },
+        "acceso": {
+          "type": "object",
+          "description": "Solo en tipo \"partido\", y obligatorio allí: comprobación fechada de si la web se deja leer por clientes automatizados.",
+          "required": [
+            "estado",
+            "comprobado",
+            "detalle"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "estado": {
+              "enum": [
+                "abierto",
+                "parcial",
+                "bloqueado"
+              ]
+            },
+            "comprobado": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "description": "Fecha ISO (AAAA-MM-DD); el validador rechaza fechas imposibles."
+            },
+            "detalle": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Lo que respondió el sitio, como hecho."
+            }
+          }
+        },
+        "titular": {
+          "type": "object",
+          "description": "Propietario, según su aviso legal.",
+          "required": [
+            "nombre",
+            "url"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "nombre": {
+              "type": "string",
+              "minLength": 1
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https://\\S+$"
+            }
+          }
+        },
+        "nota": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mbfc": {
+          "type": "object",
+          "description": "Solo en medio, verificador o agencia.",
+          "required": [
+            "sesgo",
+            "factual",
+            "credibilidad",
+            "fecha",
+            "consultado",
+            "url"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "sesgo": {
+              "enum": [
+                "Left",
+                "Left-Center",
+                "Least Biased",
+                "Right-Center",
+                "Right"
+              ]
+            },
+            "puntuacion": {
+              "type": "number",
+              "minimum": -10,
+              "maximum": 10,
+              "description": "Dentro de la banda de su etiqueta; ausente si MBFC solo publica la etiqueta."
+            },
+            "factual": {
+              "enum": [
+                "Very High",
+                "High",
+                "Mostly Factual",
+                "Mixed",
+                "Medium",
+                "Low",
+                "Very Low"
+              ]
+            },
+            "credibilidad": {
+              "enum": [
+                "Very High",
+                "High",
+                "Mostly Factual",
+                "Mixed",
+                "Medium",
+                "Low",
+                "Very Low"
+              ]
+            },
+            "cuestionable": {
+              "const": true
+            },
+            "fecha": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "description": "Última actualización de la página de MBFC."
+            },
+            "consultado": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "description": "Cuándo leímos el valor."
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https://(www\\.)?mediabiasfactcheck\\.com/"
+            }
+          }
+        },
+        "cis": {
+          "type": "array",
+          "description": "Solo en medio, verificador o agencia. Pregunta de ubicación ideológica del medio: media de 1 (más a la izquierda) a 10 (más a la derecha). Un estudio como mucho una vez.",
+          "items": {
+            "type": "object",
+            "required": [
+              "estudio",
+              "media",
+              "de",
+              "n",
+              "consultado"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "estudio": {
+                "type": "string",
+                "description": "Clave de cis_estudios."
+              },
+              "media": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 10
+              },
+              "de": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Desviación típica."
+              },
+              "n": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Respuestas válidas."
+              },
+              "consultado": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "description": "Fecha ISO (AAAA-MM-DD); el validador rechaza fechas imposibles."
+              }
+            }
+          }
+        },
+        "recogida": {
+          "type": "object",
+          "description": "Cómo lo leen los agentes de recogida; sin el campo, búsqueda web.",
+          "required": [
+            "metodo"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "metodo": {
+              "enum": [
+                "sitemap",
+                "rss",
+                "api",
+                "seccion",
+                "busqueda",
+                "omitir"
+              ]
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https://\\S+$"
+            },
+            "nota": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tipo": {
+                "const": "partido"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "partido",
+              "acceso"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "partido"
+                  ]
+                },
+                {
+                  "required": [
+                    "acceso"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tipo": {
+                "enum": [
+                  "oficial",
+                  "partido",
+                  "datos"
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "mbfc"
+                  ]
+                },
+                {
+                  "required": [
+                    "cis"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}
