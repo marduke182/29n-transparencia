@@ -1,7 +1,7 @@
 /**
- * Types of the party files (one JSON per party, same schema for all five). The files
+ * Types of the party files (one JSON per party, same schema for all four). The files
  * are validated by `validatePartido` (validate.ts). Standalone copy: the site's
- * version also imports the five JSON files (`RAW_PARTIDOS`, `getPartido`,
+ * version also imports the four JSON files (`RAW_PARTIDOS`, `getPartido`,
  * `getPartidos`); those are left out because this repository publishes no data.
  */
 import type { PartyId } from '../config';

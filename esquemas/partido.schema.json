@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "partido.schema.json",
   "title": "Ficha de partido (src/data/partidos/<id>.json)",
-  "description": "Una ficha por partido, con el mismo esquema para los cinco. Reglas que JSON Schema no expresa (citas de menos de 15 palabras en cualquier campo de texto, regla de enlaces, refs únicos, campos que solo valen en una sección) las comprueba validatePartido en procesado/src/lib/validate.ts.",
+  "description": "Una ficha por partido, con el mismo esquema para los cuatro. Reglas que JSON Schema no expresa (citas de menos de 15 palabras en cualquier campo de texto, regla de enlaces, refs únicos, campos que solo valen en una sección) las comprueba validatePartido en procesado/src/lib/validate.ts.",
   "type": "object",
   "required": [
     "id",
@@ -17,7 +17,6 @@
     "id": {
       "enum": [
         "frente-amplio",
-        "podemos",
         "pp",
         "psoe",
         "vox"

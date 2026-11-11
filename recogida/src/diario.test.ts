@@ -36,7 +36,7 @@ import {
   type Busqueda,
 } from './diario.ts';
 
-const PARTIDOS: PartyId[] = ['frente-amplio', 'podemos', 'pp', 'psoe', 'vox'];
+const PARTIDOS: PartyId[] = ['frente-amplio', 'pp', 'psoe', 'vox'];
 const FECHA = '2026-11-10';
 
 const run = (id: string, tipo: string, fecha: string, plantilla = '{partido} critica a {termino}'): Busqueda => ({
@@ -44,8 +44,8 @@ const run = (id: string, tipo: string, fecha: string, plantilla = '{partido} cri
   tipo,
   fecha,
   periodo: { desde: '2026-10-05', hasta: fecha },
-  consultas: [{ plantilla, motor: 'WebSearch', dominios: ['medio.es'], terminos: { 'frente-amplio': 'Colau', podemos: 'Belarra', pp: 'Feijóo', psoe: 'Sánchez', vox: 'Abascal' } }],
-  resultados: { 'frente-amplio': 1, podemos: 1, pp: 1, psoe: 1, vox: 1 },
+  consultas: [{ plantilla, motor: 'WebSearch', dominios: ['medio.es'], terminos: { 'frente-amplio': 'Colau', pp: 'Feijóo', psoe: 'Sánchez', vox: 'Abascal' } }],
+  resultados: { 'frente-amplio': 1, pp: 1, psoe: 1, vox: 1 },
 });
 
 describe('equal searches', () => {
@@ -60,7 +60,7 @@ describe('equal searches', () => {
   it('builds one task per kind and party, identical except for the party', () => {
     const tareas = tareasEquidad(registro, FECHA, '2026-11-08');
     expect(tareas.map((t) => t.partido)).toEqual(PARTIDOS);
-    expect(tareas.map((t) => t.consultas[0]!.texto)).toEqual(['Frente Amplio critica a Colau', 'Podemos critica a Belarra', 'PP critica a Feijóo', 'PSOE critica a Sánchez', 'Vox critica a Abascal']);
+    expect(tareas.map((t) => t.consultas[0]!.texto)).toEqual(['Frente Amplio critica a Colau', 'PP critica a Feijóo', 'PSOE critica a Sánchez', 'Vox critica a Abascal']);
     expect(new Set(tareas.map((t) => JSON.stringify({ ...t, partido: '', nombre: '', salida: '', consultas: t.consultas.map((c) => ({ ...c, texto: '' })) }))).size).toBe(1);
     expect(tareas[0]).toMatchObject({ busqueda: 'diario-2026-11-10-criticos', periodo: { desde: '2026-11-08', hasta: FECHA }, salida: 'equidad/criticos.frente-amplio.json' });
   });
@@ -71,8 +71,8 @@ describe('equal searches', () => {
 
   it('writes the day entry with the template queries, counts per party and why a search did not complete', () => {
     const equidad = {
-      urls: { criticos: { 'frente-amplio': ['https://a.es/1'], podemos: [], pp: ['https://a.es/2', 'https://a.es/3'], psoe: [] } },
-      estados: { criticos: { 'frente-amplio': 'completa', podemos: 'completa', pp: 'completa', psoe: 'incompleta' } },
+      urls: { criticos: { 'frente-amplio': ['https://a.es/1'], pp: ['https://a.es/2', 'https://a.es/3'], psoe: [] } },
+      estados: { criticos: { 'frente-amplio': 'completa', pp: 'completa', psoe: 'incompleta' } },
       notas: { criticos: { pp: 'Un dominio tardó.' } },
       bloqueadas: {},
     } as EquidadDia;
@@ -80,7 +80,7 @@ describe('equal searches', () => {
     expect(entrada).toMatchObject({
       id: 'diario-2026-11-10-criticos',
       periodo: { desde: '2026-11-08', hasta: FECHA },
-      resultados: { 'frente-amplio': 1, podemos: 0, pp: 2, psoe: 0, vox: 0 },
+      resultados: { 'frente-amplio': 1, pp: 2, psoe: 0, vox: 0 },
       notas: { pp: 'Un dominio tardó.', psoe: expect.stringMatching(/quedó incompleta/), vox: 'La búsqueda no devolvió salida para este partido.' },
     });
     expect(entrada!.consultas).toEqual(registro[1]!.consultas);
@@ -163,9 +163,9 @@ describe('classification tasks', () => {
       { id: 'a', meta: { url: 'https://medio.es/a', url_canonica: 'https://medio.es/a', consultado: '2026-11-01', via: 'web' as const, sha256_contenido: '', estado_http: 200 }, texto: 'El PSOE.' },
       { id: idDocumento(urlCanonica(url)), meta: { url, url_canonica: url, consultado: '2026-11-01', via: 'web' as const, sha256_contenido: '', estado_http: 200 }, texto: 'Nada.' },
     ];
-    const tareas = tareasClasificar({ fecha: FECHA, raizCache: '/cache', documentos, alias: todos, porEquidad: [{ salida: { busqueda: 'diario-2026-11-10-criticos', partido: 'podemos', resultados: [{ url }] } }] });
+    const tareas = tareasClasificar({ fecha: FECHA, raizCache: '/cache', documentos, alias: todos, porEquidad: [{ salida: { busqueda: 'diario-2026-11-10-criticos', partido: 'pp', resultados: [{ url }] } }] });
     expect(tareas.map((t) => [t.doc_id, t.partido, t.origen])).toEqual([
-      [idDocumento(urlCanonica(url)), 'podemos', ['diario-2026-11-10-criticos']],
+      [idDocumento(urlCanonica(url)), 'pp', ['diario-2026-11-10-criticos']],
       ['b', 'pp', ['alias']],
       ['b', 'vox', ['alias']],
     ].sort((x, y) => String(x[0]).localeCompare(String(y[0]))));
@@ -225,7 +225,7 @@ describe('preparar', () => {
       ],
     });
     expect(porPartido.pp).toEqual([]);
-    expect(descartes.map((d) => d.motivo)).toEqual([expect.stringMatching(/no tiene salida para los cinco/), expect.stringMatching(/veda/)]);
+    expect(descartes.map((d) => d.motivo)).toEqual([expect.stringMatching(/no tiene salida para los cuatro/), expect.stringMatching(/veda/)]);
   });
 
   it('drops proposals and shared facts whose pregunta does not match the seccion, and keeps a matching pregunta', () => {
@@ -296,21 +296,20 @@ describe('ajustar', () => {
   it('promotes held critics and defenders up to the smallest total, oldest ref first', () => {
     const fichas = {
       'frente-amplio': ficha(['critico'], [['12', 'critico']]),
-      podemos: ficha(['critico'], [['9', 'critico'], ['10', 'defensor']]),
       pp: ficha(['critico'], [['103', 'critico'], ['12', 'critico']]),
       psoe: ficha(['critico'], [['5', 'critico']]),
       vox: ficha(['critico'], [['7', 'critico']]),
     } as never;
     const { promovidos, n } = promover(fichas);
     expect(n).toEqual({ critico: 2, defensor: 0 });
-    expect(promovidos.map((p) => `${p.partido}:${p.ref}`)).toEqual(['frente-amplio:12', 'podemos:9', 'pp:12', 'psoe:5', 'vox:7']);
+    expect(promovidos.map((p) => `${p.partido}:${p.ref}`)).toEqual(['frente-amplio:12', 'pp:12', 'psoe:5', 'vox:7']);
     const pp = (fichas as Record<string, ReturnType<typeof ficha>>).pp!;
     expect(pp.secciones[0]!.items.at(-1)).toEqual({ ref: '12', postura: 'critico' });
     expect(pp.en_espera).toEqual([{ ref: '103', postura: 'critico', seccion: 'criticos-defensores' }]);
     expect('en_espera' in (fichas as Record<string, object>).vox!).toBe(false);
   });
 
-  it('moves corte in all five only when a party file changed', () => {
+  it('moves corte in all four only when a party file changed', () => {
     const fichas = Object.fromEntries(PARTIDOS.map((p) => [p, ficha([])])) as never;
     const antes = Object.fromEntries(PARTIDOS.map((p) => [p, JSON.stringify(ficha([]))])) as never;
     expect(igualarCorte(fichas, antes, FECHA)).toBe(false);
@@ -379,10 +378,9 @@ describe('búsqueda igual: bloqueada para todos', () => {
     .map((t) => (t.tipo === 'bulos' ? { ...t, consultas: t.consultas.map((c) => ({ ...c, motor: 'WebFetch' })) } : t));
   const bloqueo = { fecha: FECHA, estado_http: 403, motivo: 'HTTP 403', url: 'https://newtral.es/' };
 
-  it('probes each WebFetch URL and each filtered domain once, and the five tasks reach the same domains', () => {
+  it('probes each WebFetch URL and each filtered domain once, and the four tasks reach the same domains', () => {
     expect(urlsSondeo(tareas())).toEqual([
       'https://maldita.es/tag/Abascal',
-      'https://maldita.es/tag/Belarra',
       'https://maldita.es/tag/Colau',
       'https://maldita.es/tag/Feijóo',
       'https://maldita.es/tag/Sánchez',
@@ -391,10 +389,10 @@ describe('búsqueda igual: bloqueada para todos', () => {
     ]);
     expect(dominiosDistintos(tareas())).toEqual([]);
     const distinta = tareas().map((t) => (t.partido === 'vox' && t.tipo === 'criticos' ? { ...t, consultas: [t.consultas[0]!, { ...t.consultas[1]!, dominios: ['otro.es'] }] } : t));
-    expect(dominiosDistintos(distinta)).toEqual(['criticos: las consultas no llegan a los mismos dominios en los cinco partidos']);
+    expect(dominiosDistintos(distinta)).toEqual(['criticos: las consultas no llegan a los mismos dominios en los cuatro partidos']);
   });
 
-  it('marks a blocked query in all five tasks', () => {
+  it('marks a blocked query in all four tasks', () => {
     const marcadas = marcarBloqueadas(tareas(), { 'newtral.es': bloqueo });
     const criticos = marcadas.filter((t) => t.tipo === 'criticos');
     expect(criticos.map((t) => t.consultas[1]!.bloqueada)).toEqual(PARTIDOS.map(() => ({ host: 'newtral.es', estado_http: 403, fecha: FECHA, motivo: 'HTTP 403' })));
@@ -402,7 +400,7 @@ describe('búsqueda igual: bloqueada para todos', () => {
     expect(marcadas.filter((t) => t.tipo === 'bulos').every((t) => !t.consultas[0]!.bloqueada)).toBe(true);
   });
 
-  it('blocked for all: passes with the other queries done, ignores the blocked host, and discloses it the same for all five', () => {
+  it('blocked for all: passes with the other queries done, ignores the blocked host, and discloses it the same for all four', () => {
     const [tarea] = marcarBloqueadas(tareas(), { 'newtral.es': bloqueo }).filter((t) => t.tipo === 'criticos' && t.partido === 'pp');
     const salida = { resultados: [{ url: 'https://newtral.es/x' }, { url: 'https://medio.es/y' }], consultas: [{ texto: 'PP critica', estado: 'ok' }, { texto: 'PP critica', estado: 'bloqueada' }] };
     expect(estadoSalida(tarea!, salida)).toBe('completa');
@@ -415,11 +413,11 @@ describe('búsqueda igual: bloqueada para todos', () => {
     };
     const registro = [run('equidad-2026-11-09-criticos', 'criticos', '2026-11-09')];
     const [entrada] = entradasDelDia({ fecha: FECHA, desde: '2026-11-08', registro, equidad });
-    expect(entrada!.nota).toBe('Ejecución diaria con las consultas de equidad-2026-11-09-criticos. Consultas bloqueadas para los cinco partidos (no se sortean ni se fuerzan): n.º 2, newtral.es, HTTP 403, 2026-11-10.');
+    expect(entrada!.nota).toBe('Ejecución diaria con las consultas de equidad-2026-11-09-criticos. Consultas bloqueadas para los cuatro partidos (no se sortean ni se fuerzan): n.º 2, newtral.es, HTTP 403, 2026-11-10.');
     expect(entrada!.notas).toBeUndefined();
   });
 
-  it('failed for one party only: the kind is dropped for all five', () => {
+  it('failed for one party only: the kind is dropped for all four', () => {
     const [tarea] = tareas().filter((t) => t.tipo === 'criticos' && t.partido === 'pp');
     expect(estadoSalida(tarea!, { resultados: [], consultas: [{ texto: 'PP critica', estado: 'ok' }, { texto: 'PP critica', estado: 'error', nota: 'HTTP 500' }] })).toBe('incompleta');
     const { porPartido, descartes } = preparar({
@@ -429,7 +427,7 @@ describe('búsqueda igual: bloqueada para todos', () => {
       adjudicados: [{ archivo: 'vox.json', contenido: [{ partido: 'vox', seccion: 'criticos-defensores', item: { texto: 'X.', estado: 'PARCIAL', matiz: 'm', fuentes: [{ url: 'https://medio.es/c', medio: 'M' }], postura: 'critico', busqueda: 'diario-2026-11-10-criticos' } }] }],
     });
     expect(porPartido.vox).toEqual([]);
-    expect(descartes[0]!.motivo).toMatch(/no tiene salida para los cinco/);
+    expect(descartes[0]!.motivo).toMatch(/no tiene salida para los cuatro/);
   });
 
   it('the agent claims a 403 the script never saw: incomplete', () => {
@@ -437,7 +435,7 @@ describe('búsqueda igual: bloqueada para todos', () => {
     expect(estadoSalida(tarea!, { resultados: [], consultas: [{ texto: 'PP critica', estado: 'ok' }, { texto: 'PP critica', estado: 'bloqueada', nota: 'HTTP 403' }] })).toBe('incompleta');
   });
 
-  it('every query blocked: not run today, for all five, with the reason', () => {
+  it('every query blocked: not run today, for all four, with the reason', () => {
     const marcadas = marcarBloqueadas(tareas(), { 'maldita.es': bloqueo }).filter((t) => t.tipo === 'bulos');
     expect(marcadas.map((t) => estadoSalida(t, undefined))).toEqual(PARTIDOS.map(() => 'no-ejecutada'));
     const equidad: EquidadDia = { urls: {}, estados: { bulos: Object.fromEntries(PARTIDOS.map((p) => [p, 'no-ejecutada'])) }, notas: {}, bloqueadas: { bulos: [{ host: 'maldita.es', estado_http: 403, fecha: FECHA, motivo: 'HTTP 403', indice: 0 }] } };
@@ -446,7 +444,7 @@ describe('búsqueda igual: bloqueada para todos', () => {
     expect(entrada!.resultados).toEqual(Object.fromEntries(PARTIDOS.map((p) => [p, 0])));
   });
 
-  it('sondear: a 403 on a probed domain is recorded with the date and marks the query for all five', async () => {
+  it('sondear: a 403 on a probed domain is recorded with the date and marks the query for all four', async () => {
     const respuestas: Record<string, number> = { 'https://newtral.es/robots.txt': 200, 'https://newtral.es/': 403, 'https://medio.es/robots.txt': 200, 'https://medio.es/': 200, 'https://maldita.es/robots.txt': 200 };
     const fetch = (async (url: string) => new Response('', { status: respuestas[String(url)] ?? 404, headers: { 'content-type': 'text/html' } })) as unknown as typeof globalThis.fetch;
     const traedor = new Traedor({ fecha: FECHA, fetch, reloj: () => 0, esperar: async () => {}, resolver: async () => ['93.184.215.14'], soloBuzon: [] });
@@ -461,7 +459,7 @@ describe('problemasAdjudicacion', () => {
   const completo = (partido: string, extra: Record<string, unknown> = {}) => ({ partido, propuestas: [], decisiones: [], ...extra });
   const todos = () => Object.fromEntries(PARTIDOS.map((p) => [p, completo(p)])) as Record<string, unknown>;
 
-  it('accepts five complete files', () => {
+  it('accepts four complete files', () => {
     expect(problemasAdjudicacion(todos(), [])).toEqual([]);
   });
 
@@ -469,12 +467,12 @@ describe('problemasAdjudicacion', () => {
     const archivos = todos();
     delete archivos.vox;
     archivos.pp = completo('psoe');
-    archivos.podemos = { partido: 'podemos', propuestas: [] };
+    archivos.psoe = { partido: 'psoe', propuestas: [] };
     archivos['frente-amplio'] = completo('frente-amplio', { propuestas: 'ninguna' });
     expect(problemasAdjudicacion(archivos, [])).toEqual([
       'adjudicado/frente-amplio.json: propuestas no es una lista',
-      'adjudicado/podemos.json: decisiones no es una lista',
       'adjudicado/pp.json: partido es "psoe"',
+      'adjudicado/psoe.json: decisiones no es una lista',
       'adjudicado/vox.json: falta o no es un objeto JSON',
     ]);
   });

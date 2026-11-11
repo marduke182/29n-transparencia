@@ -106,7 +106,7 @@ describe.each(PARTY_IDS)('getFocus(%s)', (id) => {
 
 it('matches the fixture bases', () => {
   // Bases exclude POL; a double of one evento counts once.
-  expect(PARTY_IDS.map((id) => getFocus(id).n)).toEqual([45, 32, 34, 36, 38]);
+  expect(PARTY_IDS.map((id) => getFocus(id).n)).toEqual([45, 32, 34, 36]);
 });
 
 it('throws on data that breaks a rule (the build gate)', () => {

@@ -1,6 +1,6 @@
 # Criterio de equidad entre fichas
 
-Reglas que se aplican a las cinco fichas de partido por igual desde el 10 nov 2026. Cada regla indica si el sitio la comprueba al publicar (la publicación se detiene) o si es una regla editorial que se aplica al preparar los datos. Solo están las reglas y los esquemas, no los datos. El resumen de los cambios, por fecha, está en [CAMBIOS](../CAMBIOS.md). Si algo de aquí difiere del código del sitio, manda el código.
+Reglas que se aplican a las cuatro fichas de partido por igual desde el 10 nov 2026. Cada regla indica si el sitio la comprueba al publicar (la publicación se detiene) o si es una regla editorial que se aplica al preparar los datos. Solo están las reglas y los esquemas, no los datos. El resumen de los cambios, por fecha, está en [CAMBIOS](../CAMBIOS.md). Si algo de aquí difiere del código del sitio, manda el código.
 
 ## Estado estricto
 
@@ -19,28 +19,27 @@ Un hecho compartido es el que aparece en más de una ficha: encuestas, votacione
 - Se marca con la misma clave `hecho` en todos los elementos que lo recogen.
 - El sitio comprueba que los elementos con la misma clave tengan el mismo `texto`, `estado`, conjunto de URL de fuentes (sin importar el orden ni las repeticiones), `matiz`, `cita` y `atribucion`.
 - El sitio comprueba que un mismo `texto` en varias fichas lleve una clave `hecho` común.
-- Encuestas: cada clave `hecho` de la sección de encuestas aparece en las cinco fichas.
-- Votaciones: cada clave `hecho` que empieza por `votacion-` aparece en las cinco fichas, en cualquier sección.
-- Línea propia de un partido en las encuestas (un elemento de encuestas sin `hecho`): la misma `ref` en las cinco fichas, o en ninguna.
+- Encuestas: cada clave `hecho` de la sección de encuestas aparece en las cuatro fichas.
+- Votaciones: cada clave `hecho` que empieza por `votacion-` aparece en las cuatro fichas, en cualquier sección.
+- Línea propia de un partido en las encuestas (un elemento de encuestas sin `hecho`): la misma `ref` en las cuatro fichas, o en ninguna.
 - En los tres casos, si falta en alguna ficha la publicación se detiene. Una verificación compartida por dos partidos queda fuera de estas reglas.
-- La línea del CIS de cada partido es una frase de plantilla, una por partido, tomada del PDF del CIS. El texto de la plantilla es una regla editorial; el sitio comprueba que esté en las cinco fichas.
-- El sitio comprueba también que la fecha de corte sea la misma en las cinco fichas.
+- La línea del CIS de cada partido es una frase de plantilla, una por partido, tomada del PDF del CIS. El texto de la plantilla es una regla editorial; el sitio comprueba que esté en las cuatro fichas.
+- El sitio comprueba también que la fecha de corte sea la misma en las cuatro fichas.
 - Regla editorial: las líneas propias de un partido en otras secciones siguen la misma norma (una por partido con la misma plantilla, o ninguna).
 
 ## Críticos y defensores
 
 - Cada ficha tiene el mismo número N de críticos y el mismo número N de defensores. Hoy N = 1.
-- N sale de una búsqueda igual para los cinco: es el máximo que todos los partidos alcanzan con fuentes válidas.
+- N sale de una búsqueda igual para los cuatro: es el máximo que todos los partidos alcanzan con fuentes válidas.
 - Solo cuentan personas u organizaciones con nombre. Los análisis y las columnas de opinión de un medio no cuentan.
-- Un defensor puede ser un político con nombre de un partido que concurre en una candidatura conjunta con el partido en cuestión. La regla es la misma para los cinco; por ejemplo, IU para el Frente Amplio y ERC para Podemos. Es una regla editorial.
+- Un defensor puede ser un político con nombre de un partido que concurre en una candidatura conjunta con el partido en cuestión. La regla es la misma para los cuatro; por ejemplo, IU para el Frente Amplio. Es una regla editorial.
 - Una cita que defiende la candidatura conjunta («el frente») cuenta como defensa del partido.
-- Decisión del responsable del sitio, 10 nov 2026: revisó el caso de Gabriel Rufián (ERC) como defensor de Podemos y lo mantuvo con esta regla.
-- Los elementos válidos que superan N se guardan en `en_espera`, con la sección a la que irán. Pasan a publicarse cuando los cinco partidos alcanzan N+1. En el registro de búsquedas, un hallazgo en espera lleva la disposición `en_espera: <ref>`.
-- El sitio comprueba que el número de críticos y el de defensores sea igual en las cinco fichas. La regla de N+1 y la de personas con nombre son editoriales.
+- Los elementos válidos que superan N se guardan en `en_espera`, con la sección a la que irán. Pasan a publicarse cuando los cuatro partidos alcanzan N+1. En el registro de búsquedas, un hallazgo en espera lleva la disposición `en_espera: <ref>`.
+- El sitio comprueba que el número de críticos y el de defensores sea igual en las cuatro fichas. La regla de N+1 y la de personas con nombre son editoriales.
 
 ## Búsqueda igual
 
-Las verificaciones de bulos, las causas judiciales, los críticos y los defensores salen de la misma búsqueda para los cinco partidos. Cambia el nombre del partido y, en críticos y defensores, el apellido de su candidato principal. Todos los partidos llevan un término de la misma forma.
+Las verificaciones de bulos, las causas judiciales, los críticos y los defensores salen de la misma búsqueda para los cuatro partidos. Cambia el nombre del partido y, en críticos y defensores, el apellido de su candidato principal. Todos los partidos llevan un término de la misma forma.
 
 ### Registro de búsquedas
 
@@ -54,13 +53,13 @@ El registro es `busquedas.json` en el sitio. Cada búsqueda (`busquedas[]`) tien
 | `periodo` | `desde` y `hasta` (ISO, `desde` no posterior a `hasta`): ventana de publicación buscada. |
 | `sustituida_por` | Opcional. `id` de la búsqueda actual del mismo tipo que repite esta con las consultas corregidas. La sustituida se conserva solo como registro. |
 | `consultas[]` | `plantilla` con `{partido}` y, si hace falta, `{termino}`; `motor` (herramienta); `dominios` (lista de hosts, vacía si no hay filtro); `terminos` (valor de `{termino}` por partido, obligatorio si la plantilla lo usa). |
-| `resultados` | Número de hallazgos por partido antes de seleccionar, para los cinco. |
+| `resultados` | Número de hallazgos por partido antes de seleccionar, para los cuatro. |
 | `hallazgos` | En los cuatro tipos, obligatorio salvo en una búsqueda sustituida: por partido, una lista con una disposición por hallazgo (ver más abajo). |
 | `nota`, `notas` | Límites de la búsqueda (dominios que devolvieron error, páginas ilegibles), general o por partido. |
 
 Reglas que comprueba el sitio:
 
-- Los cinco partidos tienen un recuento de resultados (entero, 0 o más).
+- Los cuatro partidos tienen un recuento de resultados (entero, 0 o más).
 - Las plantillas llevan `{partido}` o `{termino}`; `terminos` solo existe si la plantilla usa `{termino}`.
 - Un término vacío para un partido mientras los demás tienen uno se rechaza (consulta de forma desigual). No se aplica a las búsquedas sustituidas.
 - `periodo.hasta` no es posterior a `fecha`.
@@ -88,12 +87,12 @@ Todo hallazgo válido se publica o queda en espera; no se recorta el número de 
 
 ### Búsqueda repetida
 
-Cuando una búsqueda no usó consultas de la misma forma para los cinco partidos, se repite y la anterior se conserva marcada con `sustituida_por`. En críticos y defensores, la repetición usa el nombre del partido más el apellido de su candidato principal, con un término de la misma forma para los cinco.
+Cuando una búsqueda no usó consultas de la misma forma para los cuatro partidos, se repite y la anterior se conserva marcada con `sustituida_por`. En críticos y defensores, la repetición usa el nombre del partido más el apellido de su candidato principal, con un término de la misma forma para los cuatro.
 
 ## Etiquetas de los verificadores
 
 - Los elementos de verificaciones de bulos son `VERIFICADO`, porque la página del verificador es el registro primario de su propio veredicto. El sitio rechaza un elemento de bulo con otro estado.
-- Si el `matiz` de un elemento de bulo declara la etiqueta del verificador con la forma «<Verificador> lo califica de «<Etiqueta>».», el elemento lleva el veredicto que corresponde a esa etiqueta según una tabla única para los cinco partidos (`VEREDICTO_POR_ETIQUETA` en el código). Una etiqueta sin correspondencia o un veredicto distinto detiene la publicación.
+- Si el `matiz` de un elemento de bulo declara la etiqueta del verificador con la forma «<Verificador> lo califica de «<Etiqueta>».», el elemento lleva el veredicto que corresponde a esa etiqueta según una tabla única para los cuatro partidos (`VEREDICTO_POR_ETIQUETA` en el código). Una etiqueta sin correspondencia o un veredicto distinto detiene la publicación.
 - La tabla tiene dos reglas generales: una etiqueta de contexto sin calificación verdadero/falso se corresponde con Matizable, y una alerta de contenido engañoso con Engañoso.
 - Antes de usar una etiqueta nueva en un matiz hay que añadirla a la tabla.
 

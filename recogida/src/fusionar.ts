@@ -29,7 +29,7 @@
  * - Dedup: a documento by its canonical URL (or, without URL, its title
  *   fingerprint); a propuesta or mensaje by document URL + text fingerprint.
  * - `periodo.hasta` moves to the run date only when something is added, in all
- *   five perfiles at once (the site's validator requires the same periodo).
+ *   four perfiles at once (the site's validator requires the same periodo).
  *
  * The run date is an argument (no clock).
  */
@@ -437,8 +437,8 @@ export async function fusionar(opciones: { sitio: string; carpeta: string; fecha
     if (cambio.añadidos.length && escribir) await escribirJson(ruta, ficha);
   }
 
-  // The validator requires the same periodo in all five perfiles: when anything is
-  // added to any of them, periodo.hasta moves to the run date in all five.
+  // The validator requires the same periodo in all four perfiles: when anything is
+  // added to any of them, periodo.hasta moves to the run date in all four.
   if (dePerfil.length) {
     const perfiles = new Map<string, { ruta: string; ficha: FichaPerfil; antes: string }>();
     for (const partido of PARTY_IDS) {

@@ -1,6 +1,6 @@
 # Criterio de clasificación por preguntas
 
-Las fichas de partido se organizan alrededor de las preguntas que se hace un votante. Este documento es la definición canónica de esas preguntas, de las secciones que las responden y de lo que hace falta para que un elemento entre en cada una. Se aplica igual a los cinco partidos. Si algo de aquí difiere del código, manda el código: [`recogida/src/preguntas.ts`](../recogida/src/preguntas.ts) (la correspondencia pregunta → sección) y los validadores del sitio.
+Las fichas de partido se organizan alrededor de las preguntas que se hace un votante. Este documento es la definición canónica de esas preguntas, de las secciones que las responden y de lo que hace falta para que un elemento entre en cada una. Se aplica igual a los cuatro partidos. Si algo de aquí difiere del código, manda el código: [`recogida/src/preguntas.ts`](../recogida/src/preguntas.ts) (la correspondencia pregunta → sección) y los validadores del sitio.
 
 ## Clasificar primero por pregunta
 
@@ -48,4 +48,4 @@ Un dato de fondo relevante para una pregunta (una cifra oficial, una resolución
 
 ## Reglas que no cambian
 
-La clasificación por preguntas no sustituye ninguna regla anterior: búsquedas iguales para los cinco partidos; críticos, defensores, bulos y causas solo desde esas búsquedas; veda de encuestas desde el 24 nov; hechos compartidos escritos una vez y copiados igual a cada ficha ([equidad](equidad.md)); estados y fuentes ([verificación](verificacion.md), [enlaces](enlaces.md)); redacción ([neutralidad](neutralidad.md)).
+La clasificación por preguntas no sustituye ninguna regla anterior: búsquedas iguales para los cuatro partidos; críticos, defensores, bulos y causas solo desde esas búsquedas; veda de encuestas desde el 24 nov; hechos compartidos escritos una vez y copiados igual a cada ficha ([equidad](equidad.md)); estados y fuentes ([verificación](verificacion.md), [enlaces](enlaces.md)); redacción ([neutralidad](neutralidad.md)).

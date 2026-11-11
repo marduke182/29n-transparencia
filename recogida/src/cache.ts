@@ -12,8 +12,8 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
-/** The five parties, alphabetical as in the site's src/config.ts: the fixed processing order. */
-export const PARTY_IDS = ['frente-amplio', 'podemos', 'pp', 'psoe', 'vox'] as const;
+/** The four parties, alphabetical as in the site's src/config.ts: the fixed processing order. */
+export const PARTY_IDS = ['frente-amplio', 'pp', 'psoe', 'vox'] as const;
 export type PartyId = (typeof PARTY_IDS)[number];
 
 /** How a document reached the cache. */

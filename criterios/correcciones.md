@@ -25,12 +25,12 @@ Pasos para tu partido:
 
 ## Decisiones tras la revisión de equidad (10 nov 2026)
 
-Se aplican a los cinco partidos por igual. El detalle de cada regla y de lo que comprueba el sitio al publicar está en [equidad](equidad.md) y en [perfiles](perfiles.md). Los cambios, por fecha, en [CAMBIOS](../CAMBIOS.md).
+Se aplican a los cuatro partidos por igual. El detalle de cada regla y de lo que comprueba el sitio al publicar está en [equidad](equidad.md) y en [perfiles](perfiles.md). Los cambios, por fecha, en [CAMBIOS](../CAMBIOS.md).
 
 - **Estado estricto.** Lo que solo se conoce por el relato de la prensa (mitin, entrevista o declaración sin transcripción, vídeo o documento original consultado) es `PARCIAL`, con el matiz «Según el relato de X; no se ha consultado…». `VERIFICADO` exige una fuente primaria: un emisor oficial, un partido o un emisor de datos; una transcripción completa (un extracto no basta); o, en la sección de verificación, el veredicto del propio verificador. `CORREGIDO` sigue significando «redacción corregida»; si además depende solo de prensa, lleva el matiz y pasa a `PARCIAL`.
 - **Hechos compartidos** (encuestas, votaciones, debates, decretos): misma redacción, mismas fuentes y mismo estado en las fichas que los incluyen. Lo propio de cada partido va en una línea aparte, una por partido con la misma plantilla o ninguna.
 - **Críticos y defensores**: el mismo número N de cada postura por partido, a partir de una búsqueda igual. Los elementos que superan N quedan en espera (`en_espera`).
-- **Verificaciones de bulos y causas judiciales**: la misma búsqueda para los cinco, anotada en el registro de búsquedas.
+- **Verificaciones de bulos y causas judiciales**: la misma búsqueda para los cuatro, anotada en el registro de búsquedas.
 - **Ausencias**: solo con una fuente fechada que lo diga (regla ya recogida arriba).
 - **Procedencia de las fuentes**: los campos `consultado`, `via` y `primaria` (ver [equidad](equidad.md#procedencia-de-las-fuentes)).
 

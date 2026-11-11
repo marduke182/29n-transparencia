@@ -11,13 +11,13 @@ Estas reglas están repartidas por los prompts, el [criterio de correcciones](co
 - Los reverificadores señalan además: palabras cargadas, encuadre selectivo y redacción que favorece o perjudica al partido más allá de la fuente.
 - No se publican datos personales o patrimoniales (sueldos, viviendas, vida privada). Sí los procesos judiciales y los cargos públicos.
 
-## Igual para los cinco partidos
+## Igual para los cuatro partidos
 
 - **Mismo esquema** de ficha (nueve secciones fijas, en el mismo orden; el validador lo exige), **mismo prompt**, **mismo criterio** y **mismo estándar** («Be strict and identical in standard for every party»).
 - **Mismo tratamiento y extensión.** No se recorta el número de elementos: se publican todos los válidos.
 - Si falta un lado en «Críticos y defensores», todas las fichas muestran la misma nota.
 - Cuando una búsqueda se hizo solo para un partido, se repite para los demás con el mismo método (workflows [02](../agentes/02-alias-frente-amplio.md) y [03](../agentes/03-alias-por-partido.md)).
-- Los recuentos por partido muestran siempre a los cinco, también con cero, en orden fijo.
+- Los recuentos por partido muestran siempre a los cuatro, también con cero, en orden fijo.
 
 ## Orden y forma
 
@@ -36,4 +36,4 @@ Detalle en [fuentes.md](fuentes.md).
 
 ## Las webs de los partidos
 
-Se comprueba con un cliente automatizado, con fecha, si la web oficial de cada partido se deja leer, y el resultado se muestra igual en las cinco fichas: `abierto` (se verifica en la propia web), `parcial` (páginas bloqueadas pero el feed RSS se puede leer: se verifica con el feed) o `bloqueado` (lo que dice se sigue a través de agencias y medios). El `detalle` dice lo que respondió el sitio como un hecho («Responde 403 a clientes automatizados»). El validador exige este dato en cada web de partido.
+Se comprueba con un cliente automatizado, con fecha, si la web oficial de cada partido se deja leer, y el resultado se muestra igual en las cuatro fichas: `abierto` (se verifica en la propia web), `parcial` (páginas bloqueadas pero el feed RSS se puede leer: se verifica con el feed) o `bloqueado` (lo que dice se sigue a través de agencias y medios). El `detalle` dice lo que respondió el sitio como un hecho («Responde 403 a clientes automatizados»). El validador exige este dato en cada web de partido.

@@ -11,7 +11,7 @@ Este criterio reúne lo que piden los prompts de verificación ([04](../agentes/
 
 | Estado | Cuándo |
 |---|---|
-| `VERIFICADO` | La página existe, está fechada dentro del periodo (5 oct – 10 nov 2026) y su tema principal es uno o varios de los cinco partidos o sus líderes. |
+| `VERIFICADO` | La página existe, está fechada dentro del periodo (5 oct – 10 nov 2026) y su tema principal es uno o varios de los cuatro partidos o sus líderes. |
 | `PARCIAL` | Encaja, pero algo del candidato estaba mal (se dice qué) o el partido es secundario. |
 | `NO_VERIFICABLE` | La página no se pudo abrir tras un reintento. |
 | `DESCARTADO` | Fuera de periodo; no trata de estos partidos (por ejemplo, el Frente Amplio de Uruguay o Chile, política solo local, mención de pasada); contenido duplicado; o no es una noticia ni un documento. |
@@ -40,7 +40,7 @@ El validador (`validatePartido`) solo admite `VERIFICADO`, `CORREGIDO` y `PARCIA
 
 ## Veredictos de la sección «Verificación de afirmaciones»
 
-El veredicto valora **lo que dijo el partido**, no al partido: **Respaldado**, **Matizable**, **Engañoso**, **Sin datos** (no se han encontrado datos; no significa que sea falso). Cuando un verificador externo lo ha calificado, se atribuye a ese verificador. Las verificaciones de bulos **sobre** un partido van en un apartado aparte, con el mismo formato en las cinco fichas.
+El veredicto valora **lo que dijo el partido**, no al partido: **Respaldado**, **Matizable**, **Engañoso**, **Sin datos** (no se han encontrado datos; no significa que sea falso). Cuando un verificador externo lo ha calificado, se atribuye a ese verificador. Las verificaciones de bulos **sobre** un partido van en un apartado aparte, con el mismo formato en las cuatro fichas.
 
 ## Clasificación (workflows 04 y 05)
 

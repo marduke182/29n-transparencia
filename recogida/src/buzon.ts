@@ -1,6 +1,6 @@
 /**
  * Manual inbox: pages the owner saved by hand from sites that block automated
- * clients (psoe.es, voxespana.es, podemos.info…).
+ * clients (psoe.es, voxespana.es…).
  *
  *   $N29_BUZON/<partido>/<YYYY-MM-DD>/<archivo>.html|.pdf|.txt  (+ optional <archivo>.url)
  *

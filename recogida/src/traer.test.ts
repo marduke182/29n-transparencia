@@ -113,19 +113,19 @@ describe('Traedor', () => {
 
   it('on a soloListado host reads only the listed feed, never its pages', async () => {
     const { fn, llamadas } = fetchFalso({
-      'https://podemos.info/robots.txt': { status: 200, body: '' },
-      'https://podemos.info/feed/': { status: 200, body: '<rss></rss>', headers: { 'content-type': 'application/rss+xml' } },
+      'https://partido-ejemplo.es/robots.txt': { status: 200, body: '' },
+      'https://partido-ejemplo.es/feed/': { status: 200, body: '<rss></rss>', headers: { 'content-type': 'application/rss+xml' } },
     });
-    const traedor = new Traedor({ fecha: '2026-11-10', fetch: fn, ...sinEspera(), soloBuzon: [], soloListado: { 'podemos.info': ['https://podemos.info/feed/'] } });
-    expect((await traedor.traer('https://podemos.info/feed/')).estado).toBe('ok');
-    expect(await traedor.traer('https://podemos.info/noticias/x/')).toMatchObject({ estado: 'solo-buzon' });
-    expect(llamadas.map((l) => l.url)).toEqual(['https://podemos.info/robots.txt', 'https://podemos.info/feed/']);
+    const traedor = new Traedor({ fecha: '2026-11-10', fetch: fn, ...sinEspera(), soloBuzon: [], soloListado: { 'partido-ejemplo.es': ['https://partido-ejemplo.es/feed/'] } });
+    expect((await traedor.traer('https://partido-ejemplo.es/feed/')).estado).toBe('ok');
+    expect(await traedor.traer('https://partido-ejemplo.es/noticias/x/')).toMatchObject({ estado: 'solo-buzon' });
+    expect(llamadas.map((l) => l.url)).toEqual(['https://partido-ejemplo.es/robots.txt', 'https://partido-ejemplo.es/feed/']);
   });
 
   it('a 403 on a soloListado feed still blocks the host', async () => {
-    const { fn } = fetchFalso({ 'https://podemos.info/robots.txt': { status: 200, body: '' }, 'https://podemos.info/feed/': { status: 403 } });
-    const traedor = new Traedor({ fecha: '2026-11-10', fetch: fn, ...sinEspera(), soloBuzon: [], soloListado: { 'podemos.info': ['https://podemos.info/feed/'] } });
-    expect(await traedor.traer('https://podemos.info/feed/')).toMatchObject({ estado: 'bloqueado', bloqueo: { estado_http: 403 } });
+    const { fn } = fetchFalso({ 'https://partido-ejemplo.es/robots.txt': { status: 200, body: '' }, 'https://partido-ejemplo.es/feed/': { status: 403 } });
+    const traedor = new Traedor({ fecha: '2026-11-10', fetch: fn, ...sinEspera(), soloBuzon: [], soloListado: { 'partido-ejemplo.es': ['https://partido-ejemplo.es/feed/'] } });
+    expect(await traedor.traer('https://partido-ejemplo.es/feed/')).toMatchObject({ estado: 'bloqueado', bloqueo: { estado_http: 403 } });
   });
 
   it('respects a robots Disallow and follows redirects through the same checks', async () => {

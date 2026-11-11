@@ -1,6 +1,6 @@
 /**
  * Resumen diario para la revisión del propietario: compara las fichas de los
- * cinco partidos (y sus perfiles de documentos, si los hay) antes y después de
+ * cuatro partidos (y sus perfiles de documentos, si los hay) antes y después de
  * la recogida del día y escribe un Markdown con un bloque por partido, en el
  * orden de PARTY_IDS y con los mismos encabezados en todos, aunque estén vacíos.
  * Dentro de cada lista, los elementos se agrupan por la pregunta del votante a la
@@ -26,7 +26,6 @@ export { PARTY_IDS };
 
 export const PARTY_SHORT: Record<PartyId, string> = {
   'frente-amplio': 'Frente Amplio',
-  podemos: 'Podemos',
   pp: 'PP',
   psoe: 'PSOE',
   vox: 'Vox',

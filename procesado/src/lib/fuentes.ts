@@ -289,7 +289,7 @@ function validateEmisor(where: string, emisor: Record<string, unknown>, estudios
  * with a readable message), ratings, and the links of the party files (every
  * linked host has exactly one emisor; every emisor is linked, except the party
  * websites). Every party has exactly one website emisor (tipo "partido"), cited
- * or not, so all five are always listed alike. `registro` is
+ * or not, so all four are always listed alike. `registro` is
  * the whole fuentes.json, for `mbfc` and `cis_estudios`.
  */
 export function validateFuentes(emisores: unknown, partidos: Partido[], registro: unknown = RAW_FUENTES): string[] {

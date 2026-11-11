@@ -30,13 +30,13 @@ const emisores: Emisor[] = [
   { id: 'busca', nombre: 'Busca', hosts: ['busca.es'], tipo: 'medio' },
   { id: 'fuera', nombre: 'Fuera', hosts: ['fuera.cl'], tipo: 'medio', recogida: { metodo: 'omitir', nota: 'Fuera de ámbito.' } },
   {
-    id: 'web-podemos',
-    nombre: 'Web de Podemos',
-    hosts: ['podemos.info'],
+    id: 'web-partido-ejemplo',
+    nombre: 'Web de Partido Ejemplo',
+    hosts: ['partido-ejemplo.es'],
     tipo: 'partido',
-    partido: 'podemos',
+    partido: 'pp',
     acceso: { estado: 'parcial', comprobado: '2026-11-10', detalle: 'Artículos 403; feed legible.' },
-    recogida: { metodo: 'rss', url: 'https://podemos.info/feed/' },
+    recogida: { metodo: 'rss', url: 'https://partido-ejemplo.es/feed/' },
   },
   {
     id: 'web-vox',
@@ -65,10 +65,10 @@ const rutas: Record<string, { status: number; body: string; type?: string }> = {
   'https://www.cis.es/es/avance-de-resultados': { status: 200, body: SECCION },
   'https://www.lamoncloa.gob.es/presidente/intervenciones/Paginas/index.aspx': { status: 200, body: MONCLOA },
   'https://cerrado.es/feed': { status: 403, body: 'Forbidden' },
-  'https://podemos.info/feed/': {
+  'https://partido-ejemplo.es/feed/': {
     status: 200,
     type: 'application/rss+xml; charset=utf-8',
-    body: `<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item><title>Nota</title><link>https://podemos.info/nota-vivienda/</link><pubDate>Mon, 09 Nov 2026 10:00:00 GMT</pubDate><content:encoded><![CDATA[<p>Texto completo de la nota.</p>]]></content:encoded></item></channel></rss>`,
+    body: `<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item><title>Nota</title><link>https://partido-ejemplo.es/nota-vivienda/</link><pubDate>Mon, 09 Nov 2026 10:00:00 GMT</pubDate><content:encoded><![CDATA[<p>Texto completo de la nota.</p>]]></content:encoded></item></channel></rss>`,
   },
 };
 
@@ -107,7 +107,7 @@ describe('parsers', () => {
 
 describe('accesoDesdeRegistro', () => {
   it('reads a working method for partial or blocked hosts, inbox only otherwise', () => {
-    expect(accesoDesdeRegistro(emisores)).toEqual({ soloBuzon: ['voxespana.es'], soloListado: { 'podemos.info': ['https://podemos.info/feed/'] } });
+    expect(accesoDesdeRegistro(emisores)).toEqual({ soloBuzon: ['voxespana.es'], soloListado: { 'partido-ejemplo.es': ['https://partido-ejemplo.es/feed/'] } });
     const psoe: Emisor = { id: 'web-psoe', nombre: 'PSOE', hosts: ['psoe.es'], tipo: 'partido', acceso: { estado: 'bloqueado', comprobado: '2026-11-10', detalle: 'reto' } };
     expect(accesoDesdeRegistro([psoe]).soloBuzon).toEqual(['psoe.es']);
     expect(accesoDesdeRegistro([{ ...psoe, recogida: { metodo: 'rss', url: 'https://psoe.es/feed' } }]).soloListado).toEqual({ 'psoe.es': ['https://psoe.es/feed'] });
@@ -143,10 +143,10 @@ describe('descubrir', () => {
       ['diario', 'https://diario.es/2026/11/09/nota', 'sitemap', 'articulo'],
       ['la-moncloa-gobierno', 'https://lamoncloa.gob.es/presidente/intervenciones/Paginas/2026/prensa101126.aspx', 'seccion', 'transcripcion'],
       ['medio', 'https://medio.es/politica/2026/11/10/debate.html', 'rss', 'articulo'],
-      ['web-podemos', 'https://podemos.info/nota-vivienda', 'rss', 'documento'],
+      ['web-partido-ejemplo', 'https://partido-ejemplo.es/nota-vivienda', 'rss', 'documento'],
     ]);
-    // Pages of podemos.info block: the feed text travels with the candidate; other feeds don't carry it.
-    expect(resultado.candidatos.find((c) => c.emisor === 'web-podemos')!.contenido_feed).toBe('<p>Texto completo de la nota.</p>');
+    // Pages of partido-ejemplo.es block: the feed text travels with the candidate; other feeds don't carry it.
+    expect(resultado.candidatos.find((c) => c.emisor === 'web-partido-ejemplo')!.contenido_feed).toBe('<p>Texto completo de la nota.</p>');
     expect(resultado.candidatos.find((c) => c.emisor === 'medio')!.contenido_feed).toBeUndefined();
     expect(resultado.tareas_busqueda).toEqual([
       {
@@ -168,7 +168,7 @@ describe('descubrir', () => {
     // The old sub-sitemap (outside the window) and the inbox-only host are never requested.
     const pedidas = fetch.mock.calls.map(([url]) => String(url));
     expect(pedidas).not.toContain('https://diario.es/post-sitemap1.xml');
-    expect(pedidas.filter((url) => url.includes('podemos.info'))).toEqual(['https://podemos.info/robots.txt', 'https://podemos.info/feed/']);
+    expect(pedidas.filter((url) => url.includes('partido-ejemplo.es'))).toEqual(['https://partido-ejemplo.es/robots.txt', 'https://partido-ejemplo.es/feed/']);
     expect(pedidas.some((url) => url.includes('voxespana.es'))).toBe(false);
   });
 });

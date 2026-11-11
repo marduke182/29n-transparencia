@@ -12,7 +12,7 @@
  *   node src/diario.ts informe             --fecha D   Markdown appendix of the run for resumen.md
  *   node src/diario.ts claude --dir DIR --pasada P --fecha D   DIR: settings.json, agentes.json and prompt.txt of pass P
  *   node src/diario.ts sondear             --fecha D   probes each equal-search domain; marks blocked queries in equidad-tareas.json
- *   node src/diario.ts adjudicacion-completa --fecha D  exit 1, listing why, unless all five adjudications are complete
+ *   node src/diario.ts adjudicacion-completa --fecha D  exit 1, listing why, unless all four adjudications are complete
  *
  * Paths: $N29_SITIO (the run worktree), $N29_CACHE, $N29_BUZON. The run folder
  * is $N29_CACHE/ejecuciones/<fecha>.
@@ -101,7 +101,7 @@ export interface TareaEquidad {
   salida: string;
 }
 
-/** A query found blocked by the script's own probe: skipped for all five parties. */
+/** A query found blocked by the script's own probe: skipped for all four parties. */
 export interface Bloqueada {
   host: string;
   estado_http: number | null;
@@ -182,14 +182,14 @@ export function urlsSondeo(tareas: TareaEquidad[]): string[] {
   return [...urls].sort(comparar);
 }
 
-/** Why the five tasks of a kind do not reach the same hosts, query by query (empty when they do). */
+/** Why the four tasks of a kind do not reach the same hosts, query by query (empty when they do). */
 export function dominiosDistintos(tareas: TareaEquidad[]): string[] {
   const problemas: string[] = [];
   for (const tipo of TIPOS_BUSQUEDA) {
     const deTipo = tareas.filter((t) => t.tipo === tipo);
     if (!deTipo.length) continue;
     const firmas = new Set(deTipo.map((t) => JSON.stringify(t.consultas.map((c) => [c.motor, hostsDeConsulta(c)]))));
-    if (firmas.size > 1) problemas.push(`${tipo}: las consultas no llegan a los mismos dominios en los cinco partidos`);
+    if (firmas.size > 1) problemas.push(`${tipo}: las consultas no llegan a los mismos dominios en los cuatro partidos`);
   }
   return problemas;
 }
@@ -197,7 +197,7 @@ export function dominiosDistintos(tareas: TareaEquidad[]): string[] {
 /**
  * Marks every query whose host the probe found blocked (401, 403, 429, 451, an
  * anti-bot page or a geo-block, recorded with the run date), the same in all
- * five tasks. Agents skip it; nothing from that host counts for any party.
+ * four tasks. Agents skip it; nothing from that host counts for any party.
  */
 export function marcarBloqueadas(tareas: TareaEquidad[], bloqueados: Record<string, { fecha: string; estado_http: number | null; motivo: string }>): TareaEquidad[] {
   return tareas.map((tarea) => ({
@@ -218,7 +218,7 @@ export function marcarBloqueadas(tareas: TareaEquidad[], bloqueados: Record<stri
  * once, through Traedor (robots.txt, then the page), with its one honest
  * User-Agent, no retries. A block (401, 403, 429, 451, anti-bot page,
  * geo-block) is recorded with the date in traedor.bloqueados; a block already
- * recorded today is not retried. Fails when the five tasks of a kind do not
+ * recorded today is not retried. Fails when the four tasks of a kind do not
  * reach the same domains. Returns the tasks with their blocked queries marked.
  */
 export async function sondear(tareas: TareaEquidad[], traedor: Traedor): Promise<{ tareas: TareaEquidad[]; sondeo: { url: string; estado: string; estado_http?: number | null; motivo?: string }[] }> {
@@ -381,7 +381,7 @@ export const plano = (texto: string) =>
     .trim()} `;
 
 /**
- * Parties a text mentions, by the same alias rule for all five: any name,
+ * Parties a text mentions, by the same alias rule for all four: any name,
  * regional brand, member or person, as whole words, after removing the
  * `excluir` phrases.
  */
@@ -501,9 +501,9 @@ const urlsFuentes = (item: Objeto) =>
  * - no `hecho` from an adjudicator: shared facts come only from hechos.json,
  *   written once and copied identically to every party it names;
  * - critics, defenders, hoaxes and court cases only from the day's equal search
- *   of that kind, complete for all five, and only with a URL that search found
+ *   of that kind, complete for all four, and only with a URL that search found
  *   for that party; critics and defenders go to en_espera (`ajustar` promotes
- *   them so that the five keep the same count);
+ *   them so that the four keep the same count);
  * - no polls from the ban date;
  * - a `pregunta` (Q1..Q8) that matches the `seccion` (preguntas.ts), and a valid
  *   `contexto` flag (never with a veredicto).
@@ -537,7 +537,7 @@ export function preparar(entrada: {
       const tipo = tipoBuscado(seccion, item);
       if (tipo) {
         if (item.busqueda !== idDiario(entrada.fecha, tipo)) return descartar(`${tipo}: busqueda debe ser "${idDiario(entrada.fecha, tipo)}"`);
-        if (!completa(tipo)) return descartar(`${tipo}: la búsqueda igual del día no tiene salida para los cinco partidos`);
+        if (!completa(tipo)) return descartar(`${tipo}: la búsqueda igual del día no tiene salida para los cuatro partidos`);
         const encontradas = new Set(entrada.equidad[tipo]?.[propio as PartyId] ?? []);
         if (!urlsFuentes(item).some((url) => encontradas.has(url))) return descartar(`${tipo}: ninguna fuente sale de la búsqueda igual de ${propio}`);
       } else if (item.busqueda !== undefined) {
@@ -603,7 +603,7 @@ export interface Promocion {
 
 /**
  * Equal count of critics and of defenders: N per postura is the smallest
- * (published + held) count among the five; each party gets held items of that
+ * (published + held) count among the four; each party gets held items of that
  * postura into its section, oldest ref first, until it shows N. Mutates `fichas`.
  */
 export function promover(fichas: Record<PartyId, Ficha>): { promovidos: Promocion[]; n: Record<string, number> } {
@@ -638,7 +638,7 @@ export interface EquidadDia {
   urls: Partial<Record<TipoBusqueda, Partial<Record<PartyId, string[]>>>>;
   estados: Partial<Record<TipoBusqueda, Partial<Record<PartyId, EstadoSalida>>>>;
   notas: Partial<Record<TipoBusqueda, Partial<Record<PartyId, string>>>>;
-  /** Queries blocked for all five, by position. */
+  /** Queries blocked for all four, by position. */
   bloqueadas: Partial<Record<TipoBusqueda, (Bloqueada & { indice: number })[]>>;
 }
 
@@ -650,8 +650,8 @@ const NOTA_ESTADO: Record<Exclude<EstadoSalida, 'completa'>, string> = {
 
 /**
  * The day's run entries for busquedas.json: the template's queries, the count
- * per party, the queries blocked for all five (host and HTTP status, the same
- * text for the five), and which parties' searches did not complete.
+ * per party, the queries blocked for all four (host and HTTP status, the same
+ * text for the four), and which parties' searches did not complete.
  */
 export function entradasDelDia(entrada: { fecha: string; desde: string; registro: Busqueda[]; equidad: EquidadDia }): Busqueda[] {
   const salida: Busqueda[] = [];
@@ -672,7 +672,7 @@ export function entradasDelDia(entrada: { fecha: string; desde: string; registro
     const partes = [`Ejecución diaria con las consultas de ${plantilla.id}.`];
     if (bloqueadas.length) {
       partes.push(
-        `Consultas bloqueadas para los cinco partidos (no se sortean ni se fuerzan): ${bloqueadas
+        `Consultas bloqueadas para los cuatro partidos (no se sortean ni se fuerzan): ${bloqueadas
           .map((b) => `n.º ${b.indice + 1}, ${b.host}, ${b.motivo === `HTTP ${b.estado_http}` ? b.motivo : `HTTP ${b.estado_http ?? 'sin código'}, ${b.motivo}`}, ${b.fecha}`)
           .join('; ')}.`,
       );
@@ -694,7 +694,7 @@ export function entradasDelDia(entrada: { fecha: string; desde: string; registro
   return salida;
 }
 
-/** corte moves to the run date in all five when any party file changed (the site requires the same corte). */
+/** corte moves to the run date in all four when any party file changed (the site requires the same corte). */
 export function igualarCorte(fichas: Record<PartyId, Ficha>, antes: Record<PartyId, string>, fecha: string): boolean {
   const cambio = PARTY_IDS.some((p) => JSON.stringify(fichas[p]) !== antes[p]);
   if (!cambio) return false;
@@ -779,7 +779,7 @@ export function informe(entrada: {
       (entrada.ajustar?.promovidos ?? []).map((p) => `- ${p.partido} ${p.ref} (${p.postura})`),
     ),
   );
-  lineas.push(`Corte movido al ${entrada.fecha} en las cinco fichas: ${entrada.ajustar?.corte ? 'sí' : 'no'}.`, '');
+  lineas.push(`Corte movido al ${entrada.fecha} en las cuatro fichas: ${entrada.ajustar?.corte ? 'sí' : 'no'}.`, '');
   lineas.push(...apartado('Búsquedas iguales añadidas a busquedas.json', (entrada.ajustar?.busquedas ?? []).map((id) => `- ${id}`), '_Ninguna._'));
   lineas.push(
     ...apartado(

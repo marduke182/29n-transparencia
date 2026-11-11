@@ -30,7 +30,7 @@ export type MbfcNivel = (typeof MBFC_NIVELES)[number];
 export const ESTADOS_ACCESO = ['abierto', 'parcial', 'bloqueado'] as const;
 export type EstadoAcceso = (typeof ESTADOS_ACCESO)[number];
 
-/** Result of a dated check of a party website with an automated client; shown alike for all five parties. */
+/** Result of a dated check of a party website with an automated client; shown alike for all four parties. */
 export interface Acceso {
   estado: EstadoAcceso;
   /** ISO date of the check. */

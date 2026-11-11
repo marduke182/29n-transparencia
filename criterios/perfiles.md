@@ -1,11 +1,11 @@
 # Criterio de los perfiles de partido
 
-Reglas de la página de documentos de cada partido (`/documentos/`). Son las mismas para los cinco. Solo están las reglas y el esquema, no el contenido de los perfiles. Si algo de aquí difiere del código del sitio, manda el código.
+Reglas de la página de documentos de cada partido (`/documentos/`). Son las mismas para los cuatro. Solo están las reglas y el esquema, no el contenido de los perfiles. Si algo de aquí difiere del código del sitio, manda el código.
 
 ## Qué cuenta
 
 - Solo cuentan los documentos del propio partido fechados dentro del periodo, del **5 de octubre** a la fecha de corte.
-- El periodo avanza cada día. Es el mismo para los cinco: el sitio comprueba que `desde` y `hasta` coincidan en los cinco perfiles.
+- El periodo avanza cada día. Es el mismo para los cuatro: el sitio comprueba que `desde` y `hasta` coincidan en los cuatro perfiles.
 - El periodo termina en la fecha de corte de las fichas. El sitio comprueba que `periodo.hasta` de cada perfil sea igual al `corte` de la ficha de ese partido.
 - Un documento publicado tiene que estar fechado dentro del periodo. El sitio lo comprueba.
 - Un documento fechado después del corte espera en `en_espera`, sin publicarse, hasta que el corte avance. El sitio comprueba que esté fechado después de `periodo.hasta` (si no, se publica) y que los elementos publicados no citen documentos en espera.

@@ -22,7 +22,7 @@ describe('urlDeHtml', () => {
     expect(urlDeHtml('<p>sin url</p>')).toBeUndefined();
   });
   it('prefers the .url sidecar', () => {
-    expect(urlDeArchivo(PAGINA, '\nhttps://podemos.info/a\n')).toBe('https://podemos.info/a');
+    expect(urlDeArchivo(PAGINA, '\nhttps://partido-ejemplo.es/a\n')).toBe('https://partido-ejemplo.es/a');
     expect(urlDeArchivo(undefined, undefined)).toBeUndefined();
   });
 });

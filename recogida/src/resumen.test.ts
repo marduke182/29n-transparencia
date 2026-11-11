@@ -66,7 +66,7 @@ describe('resumen', () => {
   });
 
   it('usa el orden de partidos de cache.ts, el mismo que el del sitio', () => {
-    expect(PARTY_IDS).toEqual(['frente-amplio', 'podemos', 'pp', 'psoe', 'vox']);
+    expect(PARTY_IDS).toEqual(['frente-amplio', 'pp', 'psoe', 'vox']);
   });
 
   it('pinta todos los encabezados para cada partido aunque no haya datos, en el orden de PARTY_IDS', () => {

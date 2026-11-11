@@ -194,7 +194,7 @@ describe('fusionar: perfiles', () => {
 
   beforeEach(async () => {
     await mkdir(join(sitio, 'apps', '29n', 'src', 'data', 'perfiles'), { recursive: true });
-    for (const id of ['frente-amplio', 'podemos', 'pp', 'psoe', 'vox']) await writeFile(rutaPerfil(id), `${JSON.stringify(perfil(id), null, 2)}\n`);
+    for (const id of ['frente-amplio', 'pp', 'psoe', 'vox']) await writeFile(rutaPerfil(id), `${JSON.stringify(perfil(id), null, 2)}\n`);
   });
 
   it('adds documents, propuestas and mensajes in the perfil shape, continuing the ids', async () => {
@@ -226,8 +226,8 @@ describe('fusionar: perfiles', () => {
     expect(Object.keys(vox.documentos[1])).toEqual(['id', 'titulo', 'fecha', 'fecha_fuente', 'tipo', 'url', 'procedencia']);
     expect(vox.propuestas[1]).toEqual({ id: 'vox-p4', tema: 'EDU', texto: 'Propone gratuidad de 0 a 3.', cita: { texto: 'gratuidad de 0 a 3', documento: 'vox-d2', pagina: 4 }, documentos: ['vox-d2', 'vox-d1'] });
     expect(vox.mensajes).toEqual([{ id: 'vox-m1', tipo: 'critica_al_gobierno', texto: 'Critica al Gobierno por la vivienda.', documentos: ['vox-d2'] }]);
-    // The validator wants one periodo for all five: hasta moves everywhere.
-    for (const id of ['frente-amplio', 'podemos', 'pp', 'psoe', 'vox']) expect(JSON.parse(await readFile(rutaPerfil(id), 'utf8')).periodo).toEqual({ desde: '2026-10-05', hasta: '2026-11-10' });
+    // The validator wants one periodo for all four: hasta moves everywhere.
+    for (const id of ['frente-amplio', 'pp', 'psoe', 'vox']) expect(JSON.parse(await readFile(rutaPerfil(id), 'utf8')).periodo).toEqual({ desde: '2026-10-05', hasta: '2026-11-10' });
   });
 
   it('is idempotent and dedups on document URL + text fingerprint', async () => {

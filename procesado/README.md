@@ -19,7 +19,7 @@ Los tests usan **solo datos de ejemplo** (fixtures escritos en cada test). Este 
 
 | Archivo | Qué hace |
 |---|---|
-| `src/config.ts` | Los ids de los cinco partidos, en el orden fijo de todos los recuentos. |
+| `src/config.ts` | Los ids de los cuatro partidos, en el orden fijo de todos los recuentos. |
 | `src/data/fuentes.ts` | Tipos del registro de fuentes (emisor, valoraciones MBFC y CIS, acceso a la web del partido, método de recogida) y las listas cerradas de valores. |
 | `src/lib/partidos.ts` | Tipos de la ficha de partido, los estados publicables, los veredictos y las nueve secciones fijas. |
 | `src/lib/validate.ts` | `validatePartido`: reglas de publicación de cada ficha (estados, matiz en PARCIAL, fuentes https, citas de menos de 15 palabras en cualquier campo, propuesta de 20 palabras como máximo, campos que solo valen en una sección, refs únicos) y la [regla de enlaces](../criterios/enlaces.md) (`notArticleUrl`). |
@@ -40,7 +40,7 @@ El resto cambia solo para no depender de los datos, que no se publican aquí:
 
 - **`config.ts`**: solo los ajustes de partido (sin la URL ni las fechas del sitio).
 - **`data/fuentes.ts`**: solo tipos y listas de valores. En el sitio, `RAW_FUENTES`, `MBFC`, `CIS_ESTUDIOS` y `EMISORES` se leen de `fuentes.json`; aquí están vacíos. Las funciones que los usan como valor por defecto (`emisorDe`, `validateFuentes`, `validatePartido`, `estudioReciente`, `filaCis`…) reciben los datos como argumento, y los tests siempre los pasan.
-- **`lib/partidos.ts`**: sin la importación de las cinco fichas JSON (`RAW_PARTIDOS`, `getPartido`, `getPartidos`).
+- **`lib/partidos.ts`**: sin la importación de las cuatro fichas JSON (`RAW_PARTIDOS`, `getPartido`, `getPartidos`).
 - **`lib/partidos-alias.ts`**: `RAW_PARTIDOS_ALIAS` está vacío; hay que pasar los datos a `getPartidosAlias`.
 - **`lib/focus.ts`**: en el sitio, el bloque final valida y cuenta `temas-items.json` al cargar el módulo y exporta `getFocus(id)`. Aquí ese mismo bloque está dentro de `crearGetFocus(raw)`, que devuelve la misma función `getFocus`.
 - **Tests**: `fuentes.test.ts` pasa un registro de ejemplo (`REGISTRO`) en lugar del `fuentes.json` real; `temas.test.ts`, `focus.test.ts` y `partidos-alias.test.ts` usan datos de ejemplo. Se han quitado las comprobaciones contra los datos reales: «acepta los datos publicados» y las bases por partido de la versión publicada (`temas.test.ts`, `focus.test.ts`). El test `fuentes-data.test.ts` del sitio, que valida el registro real contra las fichas reales, no se incluye.

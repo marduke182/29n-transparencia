@@ -43,7 +43,7 @@ Todas son rutas absolutas. La caché, el buzón, los worktrees y este repositori
 | `N29_BUZON` | El buzón manual (abajo). |
 | `N29_PRESUPUESTO_USD` | Obligatoria: tope de gasto en dólares de cada pasada de Claude (`--max-budget-usd`). |
 | `N29_CLAUDE` | El binario de Claude Code (por defecto, `claude` del `PATH`), versión 2.1.321 o posterior. |
-| `N29_RAMA_BASE` | Rama de la que sale cada día (por defecto `feature/29n-fuentes`; `master` cuando esa se fusione). Hay que subirla antes: se parte de `origin/<rama>`. |
+| `N29_RAMA_BASE` | Rama de la que sale cada día (por defecto `master`). Hay que subirla antes: se parte de `origin/<rama>`. |
 | `N29_REMOTO` | Remoto (por defecto `origin`). |
 | `N29_LIMITE_CLAUDE_S` | Opcional: segundos que puede durar cada pasada de Claude (por defecto 10800). Al cumplirse, se corta. |
 | `N29_LIMITE_VIDEO_S` | Opcional: segundos por vídeo en `transcribir` (por defecto 18000). Debe superar la suma de los límites internos, 4 h: 30 min por cada llamada a `yt-dlp` (subtítulos y audio) y 3 h de Whisper. Cada binario corre en su propio grupo de procesos, y al vencer cualquier límite muere el grupo entero (también `ffmpeg`). |
@@ -62,7 +62,7 @@ Cómo se protege la ejecución:
 3. **Los archivos de los que depende el script se sellan**: `antes/`, `descubrir.json`, las tareas, la caché y `bloqueados.json` (y antes de la segunda pasada también `busqueda/` y `equidad/`) se resumen por sha256 antes de cada pasada y se comprueban después; si algo cambió, o si tras la primera pasada hay archivos de la segunda, el día falla.
 4. **El sitio solo lo escribe el script**, y solo pasa una lista blanca: `partidos/<id>.json`, `perfiles/<id>.json` y `busquedas.json` de `apps/29n/src/data`, modificados o nuevos y JSON válido. Cualquier otro cambio en el worktree (otro archivo, uno borrado, uno que no sea JSON, también entre los ignorados por git) detiene la ejecución antes de instalar nada. El orden es: `ajustar`, lista blanca con los ignorados, `yarn install --immutable`, Prettier, lista blanca otra vez (sin los ignorados, que ya incluyen `node_modules`), tests y build.
 5. **Red**: `traer` solo pide https, a hosts con nombre que resuelven a direcciones públicas (nunca IP literales, `localhost`, `.local` ni direcciones privadas, de enlace local, de loopback, de documentación, de pruebas de rendimiento, NAT64 o IPv4 mapeadas a esas), lo comprueba en cada salto de redirección y otra vez **al conectar**: su `fetch` usa `node:https` con un `lookup` propio que descarta las direcciones internas, así que lo que se comprueba es a lo que se conecta. `transcribir` pasa la URL del vídeo por las mismas comprobaciones, más robots.txt y la lista de hosts bloqueados o solo de buzón, antes de llamar a `yt-dlp` (con `--` delante de la URL), y solo admite vídeos https de `rtve.es`, `youtube.com` y `youtu.be`.
-6. **Búsquedas bloqueadas para todos**: antes de buscar, el script sondea una vez cada dominio de las búsquedas iguales y marca para los cinco partidos las consultas cuyo dominio bloquea; nunca se sortea un bloqueo. Detalle en [08](../agentes/08-diario.md#búsquedas-bloqueadas-para-todos).
+6. **Búsquedas bloqueadas para todos**: antes de buscar, el script sondea una vez cada dominio de las búsquedas iguales y marca para los cuatro partidos las consultas cuyo dominio bloquea; nunca se sortea un bloqueo. Detalle en [08](../agentes/08-diario.md#búsquedas-bloqueadas-para-todos).
 7. **Git**: el script empuja con refspec explícito `refs/heads/data/29n-diario-<fecha>`, comprueba el nombre de la rama antes, nunca usa `--force` y crea el PR con `--draft`. Nunca fusiona, despliega ni activa el auto-merge.
 
 ## Buzón manual
@@ -71,7 +71,7 @@ Para lo que no se puede traer de forma automática (webs de partido que bloquean
 
 ```text
 $N29_BUZON/
-  <partido>/<AAAA-MM-DD>/        partido: frente-amplio, podemos, pp, psoe o vox; la fecha en que lo guardaste
+  <partido>/<AAAA-MM-DD>/        partido: frente-amplio, pp, psoe o vox; la fecha en que lo guardaste
     nota.html                    página guardada desde el navegador («Guardar como… → Página web, solo HTML»)
     programa.pdf                 un PDF
     programa.url                 obligatorio para cada .pdf y .txt: la URL exacta del documento, en la primera línea

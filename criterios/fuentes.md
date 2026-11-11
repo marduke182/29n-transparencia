@@ -14,7 +14,7 @@ Reglas del registro de emisores (`fuentes.json` en el sitio) y de cómo se muest
 - El emisor es **el sitio al que apunta el enlace**, por host exacto (`new URL(url).hostname` en minúsculas y sin `www.`). Un subdominio es otro emisor salvo que el registro agrupe varios hosts bajo uno.
 - Las agencias (EFE, Europa Press, ACN) no se listan como emisor cuando nunca son el host enlazado: lo que se cita de ellas cuenta para el sitio que lo publica.
 - **Recuento por partido**: solo las fuentes de los ítems (`fuentes[]`). Los enlaces de la tarjeta y de las citas se validan contra el registro pero no se cuentan.
-- Los cinco partidos aparecen siempre, en el orden fijo de ids, también con cero.
+- Los cuatro partidos aparecen siempre, en el orden fijo de ids, también con cero.
 - Orden de tipos: medios, verificadores, agencias, fuentes oficiales, partidos (documentos propios), datos y análisis; dentro de cada tipo, alfabético (colación `es`).
 
 ## Reglas del validador

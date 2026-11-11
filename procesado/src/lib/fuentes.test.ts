@@ -24,7 +24,7 @@ const MALDITA: Emisor = {
   },
 };
 /** One website emisor per party, as the registry requires; none of them is linked in the fixtures. */
-const WEBS: Emisor[] = (['frente-amplio', 'podemos', 'pp', 'psoe', 'vox'] as const).map((partido) => ({
+const WEBS: Emisor[] = (['frente-amplio', 'pp', 'psoe', 'vox'] as const).map((partido) => ({
   id: `web-${partido}`,
   nombre: `Web de ${partido}`,
   hosts: [`${partido}.example`],
@@ -122,8 +122,8 @@ describe('citasPorEmisor', () => {
   it('counts item sources per party, with zeros for every party and emisor', () => {
     const counts = citasPorEmisor(partidos(), EMISORES);
     expect([...counts.keys()]).toEqual(['el-espanol', 'diario-de-avisos', 'ara', 'boe', 'maldita', ...WEBS.map((web) => web.id)]);
-    expect(counts.get('el-espanol')).toEqual({ 'frente-amplio': 0, podemos: 0, pp: 1, psoe: 0, vox: 1 });
-    expect(counts.get('ara')).toEqual({ 'frente-amplio': 0, podemos: 0, pp: 2, psoe: 0, vox: 0 });
+    expect(counts.get('el-espanol')).toEqual({ 'frente-amplio': 0, pp: 1, psoe: 0, vox: 1 });
+    expect(counts.get('ara')).toEqual({ 'frente-amplio': 0, pp: 2, psoe: 0, vox: 0 });
     expect(counts.get('diario-de-avisos')?.pp).toBe(1);
   });
 
@@ -179,43 +179,43 @@ describe('validateFuentes', () => {
 
   it('does not require party websites to be linked', () => {
     expect(validateFuentes(EMISORES, partidos())).toEqual([]);
-    expect(citasPorEmisor(partidos(), EMISORES).get('web-psoe')).toEqual({ 'frente-amplio': 0, podemos: 0, pp: 0, psoe: 0, vox: 0 });
+    expect(citasPorEmisor(partidos(), EMISORES).get('web-psoe')).toEqual({ 'frente-amplio': 0, pp: 0, psoe: 0, vox: 0 });
   });
 
   it('requires exactly one website emisor per party', () => {
     const sinPsoe = EMISORES.filter((emisor) => emisor.id !== 'web-psoe');
     expect(validateFuentes(sinPsoe, partidos())).toEqual(['fuentes: psoe needs exactly one partido emisor (its website), found 0']);
-    const doble: Emisor = { ...WEBS[2]!, id: 'otra-web-pp', nombre: 'Otra web del PP', hosts: ['otra-pp.example'] };
+    const doble: Emisor = { ...WEBS[1]!, id: 'otra-web-pp', nombre: 'Otra web del PP', hosts: ['otra-pp.example'] };
     expect(validateFuentes([...EMISORES, doble], partidos())).toEqual([
       'fuentes: pp needs exactly one partido emisor (its website), found 2 (web-pp, otra-web-pp)',
     ]);
   });
 
   it('validates the partido field: required on party websites, a party id, and only there', () => {
-    expect(malformed({ ...WEBS[3]!, partido: undefined })).toMatch(/web-psoe: partido "undefined" is not one of/);
-    expect(malformed({ ...WEBS[3]!, partido: 'psoe-es' })).toMatch(/partido "psoe-es" is not one of/);
+    expect(malformed({ ...WEBS[2]!, partido: undefined })).toMatch(/web-psoe: partido "undefined" is not one of/);
+    expect(malformed({ ...WEBS[2]!, partido: 'psoe-es' })).toMatch(/partido "psoe-es" is not one of/);
     expect(issuesWith({ ...BOE, partido: 'pp' }).join()).toMatch(/fuentes.boe: partido is only allowed on tipo partido/);
   });
 
   it('requires a dated acceso check on party websites, and only there', () => {
-    expect(issuesWith({ ...WEBS[4]!, acceso: { ...WEBS[4]!.acceso!, estado: 'parcial' } })).toEqual([]);
-    expect(issuesWith({ ...WEBS[3]!, acceso: undefined })).toEqual([
+    expect(issuesWith({ ...WEBS[3]!, acceso: { ...WEBS[3]!.acceso!, estado: 'parcial' } })).toEqual([]);
+    expect(issuesWith({ ...WEBS[2]!, acceso: undefined })).toEqual([
       'fuentes.web-psoe: missing acceso (the dated check of the party website)',
     ]);
     expect(issuesWith({ ...BOE, acceso: WEBS[0]!.acceso })).toEqual(['fuentes.boe: acceso is only allowed on tipo partido']);
-    const issues = malformed({ ...WEBS[3]!, acceso: { estado: 'cerrado', comprobado: '10/11/2026', detalle: ' ', nota: 'x' } });
+    const issues = malformed({ ...WEBS[2]!, acceso: { estado: 'cerrado', comprobado: '10/11/2026', detalle: ' ', nota: 'x' } });
     expect(issues).toMatch(/acceso.estado "cerrado" is not one of abierto, parcial, bloqueado/);
     expect(issues).toMatch(/acceso.comprobado is not an ISO date/);
     expect(issues).toMatch(/acceso.detalle must be text/);
     expect(issues).toMatch(/web-psoe.acceso: unknown field "nota"/);
-    expect(malformed({ ...WEBS[3]!, acceso: 'bloqueado' })).toMatch(/acceso must be an object/);
+    expect(malformed({ ...WEBS[2]!, acceso: 'bloqueado' })).toMatch(/acceso must be an object/);
   });
 
   it('validates the optional recogida on any emisor', () => {
     expect(
       issuesWith({ ...BOE, recogida: { metodo: 'api', url: 'https://www.boe.es/datosabiertos/api/boe/sumario/', nota: 'Diario.' } }),
     ).toEqual([]);
-    expect(issuesWith({ ...WEBS[3]!, recogida: { metodo: 'omitir', nota: 'bloquea bots' } })).toEqual([]);
+    expect(issuesWith({ ...WEBS[2]!, recogida: { metodo: 'omitir', nota: 'bloquea bots' } })).toEqual([]);
     expect(issuesWith({ ...BOE, recogida: { metodo: 'seccion', url: 'https://www.boe.es/diario_boe/' } })).toEqual([]);
     const issues = malformed({ ...ESPANOL, recogida: { metodo: 'scraping', url: 'http://elespanol.com/feed', nota: '', cada: 'día' } });
     expect(issues).toMatch(/recogida.metodo "scraping" is not one of sitemap, rss, api, seccion, busqueda, omitir/);

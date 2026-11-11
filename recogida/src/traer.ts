@@ -13,7 +13,7 @@
  *   as `bloqueado` with the run date and no further request goes to it.
  * - Access per host comes from fuentes.json (`accesoDesdeRegistro` in
  *   descubrir.ts): a host whose pages block but whose listed method works
- *   (podemos.info's feed) is `soloListado`: only that URL is fetched, never its
+ *   (a party site's feed) is `soloListado`: only that URL is fetched, never its
  *   pages. A blocked host with no working method is `soloBuzon`: never fetched,
  *   inbox only (buzon.ts). Without a registry, psoe.es and voxespana.es are
  *   inbox-only by default.

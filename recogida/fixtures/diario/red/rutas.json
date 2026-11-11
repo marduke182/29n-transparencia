@@ -29,11 +29,6 @@
     "tipo": "text/html; charset=utf-8",
     "archivo": "medio-c-critica-frente-amplio.html"
   },
-  "https://medio-c.example/2026/11/09/critica-podemos": {
-    "estado": 200,
-    "tipo": "text/html; charset=utf-8",
-    "archivo": "medio-c-critica-podemos.html"
-  },
   "https://medio-c.example/2026/11/09/critica-pp-1": {
     "estado": 200,
     "tipo": "text/html; charset=utf-8",

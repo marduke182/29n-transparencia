@@ -2,7 +2,7 @@
  * Party aliases (data/partidos-alias.json) for the daily data agents and coverage
  * searches: the names, regional brands, member parties (coalitions), people and
  * look-alike names to exclude for each party. Not rendered on the site. Same
- * structure for all five parties; `validatePartidosAlias` is the gate for edits.
+ * structure for all four parties; `validatePartidosAlias` is the gate for edits.
  */
 import { PARTY_IDS, type PartyId } from '../config';
 
@@ -16,7 +16,7 @@ export const RAW_PARTIDOS_ALIAS: unknown = undefined;
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
- * Shape and rules: exactly the five party ids, each with exactly the five lists of
+ * Shape and rules: exactly the four party ids, each with exactly the five lists of
  * non-empty, trimmed strings; at least one name; no repeats inside a party, and no
  * string under two parties (case-insensitive), so a match never credits two parties.
  */

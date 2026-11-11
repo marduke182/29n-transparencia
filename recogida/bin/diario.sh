@@ -18,7 +18,7 @@
 #   N29_BUZON            the owner's manual inbox
 #   N29_PRESUPUESTO_USD  spending cap of each Claude pass (required)
 #   N29_CLAUDE           claude binary (default: claude), version 2.1.321 or later
-#   N29_RAMA_BASE        base branch (default: feature/29n-fuentes), N29_REMOTO (default: origin)
+#   N29_RAMA_BASE        base branch (default: master), N29_REMOTO (default: origin)
 #   N29_LIMITE_CLAUDE_S, N29_LIMITE_VIDEO_S (above 14400), N29_MODELO_WHISPER   optional
 #
 # Security model: Claude never writes outside its answers in the run folder.
@@ -69,7 +69,7 @@ esac
 RECOGIDA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 T="$(cd "$RECOGIDA/.." && pwd -P)"
 FIJOS="$RECOGIDA/fixtures/diario"
-PARTIDOS="frente-amplio podemos pp psoe vox"
+PARTIDOS="frente-amplio pp psoe vox"
 command -v node >/dev/null || die "falta node"
 command -v perl >/dev/null || die "falta perl"
 command -v shasum >/dev/null || die "falta shasum"
@@ -136,7 +136,7 @@ else
     *[!0-9.]* | .* | *. | *.*.*) die "N29_PRESUPUESTO_USD debe ser un número (dólares)" ;;
   esac
   N29_CLAUDE="${N29_CLAUDE:-claude}"
-  BASE="${N29_RAMA_BASE:-feature/29n-fuentes}"
+  BASE="${N29_RAMA_BASE:-master}"
   REMOTO="${N29_REMOTO:-origin}"
   RAMA="data/29n-diario-$FECHA"
   command -v "$N29_CLAUDE" >/dev/null || die "no se encuentra claude ($N29_CLAUDE)"
@@ -418,7 +418,7 @@ ensayar_conf() {
 
 paso_fusionar() { cli fusionar --fecha "$FECHA" --ejecucion "$EJ/fusion" >"$EJ/fusionar.json"; }
 
-# Quote problems after the merge that were not there before (citas.ts on the five sheets and perfiles).
+# Quote problems after the merge that were not there before (citas.ts on the four sheets and perfiles).
 paso_citas() {
   local p
   set --
@@ -470,7 +470,7 @@ cambios_sitio() {
   fi
 }
 
-# Allowlist: only the five party files, the five perfiles and busquedas.json,
+# Allowlist: only the four party files, the four perfiles and busquedas.json,
 # modified or added, each valid JSON. Anything else (a deletion, a rename, any
 # other file, any non-JSON file) stops the run before install, test and build.
 paso_alcance() {
@@ -485,8 +485,8 @@ paso_alcance() {
     esac
     case "$ruta" in
       apps/29n/src/data/busquedas.json) ;;
-      apps/29n/src/data/partidos/frente-amplio.json | apps/29n/src/data/partidos/podemos.json | apps/29n/src/data/partidos/pp.json | apps/29n/src/data/partidos/psoe.json | apps/29n/src/data/partidos/vox.json) ;;
-      apps/29n/src/data/perfiles/frente-amplio.json | apps/29n/src/data/perfiles/podemos.json | apps/29n/src/data/perfiles/pp.json | apps/29n/src/data/perfiles/psoe.json | apps/29n/src/data/perfiles/vox.json) ;;
+      apps/29n/src/data/partidos/frente-amplio.json | apps/29n/src/data/partidos/pp.json | apps/29n/src/data/partidos/psoe.json | apps/29n/src/data/partidos/vox.json) ;;
+      apps/29n/src/data/perfiles/frente-amplio.json | apps/29n/src/data/perfiles/pp.json | apps/29n/src/data/perfiles/psoe.json | apps/29n/src/data/perfiles/vox.json) ;;
       *) malos="$malos$linea (fuera de la lista)"$'\n'; continue ;;
     esac
     node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$WT/$ruta" 2>/dev/null || malos="$malos$linea (no es JSON)"$'\n'
@@ -556,7 +556,7 @@ etapa traer fatal cli traer --fecha "$FECHA"
 etapa buzon aviso cli buzon --fecha "$FECHA"
 etapa transcribir aviso paso_transcribir
 etapa tareas-equidad fatal glue tareas-equidad
-# The script, not the agents, probes each equal-search domain once and marks blocked queries for all five.
+# The script, not the agents, probes each equal-search domain once and marks blocked queries for all four.
 etapa sondeo fatal glue sondear
 
 # 2a. Search (Claude), then fetch what it found

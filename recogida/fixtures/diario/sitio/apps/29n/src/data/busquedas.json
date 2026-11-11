@@ -15,7 +15,6 @@
           "dominios": [],
           "terminos": {
             "frente-amplio": "Persona Uno",
-            "podemos": "Persona Dos",
             "pp": "Feijóo",
             "psoe": "Persona Tres",
             "vox": "Abascal"
@@ -29,7 +28,6 @@
           ],
           "terminos": {
             "frente-amplio": "Persona Uno",
-            "podemos": "Persona Dos",
             "pp": "Feijóo",
             "psoe": "Persona Tres",
             "vox": "Abascal"
@@ -38,7 +36,6 @@
       ],
       "resultados": {
         "frente-amplio": 1,
-        "podemos": 1,
         "pp": 1,
         "psoe": 1,
         "vox": 1
@@ -59,7 +56,6 @@
           "dominios": [],
           "terminos": {
             "frente-amplio": "Persona Uno",
-            "podemos": "Persona Dos",
             "pp": "Feijóo",
             "psoe": "Persona Tres",
             "vox": "Abascal"
@@ -68,7 +64,6 @@
       ],
       "resultados": {
         "frente-amplio": 1,
-        "podemos": 1,
         "pp": 1,
         "psoe": 1,
         "vox": 1
@@ -98,7 +93,6 @@
       ],
       "resultados": {
         "frente-amplio": 1,
-        "podemos": 1,
         "pp": 1,
         "psoe": 1,
         "vox": 1
@@ -121,7 +115,6 @@
       ],
       "resultados": {
         "frente-amplio": 1,
-        "podemos": 1,
         "pp": 1,
         "psoe": 1,
         "vox": 1

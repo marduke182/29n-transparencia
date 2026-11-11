@@ -6,7 +6,6 @@
   "type": "object",
   "required": [
     "frente-amplio",
-    "podemos",
     "pp",
     "psoe",
     "vox"
@@ -14,9 +13,6 @@
   "additionalProperties": false,
   "properties": {
     "frente-amplio": {
-      "$ref": "#/$defs/alias"
-    },
-    "podemos": {
       "$ref": "#/$defs/alias"
     },
     "pp": {

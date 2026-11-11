@@ -3,7 +3,7 @@
  * time from the EFE/Europa Press wires in src/data/temas-items.json (temas.ts, method at
  * /metodologia/#temas). Only the eight topics with a fixed colour and at least `MIN_PCT` %
  * are shown; the rest fold into "Otros", with their names kept for the tooltip. Same rules
- * and colours for all five.
+ * and colours for all four.
  */
 import type { PartyId } from '../config';
 import { countTemas, largestRemainder, validateTemas, type PartyTemas, type Share, type TemasData } from './temas';

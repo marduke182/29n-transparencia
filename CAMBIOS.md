@@ -2,6 +2,22 @@
 
 Registro fechado de los cambios en el proceso, los criterios y los validadores. Más reciente primero. Solo reglas y esquemas, no datos.
 
+## 12 de noviembre de 2026
+
+La guía pasa de cinco a cuatro partidos: Frente Amplio, PP, PSOE y Vox. Podemos queda fuera.
+
+1. **Regla.** La guía cubre los cuatro partidos con mayor estimación de voto en todas las encuestas publicadas en el periodo (del 5 de octubre al 12 de noviembre de 2026). Podemos fue quinto en estimación de voto en las siete encuestas del periodo (entre el 1,9 % y el 3,1 % en las cinco que dan porcentaje; las otras dos le dan un escaño). Decisión del responsable del sitio. La regla queda fijada a fecha de 12 de noviembre de 2026; cualquier cambio se anunciaría en la metodología del sitio.
+2. **Archivos de Podemos.** Se eliminaron del repositorio (siguen en el historial de git).
+3. **Registros limpiados.** Alias de partidos, claves de `busquedas.json` (también en la búsqueda sustituida del 10 de noviembre), elementos de temas y 6 fuentes que solo citaba la ficha de Podemos y la web de Podemos.
+4. **Comprobaciones de igualdad.** Las comprobaciones de trato igual se hacen ahora sobre cuatro partidos ([equidad](criterios/equidad.md)).
+5. **Críticos y defensores.** El número N no cambia (N = 1). Se quitó de [equidad](criterios/equidad.md) el ejemplo de ERC para Podemos y la decisión sobre Rufián; la regla de candidatura conjunta se mantiene (Frente Amplio la usa: Maíllo, IU).
+6. **Página de Podemos.** `/podemos/` muestra una nota (noindex, fuera del mapa del sitio).
+7. **Elementos en otras fichas.** Los que mencionan a Podemos (líneas de encuestas, la ruptura del Frente Amplio) se mantienen como estaban escritos.
+8. **Recogida diaria.** La rama base pasa a ser `master` (antes `feature/29n-fuentes`). Ver [recogida](recogida/README.md) y [agentes/08-diario.md](agentes/08-diario.md).
+9. **Temas.** Cifras recalculadas sin Podemos: de 251 teletipos quedan 224 actos; la campaña es entre el 52 % y el 73 %; entre 13 y 34 actos sobre políticas por partido; unos 8 puntos por acto en la base más pequeña.
+10. **Metodología del sitio.** Reescrita para cuatro partidos, con la regla y la nota sobre Podemos. Copia en [metodologia/metodologia.md](metodologia/metodologia.md).
+11. **Agentes 01 a 07 y workflows.** Sin cambios: cubrieron cinco partidos y se conservan como registro ([agentes](agentes/README.md)).
+
 ## 10 de noviembre de 2026
 
 Tras la revisión de equidad, estos cambios se aplican a los cinco partidos por igual. Detalle en [equidad](criterios/equidad.md), [perfiles](criterios/perfiles.md) y [correcciones](criterios/correcciones.md).

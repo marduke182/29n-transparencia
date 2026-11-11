@@ -45,7 +45,7 @@ Lo ya publicado se **reverifica** igual, una afirmación por agente ([06](agente
 
 ### 3. Adjudicación por partido
 
-Las propuestas de Haiku son indicios, no órdenes. Las decide **un agente Opus por partido**, los cinco en paralelo, con el mismo prompt y el **mismo criterio escrito** ([07](agentes/07-correcciones-por-partido.md), [criterio](criterios/correcciones.md)). Aplica los arreglos seguros (URL canónica, descartar lo falso o no verificable) y decide con juicio los casos dudosos, anotando las objeciones que rechaza. Cada agente solo puede editar la ficha de su partido.
+Las propuestas de Haiku son indicios, no órdenes. Las decide **un agente Opus por partido**, los cinco en paralelo (cinco partidos en esa ejecución), con el mismo prompt y el **mismo criterio escrito** ([07](agentes/07-correcciones-por-partido.md), [criterio](criterios/correcciones.md)). Aplica los arreglos seguros (URL canónica, descartar lo falso o no verificable) y decide con juicio los casos dudosos, anotando las objeciones que rechaza. Cada agente solo puede editar la ficha de su partido.
 
 ### 4. Publicación determinista con validadores
 
@@ -55,7 +55,7 @@ Los agentes solo escriben archivos JSON de datos. Todo lo demás es **código de
 
 Detalle en [criterios/neutralidad.md](criterios/neutralidad.md). En resumen:
 
-- Mismo esquema, mismo prompt, mismo criterio y mismo estándar para los cinco partidos; mismo tratamiento y extensión. Se publican todos los elementos válidos, sin recortar.
+- Mismo esquema, mismo prompt, mismo criterio y mismo estándar para los cuatro partidos; mismo tratamiento y extensión. Se publican todos los elementos válidos, sin recortar.
 - Sin adjetivos ni adverbios valorativos; la interpretación de un medio se atribuye al medio; citas literales de menos de 15 palabras con su enlace.
 - Ningún orden favorece a un partido: en la web se baraja en cada visita.
 - Tarjetas idénticas en forma, sin colores ni logotipos de partido.
@@ -94,7 +94,7 @@ Código en [`procesado/src/lib/temas.ts`](procesado/src/lib/temas.ts) y [`focus.
 
 ## Acceso a las webs de los partidos
 
-Se comprueba con un cliente automatizado, con fecha, si la web oficial de cada partido se deja leer, y el resultado aparece igual en las cinco fichas: **abierta** (se verifica en la propia web), **parcial** (páginas bloqueadas pero feed RSS legible: se verifica con el feed) o **bloqueada** (lo que dice se sigue a través de agencias y medios). El validador exige esta comprobación para cada partido.
+Se comprueba con un cliente automatizado, con fecha, si la web oficial de cada partido se deja leer, y el resultado aparece igual en las cuatro fichas: **abierta** (se verifica en la propia web), **parcial** (páginas bloqueadas pero feed RSS legible: se verifica con el feed) o **bloqueada** (lo que dice se sigue a través de agencias y medios). El validador exige esta comprobación para cada partido.
 
 ## Modelos usados y por qué
 

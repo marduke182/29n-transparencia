@@ -150,8 +150,8 @@ describe('validateTemas', () => {
   });
 
   it('rejects a party without any policy evento', () => {
-    const items = baseline().filter((i) => i.partidos[0] !== 'podemos');
-    expect(validateTemas(doc(items))).toEqual(['temas-items: podemos has no policy evento (empty donut)']);
+    const items = baseline().filter((i) => i.partidos[0] !== 'vox');
+    expect(validateTemas(doc(items))).toEqual(['temas-items: vox has no policy evento (empty donut)']);
   });
 
   it('rejects a broken periodo or document', () => {
