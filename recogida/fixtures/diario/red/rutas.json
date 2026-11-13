@@ -24,6 +24,11 @@
     "tipo": "text/html; charset=utf-8",
     "archivo": "medio-a-tag-elecciones.html"
   },
+  "https://medio-b.example/politica/2026/10/20/persona-uno-programa": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "medio-b-persona-uno-programa.html"
+  },
   "https://medio-b.example/politica/2026/11/09/persona-cuatro-mitin": {
     "estado": 200,
     "tipo": "text/html; charset=utf-8",

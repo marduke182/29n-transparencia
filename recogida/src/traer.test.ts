@@ -264,9 +264,12 @@ describe('vetoClaude', () => {
     expect(vetoClaude('User-agent: *\nDisallow: /\n')).toEqual({ agentes: ['*'], evidencia: 'User-agent: * · Disallow: /', permitido: [] });
     // Path rules for `*`, or a Claude group that allows the root, are not a site block.
     expect(vetoClaude(ROBOTS_ABIERTO)).toBeUndefined();
-    // `Disallow: /$` closes only the home page.
+    // `Disallow: /$` closes only the home page; with `Disallow: /` beside it, or as `/*$`, the site is closed.
     expect(vetoClaude('User-agent: Claude-User\nDisallow: /$\n')).toBeUndefined();
     expect(vetoClaude('User-agent: *\nDisallow: /$\n')).toBeUndefined();
+    expect(vetoClaude('User-agent: Claude-User\nDisallow: /\nDisallow: /$\n')).toEqual({ agentes: ['Claude-User'], evidencia: 'User-agent: Claude-User · Disallow: /', permitido: [] });
+    expect(vetoClaude('User-agent: Claude-User\nDisallow: /$\nDisallow: /\n')?.evidencia).toBe('User-agent: Claude-User · Disallow: /');
+    expect(vetoClaude('User-agent: Claude-SearchBot\nDisallow: /*$\n')).toEqual({ agentes: ['Claude-SearchBot'], evidencia: 'User-agent: Claude-SearchBot · Disallow: /*$', permitido: [] });
     expect(vetoClaude('User-agent: *\nDisallow: /\n\nUser-agent: Claude-User\nUser-agent: Claude-SearchBot\nAllow: /\n')).toBeUndefined();
     expect(vetoClaude('')).toBeUndefined();
   });
@@ -376,12 +379,14 @@ describe('vetoClaude: RFC 9309 group matching', () => {
     // With only a Claude group, Claude-User and Claude-SearchBot fall back to `*`.
     expect(vetoClaude('User-agent: Claude\nDisallow: /\n\nUser-agent: *\nAllow: /\n')).toBeUndefined();
   });
-  it('merges duplicate Claude-User groups', () => {
+  it('merges duplicate Claude-User groups, naming each agent once', () => {
     expect(vetoClaude('User-agent: Claude-User\nDisallow: /privado/\n\nUser-agent: *\nAllow: /\n\nUser-agent: claude-user\nDisallow: /\n')).toEqual({
-      agentes: ['Claude-User', 'claude-user'],
-      evidencia: 'User-agent: Claude-User, claude-user · Disallow: /',
+      agentes: ['Claude-User'],
+      evidencia: 'User-agent: Claude-User · Disallow: /',
       permitido: [],
     });
+    // One group for both agents: listed once, not once per agent.
+    expect(vetoClaude('User-agent: Claude-User\nUser-agent: Claude-SearchBot\nUser-agent: Claude-User\nDisallow: /\n')?.agentes).toEqual(['Claude-User', 'Claude-SearchBot']);
   });
   it('skips empty User-agent values: no group of agents, no veto', () => {
     expect(vetoClaude('User-agent:\nDisallow: /\n')).toBeUndefined();

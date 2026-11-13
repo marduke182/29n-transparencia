@@ -49,6 +49,15 @@
       "nota": ""
     }
   ],
-  "candidatos": [],
-  "nota": "Atrasos: nada publicado en la ventana."
+  "candidatos": [
+    {
+      "url": "https://medio-b.example/politica/2026/10/20/persona-uno-programa",
+      "titulo": "Persona Uno presenta el programa de Frente Amplio",
+      "fecha": "2026-10-20",
+      "partidos": [
+        "frente-amplio"
+      ]
+    }
+  ],
+  "nota": ""
 }

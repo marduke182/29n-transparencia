@@ -115,4 +115,14 @@ describe('diario.sh --seco with atrasos', () => {
     expect(readFileSync(join(ej(), 'etapas.tsv'), 'utf8')).toMatch(/^busqueda-completa\tok\t$/m);
     expect(readFileSync(join(ej(), 'resumen.md'), 'utf8')).toContain('## Atrasos\n\nAdemás de la ventana del día, se buscó del 2026-10-05 al 2026-11-07 en esta fuente');
   });
+
+  it('fetches what the atrasos task found and classifies it like any other document', () => {
+    const url = 'https://medio-b.example/politica/2026/10/20/persona-uno-programa';
+    const leer = (archivo: string) => JSON.parse(readFileSync(join(ej(), archivo), 'utf8')) as Objeto;
+    expect((leer('descubrir.busqueda.json').candidatos as Objeto[]).find((c) => c.url === url)).toMatchObject({ emisor: 'medio-b', listado: 'busqueda:medio-b', fecha: '2026-10-20' });
+    const traido = (leer('traer.busqueda.json').resultados as Objeto[]).find((r) => r.url === url)!;
+    expect(traido).toMatchObject({ estado: 'ok', cache: 'nuevo' });
+    expect((leer('tareas-clasificar.json') as unknown as Objeto[]).filter((t) => t.url === url).map((t) => t.partido)).toEqual(['frente-amplio']);
+    expect(leer(`clasificacion/${traido.id}.frente-amplio.json`)).toMatchObject({ doc_id: traido.id, relevante: false });
+  });
 });

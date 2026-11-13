@@ -348,13 +348,15 @@ export function vetoClaude(texto: string): { agentes: string[]; evidencia: strin
   const decisivos: { grupo: GrupoRobots & { comodin: boolean }; regla: Regla }[] = [];
   for (const token of AGENTES_CLAUDE) {
     const grupo = grupoPara(grupos, token);
-    const regla = grupo && reglaDecisiva(grupo.reglas, '/');
-    // A rule anchored with `$` (`Disallow: /$`) closes only the home page, not the site.
-    if (grupo && regla && !regla.permitir && !regla.patron.endsWith('$')) decisivos.push({ grupo, regla });
+    // `/$` matches the home page only, not the site: left out before deciding the root. `/*$` and `/` still close it.
+    const regla = grupo && reglaDecisiva(grupo.reglas.filter((r) => r.patron !== '/$'), '/');
+    if (grupo && regla && !regla.permitir) decisivos.push({ grupo, regla });
   }
   if (!decisivos.length) return undefined;
-  const anthropic = (g: GrupoRobots & { comodin: boolean }) => (g.comodin ? ['*'] : g.escritos.filter((a) => /claude|anthropic/i.test(a)));
-  const agentes = [...new Set(decisivos.flatMap((d) => anthropic(d.grupo)))].map((a) => limpiarEvidencia(a, 100)).filter(Boolean);
+  // Each agent once, as first written (a token named in two merged groups, or twice in one, is listed once).
+  const unicos = (lista: string[]) => lista.filter((a, i) => lista.findIndex((b) => b.toLowerCase() === a.toLowerCase()) === i);
+  const anthropic = (g: GrupoRobots & { comodin: boolean }) => (g.comodin ? ['*'] : unicos(g.escritos.filter((a) => /claude|anthropic/i.test(a))));
+  const agentes = unicos(decisivos.flatMap((d) => anthropic(d.grupo)).map((a) => limpiarEvidencia(a, 100)).filter(Boolean));
   const permitidas = [...new Set(decisivos.flatMap((d) => d.grupo.reglas.filter((r) => r.permitir && r.patron.startsWith('/') && r.patron !== '/').map((r) => limpiarEvidencia(r.patron, 100))))].filter(Boolean);
   const primero = decisivos[0]!;
   return { agentes, evidencia: limpiarEvidencia(`User-agent: ${anthropic(primero.grupo).join(', ')} · Disallow: ${primero.regla.patron}`), permitido: permitidas };

@@ -1,0 +1,23 @@
+{
+  "doc_id": "5a9fdeefafbdb8a8",
+  "partido": "frente-amplio",
+  "url": "https://medio-b.example/politica/2026/10/20/persona-uno-programa",
+  "relevante": false,
+  "motivo": "Ejemplo de atrasos: fuera de la ventana del día, encontrado por la tarea de atrasos.",
+  "fecha_publicacion": "2026-10-20",
+  "titular": "Persona Uno presenta el programa de Frente Amplio",
+  "medio": "medio-b.example",
+  "firma": null,
+  "genero": "noticia",
+  "fuente_primaria": false,
+  "pregunta": null,
+  "contexto": false,
+  "seccion": null,
+  "habla": null,
+  "tema": "POL",
+  "afirmaciones": [],
+  "otros_partidos": [],
+  "hecho_compartido": false,
+  "estado_sugerido": "PARCIAL",
+  "matiz_sugerido": null
+}

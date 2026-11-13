@@ -86,6 +86,8 @@ describe('registrarBloqueos', () => {
     const { cambiado, informe } = registrarBloqueos({ emisores: [...emisores, web] }, [robots('pp.es')], FECHA);
     expect(cambiado).toBe(false);
     expect(informe.sin_registrar).toEqual([expect.objectContaining({ host: 'pp.es', id: 'web-pp', tipo: 'robots', motivo: expect.stringMatching(/^para revisar: la web de un partido/) })]);
+    // Its robots.txt is still respected that day, like any site's: no Claude pass may fetch it (and traer does not, see traer.test.ts).
+    expect(hostsSinClaude([web], [robots('pp.es')])).toContain('pp.es');
     // And the allowlist refuses any bloqueo or recogida change on it.
     const antes = { emisores: [web] };
     const tocado = { emisores: [{ ...web, recogida: { metodo: 'omitir', nota: 'x' }, bloqueo: { tipo: 'robots', evidencia: 'e', consultado: FECHA, robots: 'https://pp.es/robots.txt', agentes: ['Claude-User'] } }] };
