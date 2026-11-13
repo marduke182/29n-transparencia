@@ -43,7 +43,7 @@ function preparar(etapa = 'busqueda-completa') {
   return { repo, origen, wt, ej };
 }
 
-let entornoExtra: Record<string, string> = {};
+const entornoExtra: Record<string, string> = {};
 function diario(...args: string[]) {
   const r = spawnSync('bash', [SCRIPT, '--fecha', FECHA, '--sin-git', ...args], {
     encoding: 'utf8',
@@ -193,7 +193,7 @@ fi
     expect(readFileSync(join(ej, 'anterior', 'adjudicacion-2', 'adjudicado', 'pp.json.error.txt'), 'utf8')).toMatch(/terminó con error: error_max_budget_usd/);
     const registro = readFileSync(join(ej, 'diario.log'), 'utf8');
     expect(registro).toMatch(/llamada 1 de 1 terminó con código 1/);
-    expect(registro).toMatch(/pasada adjudicacion-pp: 0\.5000 dólares en 1 llamadas/);
+    expect(readFileSync(join(ej, 'gasto.tsv'), 'utf8')).toContain('adjudicacion-pp\t1\t0.5\n');
   });
 
   /** A day stopped at the adjudication check, frente-amplio complete, and a stand-in claude that costs `coste` per call and fails pp's first call. */
@@ -223,31 +223,16 @@ fi
     return { ej, sesiones };
   };
 
-  it('shares a pass budget across its calls and retries: a retry the rest cannot cover is not made, and the gate stops the day', () => {
+  it('never skips a call for money: costs over N29_PRESUPUESTO_USD are recorded, every call and retry is made, and the day goes on', () => {
     const { ej, sesiones } = adjudicacionConCoste('0.9');
     const { salida } = diario('--reanudar', sellar());
-    expect(salida).toMatch(/FALLO en adjudicacion-completa/);
-    const registro = readFileSync(join(ej, 'diario.log'), 'utf8');
-    // pp spent 0.9 of its 1 dollar in round 1; round 2's estimate does not fit in the 0.1 left, so it is not made.
-    expect(registro).toMatch(/llamada 1 de 1: no se hace, el presupuesto que queda a la pasada \(0\.1000 de 1 dólares\) no cubre su estimación/);
-    expect(readFileSync(sesiones, 'utf8')).toBe('pp\npsoe\nvox\n');
-    expect(readFileSync(join(ej, 'gasto.tsv'), 'utf8')).toBe('adjudicacion-pp\tadjudicacion-pp\t1\t0.9\nadjudicacion-psoe\tadjudicacion-psoe\t1\t0.9\nadjudicacion-vox\tadjudicacion-vox\t1\t0.9\n');
-  });
-
-  it('stops the day with a clear message when the day budget would be passed', () => {
-    entornoExtra = { N29_PRESUPUESTO_DIA_USD: '0.7' };
-    try {
-      const { ej, sesiones } = adjudicacionConCoste('0.5');
-      const { salida } = diario('--reanudar', sellar());
-      expect(salida).toMatch(/FALLO en adjudicacion:/);
-      const registro = readFileSync(join(ej, 'diario.log'), 'utf8');
-      expect(registro).toMatch(/PRESUPUESTO DEL DÍA AGOTADO: 0\.5000 dólares gastados y la llamada 1 de adjudicacion-psoe se estima en [0-9.]+; el tope del día es 0\.7/);
-      // Nothing more is called after the cap.
-      expect(readFileSync(sesiones, 'utf8')).toBe('pp\n');
-      expect(readFileSync(join(ej, 'resumen.md'), 'utf8')).toContain('PRESUPUESTO DEL DÍA AGOTADO');
-    } finally {
-      entornoExtra = {};
-    }
+    expect(salida).not.toMatch(/FALLO en adjudicacion/);
+    // pp's first call failed and its retry was still made, though the reported costs add up to more than 1 dollar.
+    expect(readFileSync(sesiones, 'utf8')).toBe('pp\npsoe\nvox\npp\n');
+    expect(readFileSync(join(ej, 'etapas.tsv'), 'utf8')).toMatch(/^adjudicacion-completa\tok\t$/m);
+    expect(readFileSync(join(ej, 'gasto.tsv'), 'utf8')).toBe('adjudicacion-pp\t1\t0.9\nadjudicacion-psoe\t1\t0.9\nadjudicacion-vox\t1\t0.9\nadjudicacion-pp\t1\t0.9\n');
+    // The per-call guard is at least 100 dollars whatever N29_PRESUPUESTO_USD says.
+    expect(readFileSync(join(ej, 'diario.log'), 'utf8')).not.toMatch(/presupuesto/i);
   });
 
   // A day stopped at the site checks after the merge (11 Nov 2026): the merge runs again from the kept adjudication.

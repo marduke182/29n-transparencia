@@ -13,7 +13,7 @@
 # resumes at the classification (diario.sh --sellar, then --reanudar … --sin-git), so it fetches nothing new and
 # makes no commit, push or PR. Its Claude passes, merge, checks and summary are this checkout's.
 # Then compare the two days: node bin/comparar.ts <vivo-cache>/ejecuciones/D <sombra>/cache/ejecuciones/D
-# N29_PRESUPUESTO_USD (required) and N29_PRESUPUESTO_DIA_USD (default 200) apply as in a live run.
+# N29_PRESUPUESTO_USD (required) applies as in a live run: only a per-call runaway guard.
 set -euo pipefail
 
 die() {

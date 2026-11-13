@@ -31,7 +31,6 @@ import { citableEn, hostsRegistrados } from './citas.ts';
 import { ESQUEMAS, respuestaEstructurada, unirRespuestas, type PasadaJuicio } from './juicio.ts';
 import {
   MAX_PROMPT,
-  RESERVA_HECHOS_PREVIOS,
   seccionNoFiable,
   MAX_TAREAS_CLASIFICACION,
   OBJETIVO_CLASIFICACION,
@@ -1839,31 +1838,6 @@ export function documentosAdjudicacion(
   return { documentos: ids.map((id) => ({ ...documento(id), ...(suyas.has(id) ? { clasificacion: suyas.get(id)! } : {}), resultados: porDoc.get(id) ?? [] })), sueltos };
 }
 
-/**
- * Prices (dollars per million tokens) for the cost estimate of a call, from
- * the environment, with defaults on the high side of what the runs of 11–12
- * Nov 2026 paid: N29_PRECIO_{OPUS,HAIKU}_{ENTRADA,SALIDA}_USD_MTOK.
- */
-export const PRECIOS_POR_DEFECTO = { opus: { entrada: 5, salida: 25 }, haiku: { entrada: 1, salida: 5 } } as const;
-/** Output tokens counted on top of the prompt: a call's answer at most, roughly. */
-export const SALIDA_ESTIMADA_TOKENS = { opus: 16_000, haiku: 8_000 } as const;
-/** Dollars per search task (its Haiku subagent's searches and fetches), N29_COSTE_TAREA_BUSQUEDA_USD; the live call of 13 Nov paid 0.14. */
-export const COSTE_TAREA_BUSQUEDA_POR_DEFECTO = 0.4;
-
-const precio = (variable: string, porDefecto: number) => {
-  const valor = Number(process.env[variable]);
-  return Number.isFinite(valor) && valor > 0 ? valor : porDefecto;
-};
-
-/** The estimated cost of one call: its prompt (characters ÷ 3.5 tokens) and an output margin at the model's prices, plus its search tasks. */
-export function estimarCoste(modelo: 'opus' | 'haiku', caracteres: number, tareasBusqueda = 0): number {
-  const M = modelo.toUpperCase();
-  const entrada = precio(`N29_PRECIO_${M}_ENTRADA_USD_MTOK`, PRECIOS_POR_DEFECTO[modelo].entrada);
-  const salida = precio(`N29_PRECIO_${M}_SALIDA_USD_MTOK`, PRECIOS_POR_DEFECTO[modelo].salida);
-  const porTarea = precio('N29_COSTE_TAREA_BUSQUEDA_USD', COSTE_TAREA_BUSQUEDA_POR_DEFECTO);
-  return ((caracteres / 3.5) * entrada + SALIDA_ESTIMADA_TOKENS[modelo] * salida) / 1e6 + tareasBusqueda * porTarea;
-}
-
 /** The name of a Claude session: the pass, with its batch or party (diario.sh: busqueda, clasificacion-01, adjudicacion-pp…). */
 const nombreSesion = (pasada: Pasada, lote?: string, partido?: string) => (lote ? `${pasada}-${lote}` : partido ? `${pasada}-${partido}` : pasada);
 
@@ -2077,13 +2051,6 @@ async function main(args: string[]): Promise<number> {
       const previstas = esPasadaBusqueda(pasada) ? Math.max(0, ...llamadasBusqueda(fuentes, iguales).map((l) => busquedasWebPrevistas(l.fuentes, l.iguales))) : 0;
       writeFileSync(join(dir, 'busquedas-web.txt'), `${limiteBusquedasWeb(pasada, previstas)}\n`);
       // A prompt over MAX_PROMPT is not sent (diario.sh skips it): said here, so the log shows why.
-      // The estimated cost of each call (estimarCoste): diario.sh skips a call the pass's remaining budget cannot cover.
-      const modelo = esPasadaBusqueda(pasada) ? 'opus' : MODELO_JUICIO[pasada as keyof typeof MODELO_JUICIO];
-      const tareasPorLlamada = esPasadaBusqueda(pasada) ? llamadasBusqueda(fuentes, iguales).map((l) => l.fuentes.length + l.iguales.length) : [];
-      writeFileSync(
-        join(dir, 'estimaciones.txt'),
-        material.prompts.map((x, n) => `prompt-${n + 1}.txt ${estimarCoste(modelo, x.length + (pasada === 'hechos' && n > 0 ? RESERVA_HECHOS_PREVIOS : 0), tareasPorLlamada[n] ?? 0).toFixed(4)}\n`).join(''),
-      );
       const largos = material.prompts.flatMap((x, n) => (x.length > MAX_PROMPT ? [`prompt-${n + 1}.txt`] : []));
       writeFileSync(join(dir, 'saltar.txt'), largos.map((x) => `${x}\n`).join(''));
       process.stdout.write(`${material.prompts.length} llamadas: ${material.prompts.map((x) => x.length).join(', ')} caracteres${material.recortes.length ? `; ${material.recortes.length} documentos reducidos a extractos` : ''}\n`);

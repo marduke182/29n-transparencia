@@ -25,9 +25,8 @@
 #   N29_WORKTREES        folder for the run worktrees (<N29_WORKTREES>/29n-diario-<fecha>)
 #   N29_CACHE            cache and run folders, outside any repository
 #   N29_BUZON            the owner's manual inbox
-#   N29_PRESUPUESTO_USD  spending cap of each Claude pass, shared by its calls and retries (required)
-#   N29_PRESUPUESTO_DIA_USD  spending cap of the whole day, every pass and resume included (default 200)
-#   N29_PRECIO_{OPUS,HAIKU}_{ENTRADA,SALIDA}_USD_MTOK, N29_COSTE_TAREA_BUSQUEDA_USD   optional: the cost estimate of a call
+#   N29_PRESUPUESTO_USD  runaway guard of each Claude call (--max-budget-usd, at least 100; required). Never a reason
+#                        to skip a call: what each call costs is only recorded, in gasto.tsv
 #   N29_CLAUDE           claude binary (default: claude), version 2.1.322 exactly (N29_CLAUDE_VERSION_OK=1 for a newer one)
 #   N29_RAMA_BASE        base branch (default: master), N29_REMOTO (default: origin)
 #   N29_LIMITE_CLAUDE_S, N29_LIMITE_VIDEO_S (above 14400), N29_MODELO_WHISPER   optional
@@ -180,17 +179,12 @@ if [ "$SECO" = 1 ]; then
   IMPORTAR="$(node -p 'require("node:url").pathToFileURL(process.argv[1]).href' "$FIJOS/red-fija.mjs")"
   WT="$RAIZ/sitio"
 else
-  # The day's cap: 200 dollars unless set (the 12 Nov run cost about 70; this version is estimated at about 55).
-  N29_PRESUPUESTO_DIA_USD="${N29_PRESUPUESTO_DIA_USD:-200}"
   for variable in N29_REPO N29_WORKTREES N29_CACHE N29_BUZON N29_PRESUPUESTO_USD; do
     eval "[ -n \"\${$variable:-}\" ]" || die "falta la variable de entorno $variable"
   done
-  for variable in N29_PRESUPUESTO_USD N29_PRESUPUESTO_DIA_USD; do
-    eval "valor=\"\$$variable\""
-    case "$valor" in
-      *[!0-9.]* | .* | *. | *.*.*) die "$variable debe ser un número (dólares)" ;;
-    esac
-  done
+  case "$N29_PRESUPUESTO_USD" in
+    *[!0-9.]* | .* | *. | *.*.*) die "N29_PRESUPUESTO_USD debe ser un número (dólares)" ;;
+  esac
   N29_CLAUDE="${N29_CLAUDE:-claude}"
   BASE="${N29_RAMA_BASE:-master}"
   REMOTO="${N29_REMOTO:-origin}"
@@ -675,22 +669,8 @@ prompts_pasada() {
   printf '%s' "$n"
 }
 
-# clave_presupuesto <sesión>: the pass whose budget a session spends: the search and its retry share one, the
-# classification batches and their retry another; the facts, and each party's adjudication (both rounds), their own.
-clave_presupuesto() {
-  case "$1" in
-    busqueda | busqueda-reintento) echo busqueda ;;
-    clasificacion-*) echo clasificacion ;;
-    *) echo "$1" ;;
-  esac
-}
-# gasto clave <clave> | gasto dia: dollars spent today (gasto.tsv, plus the session in progress).
-gasto() {
-  cat "$EJ/gasto.tsv" "$PRIV/gasto.nuevo" 2>/dev/null | awk -F '\t' -v c="${2:-}" -v modo="$1" 'modo == "dia" || $1 == c { s += $4 } END { printf "%.4f", s + 0 }'
-}
-
 claude_pasada() {
-  local pasada="$1" codigo=0 resto busquedas herramientas modelo sin_web="" n i salidas=() gastado=0 restante segundos coste salida
+  local pasada="$1" codigo=0 resto busquedas herramientas modelo sin_web="" n i salidas=() segundos coste salida
   preparar_conf "$pasada" || return $?
   (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || { echo "la configuración de Claude cambió antes de usarla"; return 1; }
   herramientas="$(herramientas_pasada "$pasada")" || return 1
@@ -705,23 +685,17 @@ claude_pasada() {
   sellar "$pasada" || return $?
   # One call per prompt (a batch). --restricted ignores user, project and local settings files: only --settings
   # applies. The answer comes back on stdout as structured output (--json-schema); the pass writes nothing.
-  # N29_PRESUPUESTO_USD is for the whole pass (its batches and retries: clave_presupuesto) and N29_LIMITE_CLAUDE_S for
-  # the whole session; each call gets what is left. A call whose estimate (diario.ts, estimarCoste) the pass's budget
-  # cannot cover is not made. Spending is recorded in gasto.tsv (Claude Code's total_cost_usd, also on error; the
-  # estimate when a call was cut short and reported nothing). A call that fails, or is not made, leaves its answers
-  # missing: the gate after the pass retries them or stops the day. Over N29_PRESUPUESTO_DIA_USD, the day stops.
-  local inicio=$SECONDS clave estimado gastado_pasada gastado_dia entrada
-  clave="$(clave_presupuesto "$pasada")"
+  # Money never decides whether a call is made: --max-budget-usd (N29_PRESUPUESTO_USD, at least 100) only guards
+  # each call against a runaway, far above what the largest one costs. N29_LIMITE_CLAUDE_S is for the whole
+  # session; each call gets the time left. What Claude Code reports each call cost (total_cost_usd) is recorded in
+  # gasto.tsv, for information only. A call that fails, or is not made, leaves its answers missing: the gate after
+  # the pass retries them or stops the day.
+  local inicio=$SECONDS entrada tope
+  tope="$(awk -v p="$N29_PRESUPUESTO_USD" 'BEGIN { printf "%.2f", (p > 100 ? p : 100) }')"
   : >"$PRIV/gasto.nuevo"
-  rm -f "$PRIV/tope-dia"
   i=1
   while [ "$i" -le "$n" ]; do
     salida="$PRIV/$pasada.salida-$i.json"
-    estimado="$(awk -v p="prompt-$i.txt" '$1 == p { print $2 }' "$CONF/estimaciones.txt")"
-    case "$estimado" in '' | *[!0-9.]*) echo "estimación no válida para prompt-$i.txt"; estimado=999999 ;; esac
-    gastado_pasada="$(gasto clave "$clave")"
-    gastado_dia="$(gasto dia)"
-    restante="$(awk -v p="$N29_PRESUPUESTO_USD" -v g="$gastado_pasada" 'BEGIN { r = p - g; if (r < 0) r = 0; printf "%.4f", r }')"
     segundos=$((LIMITE_CLAUDE - (SECONDS - inicio)))
     # A facts batch after the first also gets the facts the earlier batches wrote (reuse their keys).
     entrada="$CONF/prompt-$i.txt"
@@ -733,19 +707,11 @@ claude_pasada() {
     if grep -q -x -F "prompt-$i.txt" "$CONF/saltar.txt"; then
       echo "llamada $i de $n: no se envía (prompt demasiado largo)"
       salida=""
-    elif awk -v d="$gastado_dia" -v e="$estimado" -v t="$N29_PRESUPUESTO_DIA_USD" 'BEGIN { exit !(d + e > t) }'; then
-      echo "PRESUPUESTO DEL DÍA AGOTADO: $gastado_dia dólares gastados y la llamada $i de $pasada se estima en $estimado; el tope del día es $N29_PRESUPUESTO_DIA_USD (N29_PRESUPUESTO_DIA_USD). La ejecución se detiene aquí."
-      : >"$PRIV/tope-dia"
-      salidas+=("")
-      break
-    elif awk -v r="$restante" -v e="$estimado" 'BEGIN { exit !(r < e) }'; then
-      echo "llamada $i de $n: no se hace, el presupuesto que queda a la pasada ($restante de $N29_PRESUPUESTO_USD dólares) no cubre su estimación ($estimado)"
-      salida=""
     elif [ "$segundos" -lt 60 ]; then
-      echo "llamada $i de $n: no se hace, tiempo de la pasada agotado"
+      echo "llamada $i de $n: no se hace, tiempo de la sesión agotado"
       salida=""
     else
-      echo "llamada $i de $n ($(wc -c <"$entrada" | tr -d ' ') bytes, estimación $estimado, quedan $restante dólares y $segundos s)"
+      echo "llamada $i de $n ($(wc -c <"$entrada" | tr -d ' ') bytes, quedan $segundos s)"
       (
         cd "$CONF/vacio" &&
           con_limite "$segundos" env CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION="$busquedas" ${sin_web:+CLAUDE_CODE_DISABLE_WEB_FETCH=1} "$N29_CLAUDE" -p \
@@ -761,23 +727,17 @@ claude_pasada() {
             --no-session-persistence \
             --output-format json \
             --json-schema "$(cat "$CONF/esquema.json")" \
-            --max-budget-usd "$restante" \
+            --max-budget-usd "$tope" \
             <"$entrada" >"$salida"
       ) || echo "llamada $i de $n terminó con código $? (sus respuestas faltarán; la comprobación de después decide)"
-      coste="$(node -e 'try { const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); const c = Number(r.total_cost_usd); console.log(r.total_cost_usd !== undefined && Number.isFinite(c) && c >= 0 ? c : "estimado"); } catch { console.log("estimado"); }' "$salida")"
-      # A call cut short (time limit) or that reported no cost counts as its estimate.
-      [ "$coste" != estimado ] || { echo "llamada $i de $n: sin gasto informado; se cuenta su estimación ($estimado)"; coste="$estimado"; }
-      printf '%s\t%s\t%s\t%s\n' "$clave" "$pasada" "$i" "$coste" >>"$PRIV/gasto.nuevo"
+      coste="$(node -e 'try { const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); const c = Number(r.total_cost_usd); console.log(r.total_cost_usd !== undefined && Number.isFinite(c) && c >= 0 ? c : ""); } catch { console.log(""); }' "$salida")"
+      printf '%s\t%s\t%s\n' "$pasada" "$i" "${coste:-sin dato}" >>"$PRIV/gasto.nuevo"
     fi
     salidas+=("$salida")
     i=$((i + 1))
   done
-  # Fewer outputs than prompts after a stop: the rest count as not made.
-  while [ ${#salidas[@]} -lt "$n" ]; do salidas+=(""); done
-  gastado="$(awk -F '\t' '{ s += $4 } END { printf "%.4f", s + 0 }' "$PRIV/gasto.nuevo")"
-  echo "pasada $pasada: $gastado dólares en $n llamadas (presupuesto $clave: $(gasto clave "$clave") de $N29_PRESUPUESTO_USD; día: $(gasto dia) de $N29_PRESUPUESTO_DIA_USD)"
   verificar_sello "$pasada" || codigo=1
-  # Spending of the session, kept with the day (outside the seals; read for every later pass and on a resume).
+  # What the session's calls reported they cost, kept with the day for information (outside the seals).
   cat "$PRIV/gasto.nuevo" >>"$EJ/gasto.tsv" && rm -f "$PRIV/gasto.nuevo"
   # The script, not Claude, checks the answers and writes the pass's own files.
   opciones_sesion "$pasada"
@@ -798,10 +758,6 @@ claude_pasada() {
   for i in "${salidas[@]}"; do [ -z "$i" ] || [ ! -f "$i" ] || cp "$i" "$EJ/claude/" || codigo=1; done
   for i in "$PRIV"/hechos.previos-*.txt; do [ ! -f "$i" ] || mv "$i" "$EJ/claude/" || codigo=1; done
   rm -f "$PRIV"/hechos.entrada-*.txt
-  if [ -e "$PRIV/tope-dia" ]; then
-    echo "PRESUPUESTO DEL DÍA AGOTADO ($N29_PRESUPUESTO_DIA_USD dólares, N29_PRESUPUESTO_DIA_USD): el día se detiene sin más llamadas"
-    codigo=1
-  fi
   borrar_conf
   # Only a broken seal or configuration ends the day here.
   return $codigo
