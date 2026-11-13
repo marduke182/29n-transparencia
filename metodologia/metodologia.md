@@ -130,9 +130,21 @@ Cada partido tiene una página con lo que dice en sus propios documentos. Es la 
 
 <h2 id="actualizacion">Actualización diaria</h2>
 
-- Una recogida diaria abre un borrador para revisión humana y no se publica nada de forma automática ([proceso](https://github.com/marduke182/29n-transparencia/blob/main/agentes/08-diario.md)).
+- El autor inicia la recogida a mano, normalmente una vez al día. No hay una programación automática. Una recogida puede cubrir más de un día: la del 11 de noviembre cubrió el 10 y el 11 de noviembre.
+- Código ordinario, sin IA, descubre y trae los documentos, hace las comprobaciones, fusiona los datos y abre el borrador. Agentes de IA (modelos Claude) hacen la búsqueda web, la clasificación, los hechos compartidos y la adjudicación de cada partido.
+- El autor revisa el borrador antes de publicar nada, y no se publica nada de forma automática ([proceso](https://github.com/marduke182/29n-transparencia/blob/main/agentes/08-diario.md)).
+- Los límites de los agentes los imponen los ajustes del programa, no las instrucciones que reciben. Los agentes que clasifican, redactan los hechos compartidos y adjudican no tienen ninguna herramienta: no pueden leer archivos, navegar, buscar ni ejecutar nada. Solo reciben el texto que prepara el script y responden en un formato fijo, que el script comprueba antes de escribir.
+- Los documentos que reciben los agentes van marcados como datos no fiables.
+- Solo el agente de búsqueda usa la web. Hace búsquedas web y abre páginas solo de los sitios del registro de fuentes y de las búsquedas iguales del día.
+- Solo se traen y se citan fuentes del registro de fuentes del sitio. Lo que una búsqueda encuentra en otros sitios queda en una lista para revisar y no se publica. Los documentos y los vídeos que aporta el autor son la excepción: se recogen aunque su sitio no esté en el registro.
+- No se recogen los sitios cuyo robots.txt no permite el acceso de los agentes de Claude ni los que bloquean el acceso automatizado, y no se elude ese bloqueo ([lista de fuentes que no se pueden leer](/fuentes/#no-se-recogen)). La recogida añade sola a esa lista los bloqueos nuevos por robots.txt. Los bloqueos antibots y los de las webs de los partidos se añaden tras revisarlos.
+- La Razón se recoge desde el inicio de la campaña oficial, el 13 de noviembre de 2026. Lo publicado por La Razón y elDiario.es del 5 de octubre al 12 de noviembre se busca una vez, con una consulta por partido en cada periódico. Una búsqueda web no devuelve todo lo publicado.
+- Las reglas son las mismas para los cuatro partidos, y cada lote de la adjudicación tiene el mismo espacio para documentos en los cuatro. Si falla la adjudicación de cualquier partido, ese día no se publica nada.
+- Entrevistas: el autor añade a mano los enlaces a entrevistas (radio, televisión y pódcast). Su audio se transcribe automáticamente con Whisper en el ordenador del autor y se borra después de usarlo. La transcripción automática puede contener errores de reconocimiento.
+- Una cita tomada de una entrevista solo procede de lo que dice la persona entrevistada en esa transcripción.
+- Las entrevistas recogidas dependen de las que conceden los candidatos de cada partido, de las que localiza el autor y de las que están disponibles sin iniciar sesión. Su número no es igual para todos los partidos.
+- Las citas que no aparecen literalmente en la fuente guardada se descartan al fusionar los datos.
 - Los textos completos y las transcripciones se guardan en privado. Se publican solo citas de menos de 15 palabras con su enlace.
-- No se elude el bloqueo de los sitios que impiden el acceso automatizado.
 - Desde el **24 de noviembre** no se añaden encuestas nuevas, porque la ley prohíbe publicarlas en los cinco días anteriores a la votación.
 
 <h2 id="repositorio">Repositorio público</h2>

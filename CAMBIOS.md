@@ -36,6 +36,15 @@ Cambios del proceso, no de los criterios; iguales para los cuatro partidos. Ver 
 2. **Sitios que no admiten a los agentes de Claude.** El robots.txt de El País, El Mundo y ABC (leído el 13 de noviembre de 2026) prohíbe el acceso a Claude-User, ClaudeBot y Claude-SearchBot. Ninguna sesión de Claude puede abrirlos ni abrir los demás sitios con `bloqueo` en el registro de fuentes (el host y sus subdominios), y la recogida no trae nada de un emisor con `bloqueo` ni de esos tres sitios, aunque lo señale un resultado de búsqueda o la lista de enlaces del buzón. Un emisor omitido solo por ámbito se sigue pudiendo traer desde una búsqueda o desde el buzón.
 3. **Fuentes que bloquean.** La recogida anota cada robots.txt que prohíbe la raíz a Claude-User o a Claude-SearchBot y cada respuesta antibots (403 o 429 con la firma de un servicio antibots, o una página «no eres un robot»), con la fecha y la evidencia. Los robots.txt pasan al registro de fuentes del sitio en el PR del día (`bloqueo` y recogida omitida; un emisor nuevo, con el host como nombre, si no estaba), con una lista blanca que no admite ningún otro cambio en ese archivo. Con la web de un partido, el robots.txt se respeta al traer igual que con cualquier otro sitio, la misma regla para los cuatro partidos; pero el registro no cambia solo: el bloqueo va al resumen para revisar y una persona decide. Una búsqueda igual que llega a un sitio que bloquea a la guía se marca bloqueada para los cuatro partidos. Los bloqueos antibots no se escriben solos, porque un reto puede deberse a la frecuencia de las peticiones: el resumen los lista para revisar y dice si es la primera vez. Un bloqueo nunca se quita solo; si un robots.txt deja de excluir a los agentes de Claude, el resumen lo dice para que una persona decida. El resumen y el PR llevan el apartado «Fuentes que bloquean».
 
+### Metodología del sitio: la recogida diaria
+
+Cambio del texto, no del proceso ni de los criterios. El apartado «Actualización diaria» describe la recogida tal como queda tras los cambios de este día. Copia en [metodologia/metodologia.md](metodologia/metodologia.md#actualizacion).
+
+1. **Quién hace qué.** El código sin IA descubre, trae, comprueba, fusiona y abre el borrador. Los agentes buscan, clasifican, redactan los hechos compartidos y adjudican.
+2. **Límites de los agentes.** Los imponen los ajustes del programa: la clasificación, los hechos y la adjudicación no tienen herramientas, lo que reciben va marcado como dato no fiable y solo la búsqueda usa la web.
+3. **Fuentes.** Solo las del registro, salvo lo que aporta el autor. Los sitios que bloquean a los agentes de Claude o el acceso automatizado no se recogen, con enlace a la lista de /fuentes/.
+4. **Atrasos e igualdad.** La búsqueda única de La Razón y elDiario.es del 5 de octubre al 12 de noviembre, el mismo espacio por lote para los cuatro partidos, y un fallo en la adjudicación de un partido deja el día sin publicar.
+
 ## 12 de noviembre de 2026
 
 La guía pasa de cinco a cuatro partidos: Frente Amplio, PP, PSOE y Vox. Podemos queda fuera.
