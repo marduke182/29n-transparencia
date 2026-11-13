@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { idDocumento, urlCanonica } from './cache.ts';
-import { comprobarCitas, extraerCitas, lectorCache, normalizar, type LectorCache } from './citas.ts';
+import { citableEn, comprobarCitas, extraerCitas, hostsRegistrados, lectorCache, normalizar, type LectorCache } from './citas.ts';
 
 const URL_A = 'https://ejemplo.es/2026/11/08/articulo-a.html';
 const URL_B = 'https://ejemplo.es/2026/11/08/articulo-b.html';
@@ -101,5 +101,30 @@ describe('lectorCache', () => {
     expect(leerDisco(URL_A.replace('https://', 'https://www.'))).toBe('texto del documento');
     expect(leerDisco('https://otro.es/original')).toBe('otro texto');
     expect(leerDisco(URL_B)).toBeUndefined();
+  });
+});
+
+describe('citableEn: solo hosts registrados o documentos del dueño', () => {
+  const raiz = mkdtempSync(join(tmpdir(), 'n29-citable-'));
+  afterAll(() => rmSync(raiz, { recursive: true, force: true }));
+  const guardarMeta = (url: string, meta: Record<string, unknown>) => {
+    const dir = join(raiz, 'docs', idDocumento(urlCanonica(url)));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'meta.json'), JSON.stringify({ url, url_canonica: urlCanonica(url), ...meta }));
+  };
+
+  it('admite un host de fuentes.json y sus subdominios, y un documento traído por el buzón o la lista de enlaces; nada más', () => {
+    const hosts = hostsRegistrados({ emisores: [{ id: 'medio', hosts: ['www.Medio.es'] }, { id: 'roto' }, { hosts: [3] }] });
+    expect(hosts).toEqual(['medio.es']);
+    guardarMeta('https://ajeno.com/buzon', { via: 'buzon' });
+    guardarMeta('https://ajeno.com/enlace', { via: 'web', origen: 'buzon-enlaces' });
+    guardarMeta('https://ajeno.com/busqueda', { via: 'web' });
+    const citable = citableEn(raiz, hosts);
+    expect(['https://medio.es/a', 'https://www.medio.es/b?utm_source=x', 'https://cdn.medio.es/c.pdf'].every(citable)).toBe(true);
+    expect(citable('https://ajeno.com/buzon')).toBe(true);
+    expect(citable('https://ajeno.com/enlace')).toBe(true);
+    // Found by a search, cached, but on an unregistered host: not citable.
+    expect(citable('https://ajeno.com/busqueda')).toBe(false);
+    for (const mala of ['https://medio.es.ajeno.com/x', 'https://notmedio.es/x', 'ftp://medio.es/x', 'no es una url', 'https://ajeno.com/sin-cache']) expect(citable(mala), mala).toBe(false);
   });
 });

@@ -2,20 +2,14 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "defaultMode": "dontAsk",
-    "additionalDirectories": ["__EJ__", "__N29_CACHE__/docs", "__T__/criterios"],
-    "allow": [
-      "Agent",
-      "Glob",
-      "Grep",
-      "WebFetch",
-      "WebSearch",
-      "Read(/__EJ__/**)",
-      "Read(/__N29_CACHE__/docs/**)",
-      "Read(/__T__/criterios/**)"
-    ],
+    "allow": [],
     "deny": [
       "Bash",
+      "PowerShell",
+      "Monitor",
       "NotebookEdit",
+      "Skill",
+      "mcp__*",
       "Write(//**/.claude/**)",
       "Edit(//**/.claude/**)",
       "Write(//**/CLAUDE.md)",

@@ -35,10 +35,11 @@ export function hostsSinClaude(emisores: readonly Emisor[], vetos: readonly Veto
 }
 
 /**
- * WebFetch deny rules for some hosts. `WebFetch(domain:x)` matches x only;
+ * WebFetch rules for some hosts (deny rules for the vetoed ones, allow rules
+ * for the search passes' own). `WebFetch(domain:x)` matches x only;
  * `WebFetch(domain:*.x)` matches its subdomains at any depth (www., feeds.…):
- * Claude Code permissions docs, read on 2026-11-13. A deny rule wins over the
- * template's bare `WebFetch` allow.
+ * Claude Code permissions docs, read on 2026-11-13. A deny rule wins over any
+ * allow rule.
  */
 export function reglasWebFetch(hosts: readonly string[]): string[] {
   return hosts.flatMap((host) => {

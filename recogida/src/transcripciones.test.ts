@@ -97,7 +97,7 @@ describe('transcribir', () => {
     expect(resultado.guardado.meta).toMatchObject({ via: 'transcripcion', fuente_transcripcion: 'subtitulos', video_url: VIDEO, idioma: 'es', calidad_primaria: true });
     expect(llamadas).toHaveLength(1);
     const args = llamadas[0]!.args;
-    for (const flag of ['--skip-download', '--write-subs', '--write-auto-subs', '--ignore-config', '--no-cookies', '--no-cookies-from-browser']) expect(args).toContain(flag);
+    for (const flag of ['--skip-download', '--write-subs', '--write-auto-subs', '--ignore-config', '--no-plugin-dirs', '--no-cookies', '--no-cookies-from-browser']) expect(args).toContain(flag);
     expect(valorDe(args, '--sub-langs')).toBe('es');
     expect(args.some((arg) => /^--cookies(=|$)|--username|--password/.test(arg))).toBe(false);
     expect(await readFile(join(resultado.guardado.dir, 'texto.txt'), 'utf8')).toBe('Buenas noches y bienvenidos\nal debate\n');
@@ -229,7 +229,7 @@ describe('vídeos permitidos (hosts con extractor propio en yt-dlp)', () => {
     const args = llamadas[0]!.args;
     expect(valorDe(args, '--use-extractors')).toBe('AtresPlayer');
     expect(valorDe(args, '--sub-langs')).toBe('es');
-    for (const flag of ['--ignore-config', '--no-cookies', '--no-cookies-from-browser']) expect(args).toContain(flag);
+    for (const flag of ['--ignore-config', '--no-plugin-dirs', '--no-cookies', '--no-cookies-from-browser']) expect(args).toContain(flag);
     expect(args.slice(-2)[0]).toBe('--');
   });
 

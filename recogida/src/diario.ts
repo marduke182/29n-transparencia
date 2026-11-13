@@ -10,7 +10,8 @@
  *   node src/diario.ts preparar            --fecha D   fusion/<partido>.json + preparar.json: what fusionar may merge
  *   node src/diario.ts ajustar             --fecha D   en_espera promotion, common corte, the day's busquedas.json runs
  *   node src/diario.ts informe             --fecha D   Markdown appendix of the run for resumen.md
- *   node src/diario.ts claude --dir DIR --pasada P --fecha D   DIR: settings.json, agentes.json, prompt.txt and busquedas-web.txt (WebSearch cap) of pass P
+ *   node src/diario.ts claude --dir DIR --pasada P --fecha D   DIR: settings.json, agentes.json, prompt.txt, busquedas-web.txt (WebSearch cap),
+ *     herramientas.txt (--tools) and carpetas.txt (--add-dir) of pass P
  *     (--lote NN with --pasada clasificacion; --partido ID with --pasada adjudicacion)
  *   node src/diario.ts sondear             --fecha D   probes each equal-search domain; marks blocked queries in equidad-tareas.json
  *   node src/diario.ts busqueda-completa   --fecha D   exit 1 and busqueda-faltan.txt unless every source term and equal search ran
@@ -25,7 +26,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PARTY_IDS, idDocumento, raizCache, rutaDeEntorno, urlCanonica, type Meta, type PartyId } from './cache.ts';
 import { accesoDesdeRegistro, leerRegistro, salidaTarea, terminosDe, type Alias, type Candidato, type Descubrimiento, type Emisor, type TareaBusqueda } from './descubrir.ts';
-import { clavesDe, VEDA_ENCUESTAS } from './fusionar.ts';
+import { clavesDe, urlsEn, VEDA_ENCUESTAS } from './fusionar.ts';
+import { citableEn, hostsRegistrados } from './citas.ts';
 import { motivoContexto, motivoPregunta, type Pregunta } from './preguntas.ts';
 import { PARTY_SHORT } from './resumen.ts';
 import { esVideo } from './transcripciones.ts';
@@ -528,10 +530,24 @@ export interface SalidaFuente {
   candidatos?: { url?: unknown; titulo?: unknown; fecha?: unknown }[];
 }
 
+/** An equal-search result on a host fuentes.json does not list: never fetched, never published, only listed in the summary for the owner. */
+export interface ParaRevisar {
+  url: string;
+  busqueda: string;
+  partido: string;
+  host: string;
+}
+
+/** Why an equal-search result on an unregistered host was left out (busquedas.json hallazgos, the summary). */
+export const MOTIVO_SIN_REGISTRAR = 'Host sin registrar en fuentes.json: no se trae ni se publica sin revisión; queda en «Para revisar» del resumen del día.';
+
 /**
  * The URLs the search agents found, as a Descubrimiento for `traer`: per-source
- * results only on that source's hosts, equal-search results on any host. URLs
- * already listed by `descubrir` are left out (they were fetched in stage 1).
+ * results only on that source's hosts, equal-search results only on the hosts
+ * of a registered emisor (fuentes.json). An equal-search result on any other
+ * host is not fetched: it goes to `para_revisar`, for the owner, and nothing
+ * from it can be published (preparar refuses its URL too). URLs already listed
+ * by `descubrir` are left out (they were fetched in stage 1).
  */
 export function candidatosDeBusqueda(entrada: {
   fecha: string;
@@ -539,10 +555,11 @@ export function candidatosDeBusqueda(entrada: {
   porFuente: { archivo: string; salida: SalidaFuente }[];
   porEquidad: { archivo: string; salida: SalidaEquidad }[];
   emisores: Emisor[];
-}): Descubrimiento {
+}): Descubrimiento & { para_revisar: ParaRevisar[] } {
   const ya = new Set(entrada.descubierto.candidatos.map((c) => c.url_canonica));
   const hostsDe = new Map(entrada.descubierto.tareas_busqueda.map((tarea) => [tarea.emisor, tarea.hosts]));
-  const emisorDeHost = (url: string) => entrada.emisores.find((emisor) => hostEn(hostDe(url), emisor.hosts))?.id ?? 'sin-registrar';
+  const emisorDeHost = (url: string) => entrada.emisores.find((emisor) => hostEn(hostDe(url), emisor.hosts))?.id;
+  const paraRevisar = new Map<string, ParaRevisar>();
   const nuevos = new Map<string, Candidato>();
   const fallos: Descubrimiento['fallos'] = [];
   const anotar = (url: string, emisor: string, listado: string, extra: { titulo?: unknown; fecha?: unknown } = {}) => {
@@ -574,10 +591,15 @@ export function candidatosDeBusqueda(entrada: {
   }
   for (const { salida } of [...entrada.porEquidad].sort((a, b) => comparar(a.archivo, b.archivo))) {
     const id = typeof salida.busqueda === 'string' ? salida.busqueda : 'equidad';
-    for (const url of urlsDeResultados(salida.resultados)) anotar(url, emisorDeHost(url), `busqueda:${id}`);
+    for (const url of urlsDeResultados(salida.resultados)) {
+      const emisor = emisorDeHost(url);
+      if (emisor) anotar(url, emisor, `busqueda:${id}`);
+      else paraRevisar.set(`${url} ${id} ${String(salida.partido)}`, { url, busqueda: id, partido: String(salida.partido ?? ''), host: hostDe(url) });
+    }
   }
   const candidatos = [...nuevos.values()].sort((a, b) => comparar(a.emisor, b.emisor) || comparar(a.url_canonica, b.url_canonica));
-  return { fecha: entrada.fecha, desde: entrada.descubierto.desde, candidatos, tareas_busqueda: [], omitidos: [], solo_buzon: [], fallos, bloqueados: {} };
+  const para_revisar = [...paraRevisar.values()].sort((a, b) => comparar(a.url, b.url) || comparar(a.busqueda, b.busqueda) || comparar(a.partido, b.partido));
+  return { fecha: entrada.fecha, desde: entrada.descubierto.desde, candidatos, tareas_busqueda: [], omitidos: [], solo_buzon: [], fallos, bloqueados: {}, para_revisar };
 }
 
 // ---------------------------------------------------------------- classification tasks
@@ -799,7 +821,11 @@ const urlsFuentes = (item: Objeto) =>
  *   them so that the four keep the same count);
  * - no polls from the ban date;
  * - a `pregunta` (Q1..Q8) that matches the `seccion` (preguntas.ts), and a valid
- *   `contexto` flag (never with a veredicto).
+ *   `contexto` flag (never with a veredicto);
+ * - every URL a proposal or a fact names (sources, quotes, perfil documents)
+ *   `citable`: on a host of fuentes.json or a document the owner supplied
+ *   (citas.ts, citableEn). A page the search found on any other host is never
+ *   published without the owner.
  */
 export function preparar(entrada: {
   fecha: string;
@@ -807,10 +833,16 @@ export function preparar(entrada: {
   hechos: unknown;
   /** Canonical URLs each kind's search found per party; a party missing means that search has no output. */
   equidad: Partial<Record<TipoBusqueda, Partial<Record<PartyId, string[]>>>>;
+  /** Whether a URL may back a published item (citas.ts, citableEn). */
+  citable: (url: string) => boolean;
 }): { porPartido: Record<PartyId, Objeto[]>; descartes: Descarte[]; deHechos: number } {
   const porPartido = Object.fromEntries(PARTY_IDS.map((id) => [id, [] as Objeto[]])) as Record<PartyId, Objeto[]>;
   const descartes: Descarte[] = [];
   const completa = (tipo: TipoBusqueda) => PARTY_IDS.every((p) => Array.isArray(entrada.equidad[tipo]?.[p]));
+  const sinRegistrar = (valor: unknown) => {
+    const url = urlsEn(valor).find((u) => !entrada.citable(u));
+    return url === undefined ? undefined : `${sinConsulta(url)}: host sin registrar en fuentes.json; no se publica sin revisión`;
+  };
 
   for (const { archivo, contenido } of [...entrada.adjudicados].sort((a, b) => comparar(a.archivo, b.archivo))) {
     const propio = archivo.replace(/\.json$/, '');
@@ -820,6 +852,8 @@ export function preparar(entrada: {
       if (!(PARTY_IDS as readonly string[]).includes(propio)) return descartar(`archivo de un partido desconocido "${propio}"`);
       if (!esObjeto(propuesta)) return descartar('propuesta no es un objeto');
       if (propuesta.partido !== propio) return descartar(`propuesta para "${String(propuesta.partido)}" en el archivo de ${propio}: cada adjudicador solo propone para su partido`);
+      const ajena = sinRegistrar(propuesta);
+      if (ajena) return descartar(ajena);
       if (propuesta.destino === 'perfil') return void porPartido[propio as PartyId].push(propuesta);
       const seccion = String(propuesta.seccion);
       const item = esObjeto(propuesta.item) ? propuesta.item : {};
@@ -853,6 +887,8 @@ export function preparar(entrada: {
     const partidos = lista(hecho.partidos).filter((p): p is PartyId => (PARTY_IDS as readonly string[]).includes(p as string));
     if (partidos.length < 2) return descartar(`hecho "${hecho.hecho}": un hecho compartido nombra al menos dos partidos`);
     if (!esObjeto(hecho.item)) return descartar(`hecho "${hecho.hecho}" sin item`);
+    const ajena = sinRegistrar(hecho.item);
+    if (ajena) return descartar(`hecho "${hecho.hecho}": ${ajena}`);
     const seccion = String(hecho.seccion);
     if (seccion === 'criticos-defensores' || hecho.item.bulo === true || hecho.item.busqueda !== undefined) return descartar(`hecho "${hecho.hecho}": críticos, defensores, bulos y causas salen de la búsqueda igual`);
     if (seccion === 'encuestas' && entrada.fecha >= VEDA_ENCUESTAS) return descartar(`veda de encuestas desde el ${VEDA_ENCUESTAS}`);
@@ -1149,6 +1185,8 @@ export function informe(entrada: {
   aceptadas?: string;
   /** tareas-clasificar.json, to say which parties the alias rule found in each link. */
   clasificar?: Pick<TareaClasificar, 'url_canonica' | 'partido'>[];
+  /** descubrir.busqueda.json `para_revisar`: equal-search results on hosts fuentes.json does not list, never fetched or published. */
+  paraRevisar?: ParaRevisar[];
 }): string {
   const etapas = entrada.etapas
     .split('\n')
@@ -1190,6 +1228,13 @@ export function informe(entrada: {
   lineas.push(...apartado('Reintentado en una sesión más (busqueda-reintento), la misma regla para todos los partidos', lineasDe(entrada.reintentadas), '_Nada._'));
   lineas.push(...apartado('Respuestas aceptadas con espacios alrededor del JSON', lineasDe(entrada.aceptadas), '_Ninguna._'));
   lineas.push(...apartadoEnlaces(entrada));
+  lineas.push(
+    ...apartado(
+      'Para revisar: resultados de búsquedas iguales en hosts sin registrar en fuentes.json (no se traen ni se publican)',
+      (entrada.paraRevisar ?? []).map((r) => `- ${r.partido} (${r.busqueda}): <${sinConsulta(r.url)}>`),
+      '_Ninguno._',
+    ),
+  );
   return lineas.join('\n').replace(/\n+$/, '\n');
 }
 
@@ -1265,8 +1310,9 @@ export const SUBAGENTES = {
   // Writes its own answer file: the session allows only that batch's paths, and the subagent inherits the session's rules and dontAsk mode.
   clasificador: { model: 'haiku', tools: ['Read', 'Write'], description: 'Classifies one cached document for one party (Haiku). Writes its own JSON answer file.' },
   // Also write their own answer: a large answer comes back to the session cut off (adjudicador of pp, 11 Nov: 63 KB). The facts or party session allows only that file.
-  'redactor-hechos': { model: 'opus', tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'Write'], description: 'Writes the shared facts of the day once for every party (Opus). Writes its own JSON answer file.' },
-  adjudicador: { model: 'opus', tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'Write'], description: 'Adjudicates the new material for one party (Opus). Writes its own JSON answer file.' },
+  // No WebFetch or WebSearch: they judge from the cache only (the session denies both tools too, ajustesClaude).
+  'redactor-hechos': { model: 'opus', tools: ['Read', 'Glob', 'Grep', 'Write'], description: 'Writes the shared facts of the day once for every party (Opus). Writes its own JSON answer file.' },
+  adjudicador: { model: 'opus', tools: ['Read', 'Glob', 'Grep', 'Write'], description: 'Adjudicates the new material for one party (Opus). Writes its own JSON answer file.' },
 } as const;
 
 /** The session prompts and the --agents definition, with the day's values (PARTIDO: the party of an adjudication session). */
@@ -1324,14 +1370,98 @@ export function limiteBusquedasWeb(pasada: Pasada, previstas: number): number {
   return pasada !== 'busqueda' && pasada !== 'busqueda-reintento' ? BUSQUEDAS_WEB_POR_DEFECTO : Math.max(BUSQUEDAS_WEB_POR_DEFECTO, 2 * previstas);
 }
 
+/** The subagents each pass may launch: agentes.json carries only these, and every other subagent is denied. */
+export const AGENTES_POR_PASADA: Record<Pasada, readonly (keyof typeof SUBAGENTES)[]> = {
+  busqueda: ['buscador-fuente', 'buscador-equidad'],
+  'busqueda-reintento': ['buscador-fuente', 'buscador-equidad'],
+  clasificacion: ['clasificador'],
+  hechos: ['redactor-hechos'],
+  adjudicacion: ['adjudicador'],
+};
+
+/** Claude Code's own subagents: no pass may launch them (they would get every tool of the session). */
+export const AGENTES_INTEGRADOS = ['claude-code-guide', 'Explore', 'general-purpose', 'Plan', 'statusline-setup'] as const;
+
+/** The search passes: the only ones that reach the web. */
+export const esPasadaBusqueda = (pasada: Pasada) => pasada === 'busqueda' || pasada === 'busqueda-reintento';
+
+/** The built-in tools of each pass (`claude --tools`): only the search passes have WebFetch and WebSearch. */
+export function herramientasDe(pasada: Pasada): string[] {
+  return esPasadaBusqueda(pasada) ? ['Agent', 'Read', 'Write', 'Glob', 'Grep', 'WebFetch', 'WebSearch'] : ['Agent', 'Read', 'Write', 'Glob', 'Grep'];
+}
+
+/**
+ * The folders each pass reads (`--add-dir`, `additionalDirectories` and a
+ * `Read(…/**)` allow rule each): the run folder always, the cached documents
+ * when it judges them, the criteria for the adjudication. EJ, DOCS and
+ * CRITERIOS are the placeholders of ajustesClaude's `valores`.
+ */
+export const CARPETAS_POR_PASADA: Record<Pasada, readonly ('EJ' | 'DOCS' | 'CRITERIOS')[]> = {
+  busqueda: ['EJ'],
+  'busqueda-reintento': ['EJ'],
+  clasificacion: ['EJ', 'DOCS'],
+  hechos: ['EJ', 'DOCS'],
+  adjudicacion: ['EJ', 'DOCS', 'CRITERIOS'],
+};
+
+/**
+ * The only allow rules without a specifier (reviewed): WebSearch takes none
+ * (code.claude.com/docs/en/tools-reference, "WebSearch tool behavior": "A bare
+ * `WebSearch` entry in `allow` or `deny` is the only form"), and only the
+ * search passes have it.
+ */
+export const PERMITIDAS_SIN_ESPECIFICADOR: readonly string[] = ['WebSearch'];
+
+/**
+ * Domains WebFetch fetches without any rule (Claude Code's "preapproved
+ * documentation domains", read from the 2.1.322 binary; a path-scoped entry
+ * by its host). In `dontAsk` mode they would pass, so the search passes deny
+ * each one they do not allow: an explicit `WebFetch(domain:…)` rule takes
+ * precedence over that set (tools-reference, "WebFetch tool behavior").
+ */
+export const WEBFETCH_PREAPROBADOS: readonly string[] = [
+  'agentskills.io', 'angular.io', 'asp.net', 'blazor.net', 'bun.sh', 'claude.ai', 'claude.com', 'cloud.google.com', 'code.claude.com', 'cypress.io', 'd3js.org',
+  'dev.mysql.com', 'dev.wix.com', 'devcenter.heroku.com', 'developer.android.com', 'developer.apple.com', 'developer.mozilla.org', 'doc.rust-lang.org', 'docs.aws.amazon.com',
+  'docs.djangoproject.com', 'docs.flutter.dev', 'docs.getdbt.com', 'docs.netlify.com', 'docs.oracle.com', 'docs.python.org', 'docs.spring.io', 'docs.stripe.com', 'docs.swift.org',
+  'docs.unity.com', 'docs.unrealengine.com', 'dotnet.microsoft.com', 'en.cppreference.com', 'expressjs.com', 'fastapi.tiangolo.com', 'flask.palletsprojects.com', 'getbootstrap.com',
+  'git-scm.com', 'github.com', 'go.dev', 'gradle.org', 'graphql.org', 'hibernate.org', 'huggingface.co', 'jestjs.io', 'jquery.com', 'jupyter.org', 'keras.io', 'kotlinlang.org',
+  'kubernetes.io', 'laravel.com', 'learn.microsoft.com', 'matplotlib.org', 'maven.apache.org', 'modelcontextprotocol.io', 'nextjs.org', 'nginx.org', 'nodejs.org', 'numpy.org',
+  'pandas.pydata.org', 'platform.claude.com', 'preview.claude.ai', 'prisma.io', 'pytorch.org', 'raw.githubusercontent.com', 'react.dev', 'reactnative.dev', 'reactrouter.com',
+  'redis.io', 'redux.js.org', 'requests.readthedocs.io', 'ruby-doc.org', 'scikit-learn.org', 'selenium.dev', 'spark.apache.org', 'symfony.com', 'tailwindcss.com', 'threejs.org',
+  'tomcat.apache.org', 'vercel.com', 'vuejs.org', 'webpack.js.org', 'wordpress.org', 'www.ansible.com', 'www.claude.ai', 'www.claude.dev', 'www.docker.com', 'www.kaggle.com',
+  'www.mongodb.com', 'www.php.net', 'www.postgresql.org', 'www.sqlite.org', 'www.tensorflow.org', 'www.terraform.io', 'www.typescriptlang.org',
+];
+
+/**
+ * The hosts the search passes may WebFetch: every emisor of fuentes.json and
+ * every host of the day's equal-search tasks (hostsDeConsulta), without www.,
+ * sorted. Hosts that are not plain names are left out.
+ */
+export function hostsWebFetch(emisores: readonly Pick<Emisor, 'hosts'>[], tareas: readonly Pick<TareaEquidad, 'consultas'>[]): string[] {
+  const hosts = [...emisores.flatMap((e) => e.hosts), ...tareas.flatMap((t) => t.consultas.flatMap(hostsDeConsulta))];
+  return [...new Set(hosts.map((h) => h.toLowerCase().replace(/^www\./, '')))].filter((h) => /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(h)).sort(comparar);
+}
+
 /**
  * The settings of one pass from claude-settings.diario.template.json: every
- * __NAME__ replaced (JSON-escaped). The template may allow no write and no
- * Bash; this adds Write and Edit for the pass's own answers in the run folder
- * only, and denies the other pass's. Paths with glob, parenthesis or control
- * characters are refused, so a path cannot widen a rule.
+ * __NAME__ replaced (JSON-escaped). The template allows nothing; this adds,
+ * per pass: Read of its own folders (CARPETAS_POR_PASADA, also its
+ * `additionalDirectories`), Agent for its own subagents, Write and Edit of its
+ * own answers in the run folder only (the other passes' are denied), and for
+ * the search passes WebSearch and `WebFetch(domain:…)` for `conWebFetch` only.
+ * The judgement passes are denied WebFetch and WebSearch outright. Every
+ * other subagent is denied. Paths with glob, parenthesis or control characters
+ * are refused, so a path cannot widen a rule; an allow rule without a
+ * specifier other than PERMITIDAS_SIN_ESPECIFICADOR is refused.
  */
-export function ajustesClaude(plantilla: string, valores: Record<string, string>, pasada: Pasada, soloRutas?: readonly string[], sinWebFetch: readonly string[] = []): string {
+export function ajustesClaude(
+  plantilla: string,
+  valores: Record<string, string>,
+  pasada: Pasada,
+  soloRutas?: readonly string[],
+  sinWebFetch: readonly string[] = [],
+  conWebFetch: readonly string[] = [],
+): string {
   for (const [nombre, valor] of Object.entries(valores)) {
     if (!valor.startsWith('/') || /[*?()[\]{}\x00-\x1f]/.test(valor)) throw new Error(`ajustes: ruta no admitida en ${nombre}: ${valor}`);
   }
@@ -1341,13 +1471,11 @@ export function ajustesClaude(plantilla: string, valores: Record<string, string>
     if (valor === undefined) throw new Error(`ajustes: marcador desconocido ${marcador}`);
     return JSON.stringify(valor).slice(1, -1);
   });
-  const ajustes = JSON.parse(texto) as { permissions: { allow: unknown[]; deny: unknown[] } };
+  const ajustes = JSON.parse(texto) as { permissions: { allow: unknown[]; deny: unknown[]; additionalDirectories?: unknown } };
   const ej = valores.EJ;
   if (!ej) throw new Error('ajustes: falta EJ');
-  for (const regla of ajustes.permissions.allow) {
-    if (typeof regla !== 'string') throw new Error('ajustes: regla no es texto');
-    if (/^(Bash|NotebookEdit|Write|Edit|MultiEdit)\b/.test(regla)) throw new Error(`ajustes: la plantilla no puede permitir escritura ni ejecución: ${regla}`);
-  }
+  if (ajustes.permissions.allow.length) throw new Error(`ajustes: la plantilla no puede permitir nada: ${String(ajustes.permissions.allow[0])}`);
+  if (ajustes.permissions.additionalDirectories !== undefined) throw new Error('ajustes: las carpetas de cada pasada no van en la plantilla');
   const reglas = (rutas: readonly string[]) => rutas.flatMap((ruta) => ['Write', 'Edit'].map((tool) => `${tool}(/${ej}/${ruta})`));
   const propias: readonly string[] = ESCRITURA_POR_PASADA[pasada];
   const otra = [...new Set((Object.keys(ESCRITURA_POR_PASADA) as Pasada[]).filter((p) => p !== pasada).flatMap((p) => ESCRITURA_POR_PASADA[p]))].filter((ruta) => !propias.includes(ruta));
@@ -1365,11 +1493,47 @@ export function ajustesClaude(plantilla: string, valores: Record<string, string>
   if (pasada === 'clasificacion' && soloRutas === undefined) throw new Error('ajustes: una sesión de clasificación necesita las rutas de su lote');
   if (pasada === 'adjudicacion' && soloRutas === undefined) throw new Error('ajustes: una sesión de adjudicación necesita las rutas de su partido');
   if (pasada === 'hechos' && soloRutas === undefined) throw new Error('ajustes: una sesión de hechos necesita sus rutas');
-  ajustes.permissions.allow.push(...reglas(soloRutas ?? ESCRITURA_POR_PASADA[pasada]));
-  ajustes.permissions.deny.push(...reglas(otra));
+  if (!esPasadaBusqueda(pasada) && conWebFetch.length) throw new Error(`ajustes: la pasada ${pasada} no tiene WebFetch`);
+
+  // Reads: only the pass's own folders (the session is also confined to them by --restricted and --add-dir).
+  const carpetas = carpetasDe(pasada, valores);
+  ajustes.permissions.additionalDirectories = carpetas;
+  const allow: string[] = carpetas.map((carpeta) => `Read(/${carpeta}/**)`);
+  const deny: string[] = [];
+  // Subagents: its own, by name; every other one of this file and Claude Code's own are denied.
+  const propios = AGENTES_POR_PASADA[pasada];
+  allow.push(...propios.map((nombre) => `Agent(${nombre})`));
+  deny.push(...[...Object.keys(SUBAGENTES).filter((nombre) => !(propios as readonly string[]).includes(nombre)), ...AGENTES_INTEGRADOS].map((nombre) => `Agent(${nombre})`));
+  allow.push(...reglas(soloRutas ?? ESCRITURA_POR_PASADA[pasada]));
+  deny.push(...reglas(otra));
   // Sites whose robots.txt excludes Claude's agents: no pass may fetch them (the host and every subdomain), the fixed list always included.
-  ajustes.permissions.deny.push(...reglasWebFetch([...new Set([...SIN_AGENTES_CLAUDE_FIJOS, ...sinWebFetch])].sort()));
+  const vetados = [...new Set([...SIN_AGENTES_CLAUDE_FIJOS, ...sinWebFetch])].sort(comparar);
+  deny.push(...reglasWebFetch(vetados));
+  if (esPasadaBusqueda(pasada)) {
+    // The web only through the listed hosts: unlisted domains fall to "ask", which dontAsk refuses; the preapproved ones are denied by name.
+    const permitidos = conWebFetch.filter((host) => !hostEn(host, vetados));
+    allow.push('WebSearch', ...reglasWebFetch(permitidos));
+    deny.push(...WEBFETCH_PREAPROBADOS.filter((host) => !hostEn(host.replace(/^www\./, ''), permitidos)).map((host) => `WebFetch(domain:${host})`));
+  } else {
+    // No web at all: the bare rules remove both tools from the session (and from its subagents).
+    deny.push('WebFetch', 'WebSearch');
+  }
+  for (const regla of allow) {
+    if (!/\(.+\)$/.test(regla) && !PERMITIDAS_SIN_ESPECIFICADOR.includes(regla)) throw new Error(`ajustes: regla de allow sin especificador: ${regla}`);
+  }
+  ajustes.permissions.allow = allow;
+  ajustes.permissions.deny.push(...deny);
   return `${JSON.stringify(ajustes, null, 2)}\n`;
+}
+
+/** The absolute folders of a pass (CARPETAS_POR_PASADA), from ajustesClaude's `valores` (EJ, N29_CACHE, T). */
+export function carpetasDe(pasada: Pasada, valores: Record<string, string>): string[] {
+  const ruta = { EJ: valores.EJ, DOCS: valores.N29_CACHE && `${valores.N29_CACHE}/docs`, CRITERIOS: valores.T && `${valores.T}/criterios` };
+  return CARPETAS_POR_PASADA[pasada].map((clave) => {
+    const valor = ruta[clave];
+    if (!valor) throw new Error(`ajustes: falta la carpeta ${clave}`);
+    return valor;
+  });
 }
 
 // ---------------------------------------------------------------- CLI
@@ -1427,7 +1591,8 @@ function leerEquidad(ejecucion: string, fecha: string): EquidadDia & { salidas: 
 
 /**
  * Why a URL of a party was not merged, from the run's own records, first reason
- * first: refused by fusionar (fusionar.json, fusion/<partido>.json), dropped by
+ * first: on a host fuentes.json does not list (descubrir.busqueda.json,
+ * para_revisar), refused by fusionar (fusionar.json, fusion/<partido>.json), dropped by
  * preparar (preparar.json, adjudicado/<partido>.json), or discarded by the
  * party's adjudicator (its `decisiones`). By party and canonical URL.
  */
@@ -1451,6 +1616,9 @@ function motivosDescarte(ejecucion: string): Partial<Record<PartyId, Record<stri
       for (const url of urlsDe(propuesta)) anotar(esObjeto(propuesta) ? propuesta.partido : undefined, url, `${prefijo}: ${String(d.motivo)}`);
     }
   };
+  // Equal-search results on an unregistered host were never fetched: that reason first.
+  const busqueda = leerJsonSiExiste(join(ejecucion, 'descubrir.busqueda.json'));
+  for (const r of esObjeto(busqueda) ? lista(busqueda.para_revisar) : []) if (esObjeto(r)) anotar(r.partido, r.url, MOTIVO_SIN_REGISTRAR);
   descartes('fusionar.json', 'fusion', 'rechazados', 'Rechazado al fusionar');
   descartes('preparar.json', 'adjudicado', 'descartes', 'Apartado al preparar');
   for (const p of PARTY_IDS) {
@@ -1607,6 +1775,8 @@ async function main(args: string[]): Promise<number> {
         adjudicados: jsonDeCarpeta(join(ejecucion, 'adjudicado')),
         hechos: leerJsonSiExiste(join(ejecucion, 'hechos.json')),
         equidad: leerEquidad(ejecucion, fecha).urls,
+        // The registry as the run read it (antes/), and the owner's own documents in the cache.
+        citable: citableEn(cache, hostsRegistrados(leerJson(join(ejecucion, 'antes', 'fuentes.json')))),
       });
       for (const p of PARTY_IDS) escribirJson(join(ejecucion, 'fusion', `${p}.json`), { propuestas: porPartido[p] });
       escribirJson(join(ejecucion, 'preparar.json'), { fecha, descartes, deHechos });
@@ -1659,21 +1829,31 @@ async function main(args: string[]): Promise<number> {
       // Without a registry (a bare worktree) the fixed list still applies.
       const emisores = ((leerJsonSiExiste(join(datos, 'fuentes.json')) ?? {}) as { emisores?: Emisor[] }).emisores ?? [];
       const vetos = Object.values((leerJsonSiExiste(join(ejecucion, 'bloqueos-guia.json')) ?? {}) as Record<string, VetoGuia>);
+      // The cap and the WebFetch hosts cover just the tasks of the session: all of them, or the retry subset.
+      const [archivoFuentes, archivoIguales] = pasada === 'busqueda-reintento' ? ['reintento-fuentes.json', 'reintento-equidad.json'] : ['descubrir.json', 'equidad-tareas.json'];
+      const iguales = esPasadaBusqueda(pasada) ? ((leerJsonSiExiste(join(ejecucion, archivoIguales)) ?? []) as TareaEquidad[]) : [];
+      const valoresAjustes = { EJ: ejecucion, N29_CACHE: cache, T: t, HOME: rutaDeEntornoHome(), CONF: dir };
       writeFileSync(
         join(dir, 'settings.json'),
-        ajustesClaude(plantilla, { EJ: ejecucion, N29_CACHE: cache, T: t, HOME: rutaDeEntornoHome(), CONF: dir }, pasada, tareasLote?.map((t) => t.salida) ?? rutasPartido ?? rutasHechos, hostsSinClaude(emisores, vetos)),
+        ajustesClaude(
+          plantilla,
+          valoresAjustes,
+          pasada,
+          tareasLote?.map((t) => t.salida) ?? rutasPartido ?? rutasHechos,
+          hostsSinClaude(emisores, vetos),
+          esPasadaBusqueda(pasada) ? hostsWebFetch(emisores, iguales) : [],
+        ),
       );
       writeFileSync(join(dir, 'prompt.txt'), salida[pasada]);
-      writeFileSync(join(dir, 'agentes.json'), `${JSON.stringify(salida.agentes, null, 2)}\n`);
-      // The cap covers just the tasks of the session: all of them, or the retry subset.
-      const [archivoFuentes, archivoIguales] = pasada === 'busqueda-reintento' ? ['reintento-fuentes.json', 'reintento-equidad.json'] : ['descubrir.json', 'equidad-tareas.json'];
-      const previstas =
-        pasada !== 'busqueda' && pasada !== 'busqueda-reintento'
-          ? 0
-          : busquedasWebPrevistas(
-              ((leerJsonSiExiste(join(ejecucion, archivoFuentes)) ?? {}) as { tareas_busqueda?: TareaBusqueda[] }).tareas_busqueda ?? [],
-              (leerJsonSiExiste(join(ejecucion, archivoIguales)) ?? []) as TareaEquidad[],
-            );
+      // Only the pass's own subagents are defined.
+      const agentes = Object.fromEntries(Object.entries(salida.agentes).filter(([nombre]) => (AGENTES_POR_PASADA[pasada] as readonly string[]).includes(nombre)));
+      writeFileSync(join(dir, 'agentes.json'), `${JSON.stringify(agentes, null, 2)}\n`);
+      // `claude --tools` and `--add-dir` of the pass (diario.sh reads them from here and checks them).
+      writeFileSync(join(dir, 'herramientas.txt'), `${herramientasDe(pasada).join(',')}\n`);
+      writeFileSync(join(dir, 'carpetas.txt'), carpetasDe(pasada, valoresAjustes).map((c) => `${c}\n`).join(''));
+      const previstas = !esPasadaBusqueda(pasada)
+        ? 0
+        : busquedasWebPrevistas(((leerJsonSiExiste(join(ejecucion, archivoFuentes)) ?? {}) as { tareas_busqueda?: TareaBusqueda[] }).tareas_busqueda ?? [], iguales);
       writeFileSync(join(dir, 'busquedas-web.txt'), `${limiteBusquedasWeb(pasada, previstas)}\n`);
       return 0;
     }
@@ -1827,6 +2007,7 @@ async function main(args: string[]): Promise<number> {
           sinClasificar: clasificadas(ejecucion).faltan,
           enlaces: leerJsonSiExiste(join(ejecucion, 'enlaces.json')) as never,
           clasificar: (leerJsonSiExiste(join(ejecucion, 'tareas-clasificar.json')) ?? []) as TareaClasificar[],
+          paraRevisar: lista((leerJsonSiExiste(join(ejecucion, 'descubrir.busqueda.json')) as { para_revisar?: unknown } | undefined)?.para_revisar) as ParaRevisar[],
         }),
       );
       return 0;

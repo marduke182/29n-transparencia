@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { idDocumento, urlCanonica, type PartyId } from './cache.ts';
@@ -6,7 +6,15 @@ import { Traedor, type VetoGuia } from './traer.ts';
 import { registrarBloqueos } from './bloqueos.ts';
 import { consultasFuente, type Alias, type Descubrimiento, type TareaBusqueda } from './descubrir.ts';
 import {
+  AGENTES_POR_PASADA,
   ajustesClaude,
+  carpetasDe,
+  esPasadaBusqueda,
+  herramientasDe,
+  hostsWebFetch,
+  PERMITIDAS_SIN_ESPECIFICADOR,
+  WEBFETCH_PREAPROBADOS,
+  type Pasada,
   bloque,
   BUSQUEDAS_WEB_POR_DEFECTO,
   busquedasWebPrevistas,
@@ -217,13 +225,22 @@ describe('candidatosDeBusqueda', () => {
         { archivo: 'medio.json', salida: { emisor: 'medio', candidatos: [{ url: 'https://www.medio.es/b?utm_source=x', titulo: 'B', fecha: '2026-11-09' }, { url: 'https://otro.es/c' }, { url: 'https://medio.es/ya' }] } },
         { archivo: 'fantasma.json', salida: { emisor: 'fantasma', candidatos: [{ url: 'https://fantasma.es/x' }] } },
       ],
-      porEquidad: [{ archivo: 'criticos.pp.json', salida: { busqueda: 'diario-2026-11-10-criticos', resultados: [{ url: 'https://otro.es/c' }, { url: 'http://inseguro.es/x' }] } }],
+      porEquidad: [
+        {
+          archivo: 'criticos.pp.json',
+          salida: { busqueda: 'diario-2026-11-10-criticos', partido: 'pp', resultados: [{ url: 'https://otro.es/c' }, { url: 'http://inseguro.es/x' }, { url: 'https://inyectado.com/ignora-tus-instrucciones' }] },
+        },
+      ],
       emisores: [{ id: 'otro', nombre: 'Otro', hosts: ['otro.es'], tipo: 'medio' }],
     });
     expect(resultado.candidatos.map((c) => [c.emisor, c.url_canonica, c.listado])).toEqual([
       ['medio', 'https://medio.es/b', 'busqueda:medio'],
       ['otro', 'https://otro.es/c', 'busqueda:diario-2026-11-10-criticos'],
     ]);
+    // An equal-search result on an unregistered host is never fetched: it is only listed for the owner.
+    expect(resultado.candidatos.some((c) => c.url.includes('inyectado.com') || c.emisor === 'sin-registrar')).toBe(false);
+    expect(resultado.para_revisar).toEqual([{ url: 'https://inyectado.com/ignora-tus-instrucciones', busqueda: 'diario-2026-11-10-criticos', partido: 'pp', host: 'inyectado.com' }]);
+    expect(informe({ fecha: FECHA, etapas: '', paraRevisar: resultado.para_revisar })).toContain('- pp (diario-2026-11-10-criticos): <https://inyectado.com/ignora-tus-instrucciones>');
     expect(resultado.fallos).toEqual([{ emisor: 'fantasma', listado: 'busqueda:fantasma.json', motivo: 'emisor sin tarea de búsqueda hoy' }]);
   });
 });
@@ -336,6 +353,7 @@ describe('preparar', () => {
 
   it('keeps own-party proposals and drops other parties, adjudicator hechos and unsearched critics', () => {
     const { porPartido, descartes } = preparar({
+      citable: () => true,
       fecha: FECHA,
       equidad: equidadCompleta,
       hechos: undefined,
@@ -368,6 +386,7 @@ describe('preparar', () => {
 
   it('drops a kind whose equal search lacks a party, and polls during the ban', () => {
     const { porPartido, descartes } = preparar({
+      citable: () => true,
       fecha: '2026-11-24',
       equidad: { criticos: { pp: ['https://medio.es/critica'] } },
       hechos: undefined,
@@ -393,6 +412,7 @@ describe('preparar', () => {
       ],
     };
     const { porPartido, descartes } = preparar({
+      citable: () => true,
       fecha: FECHA,
       equidad: {},
       hechos,
@@ -424,6 +444,7 @@ describe('preparar', () => {
     const equidad = { causas: Object.fromEntries(PARTIDOS.map((p) => [p, p === 'pp' ? urls : []])) };
     const causa = item('Un juzgado admite una querella.', urls[0]!, { busqueda: 'diario-2026-11-10-causas' });
     const { porPartido, descartes } = preparar({
+      citable: () => true,
       fecha: FECHA,
       equidad,
       hechos: undefined,
@@ -435,11 +456,44 @@ describe('preparar', () => {
 
   it('copies each shared fact identically to every party it names', () => {
     const hecho = { hecho: 'debate-rtve-2026-11-09', seccion: 'candidatura', partidos: ['psoe', 'pp', 'pp'], item: item('Debate a dos.', 'https://rtve.es/d') };
-    const { porPartido, deHechos, descartes } = preparar({ fecha: FECHA, equidad: {}, adjudicados: [], hechos: { hechos: [hecho, { ...hecho }, { hecho: 'solo', seccion: 'temas', partidos: ['pp'], item: item('Uno.', 'https://a.es/x') }] } });
+    const { porPartido, deHechos, descartes } = preparar({ citable: () => true, fecha: FECHA, equidad: {}, adjudicados: [], hechos: { hechos: [hecho, { ...hecho }, { hecho: 'solo', seccion: 'temas', partidos: ['pp'], item: item('Uno.', 'https://a.es/x') }] } });
     expect(deHechos).toBe(2);
     expect(porPartido.pp[0]).toEqual({ partido: 'pp', seccion: 'candidatura', item: { ...hecho.item, hecho: 'debate-rtve-2026-11-09' } });
     expect(porPartido.psoe[0]!.item).toEqual(porPartido.pp[0]!.item);
     expect(descartes.map((d) => d.motivo)).toEqual([expect.stringMatching(/repetido/), expect.stringMatching(/al menos dos/)]);
+  });
+});
+
+describe('preparar: hosts sin registrar', () => {
+  it('drops any proposal or shared fact that names a URL citable refuses, wherever the URL is (sources, quote, perfil documents)', () => {
+    const citable = (url: string) => new URL(url).hostname.endsWith('medio.es');
+    const item = (url: string, extra: Record<string, unknown> = {}) => ({ texto: 'Algo.', estado: 'PARCIAL', matiz: 'Según Medio.', fuentes: [{ url, medio: 'Medio' }], ...extra });
+    const { porPartido, descartes } = preparar({
+      fecha: FECHA,
+      equidad: {},
+      citable,
+      adjudicados: [
+        {
+          archivo: 'pp.json',
+          contenido: {
+            propuestas: [
+              { partido: 'pp', seccion: 'temas', pregunta: 'Q2', item: item('https://www.medio.es/ok') },
+              { partido: 'pp', seccion: 'temas', pregunta: 'Q2', item: item('https://inyectado.com/a') },
+              { partido: 'pp', seccion: 'temas', pregunta: 'Q2', item: item('https://medio.es/b', { cita: { texto: 'x', url: 'https://inyectado.com/b' } }) },
+              { partido: 'pp', destino: 'perfil', tipo: 'documento', documento: { titulo: 'T', url: 'https://inyectado.com/c' } },
+            ],
+          },
+        },
+      ],
+      hechos: { hechos: [{ hecho: 'debate', seccion: 'temas', pregunta: 'Q2', partidos: ['pp', 'vox'], item: item('https://inyectado.com/d') }] },
+    });
+    expect(porPartido.pp.length).toBe(1);
+    expect(descartes.map((d) => [d.archivo, d.indice, d.motivo])).toEqual([
+      ['hechos.json', 0, 'hecho "debate": https://inyectado.com/d: host sin registrar en fuentes.json; no se publica sin revisión'],
+      ['pp.json', 1, 'https://inyectado.com/a: host sin registrar en fuentes.json; no se publica sin revisión'],
+      ['pp.json', 2, 'https://inyectado.com/b: host sin registrar en fuentes.json; no se publica sin revisión'],
+      ['pp.json', 3, 'https://inyectado.com/c: host sin registrar en fuentes.json; no se publica sin revisión'],
+    ]);
   });
 });
 
@@ -565,8 +619,9 @@ describe('prompts of agentes/08-diario.md', () => {
       if (nombre.startsWith('buscador-')) expect(def.tools).not.toContain('Write');
     }
     // The fact writer and the adjudicator write their own answer: a large one comes back to the session cut off.
-    expect(agentes['redactor-hechos']!.tools).toEqual(['Read', 'Glob', 'Grep', 'WebFetch', 'Write']);
-    expect(agentes.adjudicador!.tools).toEqual(['Read', 'Glob', 'Grep', 'WebFetch', 'Write']);
+    // No web for the judgement subagents: they work from the cache only.
+    expect(agentes['redactor-hechos']!.tools).toEqual(['Read', 'Glob', 'Grep', 'Write']);
+    expect(agentes.adjudicador!.tools).toEqual(['Read', 'Glob', 'Grep', 'Write']);
     expect(agentes['redactor-hechos']!.prompt).toContain('Write exactly one file: your answer, with the Write tool, at <path>/hechos.json');
     expect(agentes.adjudicador!.prompt).toContain('Write exactly one file: your answer, with the Write tool, at /c/ejecuciones/2026-11-10/adjudicado/<id>.json.');
     for (const nombre of ['redactor-hechos', 'adjudicador']) expect(agentes[nombre as 'adjudicador']!.prompt).toContain('then reply with only the file path:');
@@ -673,6 +728,7 @@ describe('búsqueda igual: bloqueada para todos', () => {
     const [tarea] = tareas().filter((t) => t.tipo === 'criticos' && t.partido === 'pp');
     expect(estadoSalida(tarea!, { resultados: [], consultas: [{ texto: 'PP critica', estado: 'ok' }, { texto: 'PP critica', estado: 'error', nota: 'HTTP 500' }] })).toBe('incompleta');
     const { porPartido, descartes } = preparar({
+      citable: () => true,
       fecha: FECHA,
       equidad: { criticos: Object.fromEntries(PARTIDOS.filter((p) => p !== 'pp').map((p) => [p, ['https://medio.es/c']])) },
       hechos: undefined,
@@ -806,7 +862,9 @@ describe('ajustesClaude', () => {
     const ajustes = JSON.parse(ajustesClaude(plantilla, valores, 'busqueda'));
     expect(JSON.stringify(ajustes)).not.toMatch(/__[A-Z0-9_]+__/);
     expect(ajustes.permissions.allow.some((r: string) => r.startsWith('Bash'))).toBe(false);
-    expect(ajustes.permissions.deny).toEqual(expect.arrayContaining(['Bash', 'Write(//**/.claude/**)', 'Write(//**/*.mjs)', 'Read(//tmp/conf/**)', 'Read(//c/ejecuciones/2026-11-10/diario.log)']));
+    expect(ajustes.permissions.deny).toEqual(expect.arrayContaining(['Bash', 'NotebookEdit', 'mcp__*', 'Write(//**/.claude/**)', 'Write(//**/*.mjs)', 'Read(//tmp/conf/**)', 'Read(//c/ejecuciones/2026-11-10/diario.log)']));
+    expect(ajustes.disableAllHooks).toBe(true);
+    expect(ajustes.enableAllProjectMcpServers).toBe(false);
     expect(ajustes.permissions.defaultMode).toBe('dontAsk');
   });
 
@@ -833,10 +891,136 @@ describe('ajustesClaude', () => {
   it('refuses paths that could widen a rule, a template that allows writes or Bash, and an unknown pass', () => {
     expect(() => ajustesClaude(plantilla, { ...valores, EJ: '/c/**' }, 'busqueda')).toThrow(/ruta no admitida/);
     expect(() => ajustesClaude(plantilla, { ...valores, CONF: 'relativa' }, 'busqueda')).toThrow(/ruta no admitida/);
-    expect(() => ajustesClaude(plantilla.replace('"Agent",', '"Agent", "Bash(node *)",'), valores, 'busqueda')).toThrow(/no puede permitir/);
-    expect(() => ajustesClaude(plantilla.replace('"Agent",', '"Agent", "Write(/__EJ__/busqueda/**)",'), valores, 'busqueda')).toThrow(/no puede permitir/);
+    expect(() => ajustesClaude(plantilla.replace('"allow": []', '"allow": ["Bash(node *)"]'), valores, 'busqueda')).toThrow(/no puede permitir/);
+    expect(() => ajustesClaude(plantilla.replace('"allow": []', '"allow": ["Write(/__EJ__/busqueda/**)"]'), valores, 'busqueda')).toThrow(/no puede permitir/);
+    expect(() => ajustesClaude(plantilla.replace('"allow": []', '"allow": ["Glob"]'), valores, 'busqueda')).toThrow(/no puede permitir/);
+    expect(() => ajustesClaude(plantilla.replace('"allow": []', '"additionalDirectories": ["/"], "allow": []'), valores, 'busqueda')).toThrow(/carpetas de cada pasada/);
     expect(() => ajustesClaude(plantilla, valores, 'otra' as never)).toThrow(/pasada desconocida/);
     expect(() => ajustesClaude(plantilla, { EJ: '/c' }, 'busqueda')).toThrow(/marcador desconocido/);
+  });
+});
+
+describe('permisos de Claude: restricciones duras por pasada', () => {
+  const plantilla = readFileSync(join(import.meta.dirname, '..', 'claude-settings.diario.template.json'), 'utf8');
+  const valores = { EJ: '/c/ejecuciones/2026-11-10', N29_CACHE: '/c', T: '/t', HOME: '/h', CONF: '/tmp/conf' };
+  const md = readFileSync(join(import.meta.dirname, '..', '..', 'agentes', '08-diario.md'), 'utf8');
+  const { agentes } = prompts(md, { FECHA, EJECUCION: valores.EJ, CACHE: '/c', DATOS: `${valores.EJ}/antes`, CRITERIOS: '/t/criterios', ENCUESTAS: reglaEncuestas(FECHA), SATURACION: '10' });
+  const hostsBusqueda = ['medio.es', 'docs.python.org', 'elpais.com'];
+  type Ajustes = { permissions: { allow: string[]; deny: string[]; additionalDirectories: string[]; defaultMode: string } };
+  const pasadas: [Pasada, string[] | undefined][] = [
+    ['busqueda', undefined],
+    ['busqueda-reintento', undefined],
+    ['clasificacion', ['clasificacion/aa11.pp.json']],
+    ['hechos', ['hechos.json']],
+    ['adjudicacion', ['adjudicado/pp.json']],
+  ];
+  const generar = (pasada: Pasada, rutas: string[] | undefined): Ajustes =>
+    JSON.parse(ajustesClaude(plantilla, valores, pasada, rutas, ['otro-medio.es'], esPasadaBusqueda(pasada) ? hostsBusqueda : []));
+  const juicio = pasadas.filter(([p]) => !esPasadaBusqueda(p));
+
+  it('allows no rule without a specifier but the reviewed list (WebSearch, search passes only), in dontAsk mode', () => {
+    expect(PERMITIDAS_SIN_ESPECIFICADOR).toEqual(['WebSearch']);
+    for (const [pasada, rutas] of pasadas) {
+      const ajustes = generar(pasada, rutas);
+      expect(ajustes.permissions.defaultMode, pasada).toBe('dontAsk');
+      const sinEspecificador = ajustes.permissions.allow.filter((regla) => !/^[A-Za-z]+\(.+\)$/.test(regla));
+      expect(sinEspecificador, pasada).toEqual(esPasadaBusqueda(pasada) ? ['WebSearch'] : []);
+      // No allow rule may name a tool that runs code, or Glob and Grep (Read rules cover them).
+      expect(ajustes.permissions.allow.filter((r) => /^(Bash|PowerShell|Monitor|NotebookEdit|Glob|Grep|Skill|mcp__)/.test(r)), pasada).toEqual([]);
+      expect(ajustes.permissions.deny, pasada).toEqual(expect.arrayContaining(['Bash', 'PowerShell', 'NotebookEdit', 'mcp__*', 'Agent(general-purpose)', 'Agent(Explore)']));
+    }
+  });
+
+  it('gives the classification, facts and adjudication passes no WebFetch or WebSearch at all: tools, subagents, allow, and a bare deny', () => {
+    for (const [pasada, rutas] of juicio) {
+      const ajustes = generar(pasada, rutas);
+      expect(ajustes.permissions.allow.filter((r) => /^Web(Fetch|Search)/.test(r)), pasada).toEqual([]);
+      expect(ajustes.permissions.deny, pasada).toEqual(expect.arrayContaining(['WebFetch', 'WebSearch']));
+      expect(herramientasDe(pasada), pasada).not.toEqual(expect.arrayContaining(['WebFetch']));
+      expect(herramientasDe(pasada).filter((h) => h.startsWith('Web')), pasada).toEqual([]);
+      for (const nombre of AGENTES_POR_PASADA[pasada]) expect(agentes[nombre]!.tools.filter((h: string) => h.startsWith('Web')), nombre).toEqual([]);
+      expect(() => ajustesClaude(plantilla, valores, pasada, rutas, [], ['medio.es']), pasada).toThrow(/no tiene WebFetch/);
+    }
+  });
+
+  it('lets the search passes WebFetch only the listed hosts, never by a bare rule, and denies the preapproved domains and the vetoed hosts', () => {
+    for (const pasada of ['busqueda', 'busqueda-reintento'] as const) {
+      const ajustes = generar(pasada, undefined);
+      const fetch = ajustes.permissions.allow.filter((r) => r.startsWith('WebFetch'));
+      expect(fetch, pasada).toEqual(['WebFetch(domain:medio.es)', 'WebFetch(domain:*.medio.es)', 'WebFetch(domain:docs.python.org)', 'WebFetch(domain:*.docs.python.org)']);
+      expect(ajustes.permissions.allow).not.toContain('WebFetch');
+      expect(ajustes.permissions.deny).not.toContain('WebFetch');
+      expect(ajustes.permissions.deny.filter((r) => r === 'WebFetch(domain:*)')).toEqual([]);
+      // A preapproved documentation domain is denied unless the run lists it; a vetoed host stays denied.
+      expect(ajustes.permissions.deny).toEqual(expect.arrayContaining(['WebFetch(domain:github.com)', 'WebFetch(domain:developer.mozilla.org)', 'WebFetch(domain:elpais.com)', 'WebFetch(domain:*.otro-medio.es)']));
+      expect(ajustes.permissions.deny).not.toContain('WebFetch(domain:docs.python.org)');
+      expect(herramientasDe(pasada)).toEqual(['Agent', 'Read', 'Write', 'Glob', 'Grep', 'WebFetch', 'WebSearch']);
+    }
+    expect(WEBFETCH_PREAPROBADOS).toEqual([...WEBFETCH_PREAPROBADOS].sort());
+  });
+
+  it('reads only the pass\'s own folders, and launches only its own subagents', () => {
+    const carpetas: Record<Pasada, string[]> = {
+      busqueda: ['/c/ejecuciones/2026-11-10'],
+      'busqueda-reintento': ['/c/ejecuciones/2026-11-10'],
+      clasificacion: ['/c/ejecuciones/2026-11-10', '/c/docs'],
+      hechos: ['/c/ejecuciones/2026-11-10', '/c/docs'],
+      adjudicacion: ['/c/ejecuciones/2026-11-10', '/c/docs', '/t/criterios'],
+    };
+    for (const [pasada, rutas] of pasadas) {
+      const ajustes = generar(pasada, rutas);
+      expect(ajustes.permissions.additionalDirectories, pasada).toEqual(carpetas[pasada]);
+      expect(carpetasDe(pasada, valores), pasada).toEqual(carpetas[pasada]);
+      expect(ajustes.permissions.allow.filter((r) => r.startsWith('Read(')), pasada).toEqual(carpetas[pasada].map((c) => `Read(/${c}/**)`));
+      const propios = AGENTES_POR_PASADA[pasada];
+      expect(ajustes.permissions.allow.filter((r) => r.startsWith('Agent(')), pasada).toEqual(propios.map((n) => `Agent(${n})`));
+      for (const otro of Object.keys(agentes).filter((n) => !(propios as readonly string[]).includes(n))) expect(ajustes.permissions.deny, pasada).toContain(`Agent(${otro})`);
+    }
+  });
+
+  it('collects the WebFetch hosts of the search pass from the registry and the equal-search tasks', () => {
+    const tarea = (consultas: { texto: string; motor: string; dominios: string[] }[]) => ({ consultas }) as unknown as TareaEquidad;
+    expect(
+      hostsWebFetch(
+        [{ hosts: ['www.medio.es', 'medio.es'] }, { hosts: ['otro.com'] }, { hosts: ['mal host'] }],
+        [tarea([{ texto: 'x', motor: 'WebSearch', dominios: ['newtral.es'] }, { texto: 'maldita.es/buscar?q=x', motor: 'WebFetch', dominios: [] }])],
+      ),
+    ).toEqual(['maldita.es', 'medio.es', 'newtral.es', 'otro.com']);
+  });
+});
+
+describe('push y merge: solo la rama del día, nunca un merge', () => {
+  const raiz = join(import.meta.dirname, '..');
+  const codigo = [join(raiz, 'bin', 'diario.sh'), join(raiz, 'bin', '29n-recogida.ts'), ...readdirSync(join(raiz, 'src')).filter((f) => /\.(ts|mjs)$/.test(f) && !f.endsWith('.test.ts')).map((f) => join(raiz, 'src', f))];
+  // Shell lines joined across `\` continuations, comments dropped.
+  const lineas = codigo.flatMap((ruta) =>
+    readFileSync(ruta, 'utf8')
+      .replace(/\\\n\s*/g, ' ')
+      .split('\n')
+      .map((linea) => ({ ruta, linea: linea.trim() }))
+      .filter(({ linea }) => linea && !linea.startsWith('#') && !linea.startsWith('//') && !linea.startsWith('*')),
+  );
+
+  it('pushes only "$refspec", which is refs/heads/data/29n-diario-<fecha>, and checks it before pushing', () => {
+    const pushes = lineas.filter(({ linea }) => /\bgit\b.*\bpush\b/.test(linea) || /['"]push['"]/.test(linea));
+    expect(pushes.map(({ ruta }) => ruta.endsWith('diario.sh'))).toEqual([true, true]);
+    for (const { linea } of pushes) {
+      expect(linea).toMatch(/ push (?:"https:\/\/github\.com\/\$REPO_GH\.git"|"\$REMOTO") "\$refspec"(?:\s|\)|$)/);
+      expect(linea).not.toMatch(/--force|\s-f\s|--mirror|--all|--tags|--delete|\+refs/);
+    }
+    const sh = readFileSync(join(raiz, 'bin', 'diario.sh'), 'utf8');
+    expect(sh.match(/^\s*(?:local )?refspec=.*$/gm)!.map((l) => l.trim())).toEqual(['local refspec="refs/heads/$RAMA:refs/heads/$RAMA"']);
+    expect(sh).toContain('[ "$refspec" = "refs/heads/data/29n-diario-$FECHA:refs/heads/data/29n-diario-$FECHA" ]');
+    expect(sh.match(/^\s*RAMA=.*$/gm)!.map((l) => l.trim())).toEqual(['RAMA="data/29n-diario-$FECHA"']);
+  });
+
+  it('never merges, enables auto-merge, marks a PR ready or calls the GitHub API: gh only creates draft PRs', () => {
+    for (const { ruta, linea } of lineas) {
+      expect(linea, ruta).not.toMatch(/\bgh\s+(?:pr\s+(?:merge|ready|edit|review)|api|repo|release|workflow|run)\b|--auto\b|\bgit\b[^|;&]*\bmerge\s(?!-base)|enablePullRequestAutoMerge/);
+    }
+    const gh = lineas.filter(({ linea }) => /\bgh\s+pr\b/.test(linea));
+    expect(gh.length).toBe(2);
+    for (const { linea } of gh) expect(linea).toMatch(/gh pr create (?:--repo "\$REPO_GH" )?--draft /);
   });
 });
 

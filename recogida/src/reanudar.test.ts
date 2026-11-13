@@ -280,7 +280,7 @@ describe('diario.sh auditar_conf', () => {
       encoding: 'utf8',
       env: { PATH: process.env.PATH, CONF: conf, EJ: ej },
     });
-  const ARCHIVOS = ['settings.json', 'agentes.json', 'prompt.txt', 'busquedas-web.txt'];
+  const ARCHIVOS = ['settings.json', 'agentes.json', 'prompt.txt', 'busquedas-web.txt', 'herramientas.txt', 'carpetas.txt'];
 
   it('keeps an earlier attempt of the same pass as .intento-N, read-only copies included', () => {
     raiz = mkdtempSync(join(tmpdir(), 'n29-auditar-'));
@@ -316,6 +316,6 @@ describe('diario.sh auditar_conf', () => {
     expect(leer('adjudicacion.intento-1.salida.json')).toBe('salida 1\n');
     expect(leer('adjudicacion.intento-2.salida.json')).toBe('salida 2\n');
     expect(leer('adjudicacion-otra.prompt.txt')).toBe('otra\n');
-    expect(readdirSync(claude).filter((f) => f.startsWith('adjudicacion.')).length).toBe(3 * 5);
+    expect(readdirSync(claude).filter((f) => f.startsWith('adjudicacion.')).length).toBe(3 * (ARCHIVOS.length + 1));
   });
 });

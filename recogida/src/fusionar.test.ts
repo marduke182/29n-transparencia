@@ -92,6 +92,25 @@ describe('fusionar', () => {
     expect(Object.keys(pp.secciones[0].items[0])).toEqual(['ref', 'texto', 'estado', 'fuentes']);
   });
 
+  it('with citable, refuses a proposal that names a URL on an unregistered host, and checks quotes only against citable documents', async () => {
+    await writeFile(
+      join(carpeta, 'a.json'),
+      JSON.stringify([
+        propuesta('pp', 'temas', 'Registrada.', 'https://medio.es/r'),
+        propuesta('pp', 'temas', 'Inyectada.', 'https://ajeno.com/x'),
+        propuesta('pp', 'temas', 'Dice «hola mundo».', 'https://medio.es/r2', { item: { fuentes: [{ medio: 'Medio', url: 'https://medio.es/r2' }], estado: 'VERIFICADO', texto: 'Dice «hola mundo».', cita: { texto: 'hola mundo', url: 'https://ajeno.com/y' } } }),
+      ]),
+    );
+    const citable = (url: string) => new URL(url).hostname === 'medio.es';
+    const leidas: string[] = [];
+    const plan = await fusionar({ sitio, carpeta, fecha: '2026-11-10', escribir: false, citable, leer: (url) => (leidas.push(url), 'hola mundo') });
+    expect(plan.rechazados.map((r) => [r.indice, r.motivo])).toEqual([
+      [1, 'https://ajeno.com/x: host sin registrar en fuentes.json; no se publica sin revisión'],
+      [2, 'https://ajeno.com/y: host sin registrar en fuentes.json; no se publica sin revisión'],
+    ]);
+    expect(leidas.every(citable)).toBe(true);
+  });
+
   it('is idempotent: a second run on the same inputs gives an empty diff', async () => {
     await writeFile(join(carpeta, 'a.json'), JSON.stringify([propuesta('pp', 'temas', 'Nueva afirmación.', 'https://medio.es/n'), propuesta('vox', 'historial', 'Otra.', 'https://medio.es/o')]));
     await fusionar({ sitio, carpeta, fecha: '2026-11-10' });

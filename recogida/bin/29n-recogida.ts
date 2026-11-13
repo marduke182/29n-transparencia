@@ -20,7 +20,7 @@ import { parseArgs } from 'node:util';
 import { raizCache, rutaDeEntorno } from '../src/cache.ts';
 import { leerBuzon, leerListaEnlaces } from '../src/buzon.ts';
 import { accesoDesdeRegistro, descubrir, leerCandidatos, leerRegistro, type Atrasos, type Descubrimiento } from '../src/descubrir.ts';
-import { lectorCache } from '../src/citas.ts';
+import { citableEn, hostsRegistrados, lectorCache } from '../src/citas.ts';
 import { fusionar } from '../src/fusionar.ts';
 import { Traedor, bloqueosDelDia, escribirBloqueados, guardarDesdeFeed, guardarVetos, hostsVetadosRobots, leerBloqueados, leerVetos, traerEnlaces, traerYGuardar } from '../src/traer.ts';
 import { detectarBinarios, faltan, transcribir } from '../src/transcripciones.ts';
@@ -178,7 +178,10 @@ async function main() {
       const dia = fecha();
       const carpeta = values.ejecucion ? resolve(values.ejecucion) : join(carpetaEjecucion(raizCache(), dia), 'adjudicado');
       // Quotes are checked against the run's cache (citas.ts): one not found literally leaves its item out.
-      const plan = await fusionar({ sitio: rutaDeEntorno('N29_SITIO'), carpeta, fecha: dia, escribir: !values.seco, leer: lectorCache(raizCache()) });
+      // Only sources on a host of the site's fuentes.json, or documents the owner supplied (citas.ts, citableEn).
+      const sitio = rutaDeEntorno('N29_SITIO');
+      const hosts = hostsRegistrados(JSON.parse(await readFile(join(sitio, 'apps', '29n', 'src', 'data', 'fuentes.json'), 'utf8')));
+      const plan = await fusionar({ sitio, carpeta, fecha: dia, escribir: !values.seco, leer: lectorCache(raizCache()), citable: citableEn(raizCache(), hosts) });
       console.log(json(plan));
       return;
     }

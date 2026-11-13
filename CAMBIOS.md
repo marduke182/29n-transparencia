@@ -4,6 +4,16 @@ Registro fechado de los cambios en el proceso, los criterios y los validadores. 
 
 ## 13 de noviembre de 2026
 
+### Recogida diaria: restricciones duras de seguridad
+
+Cambios del proceso, no de los criterios; iguales para los cuatro partidos. Las restricciones las imponen los permisos de Claude Code, las listas de herramientas y el código, no el texto de los prompts. Ver [recogida](recogida/README.md#permisos-de-claude) y [agentes/08-diario.md](agentes/08-diario.md).
+
+1. **Cada pasada de Claude, solo lo suyo.** Cada pasada recibe solo sus herramientas, sus carpetas y sus subagentes. La clasificación, los hechos y la adjudicación, y sus subagentes, ya no tienen WebFetch ni WebSearch (antes, el redactor de hechos y el adjudicador podían abrir fuentes ya citadas): trabajan solo con la caché. Solo la búsqueda tiene web, y WebFetch solo para los hosts del registro de fuentes y de las búsquedas iguales del día. Ninguna pasada puede leer fuera de sus carpetas; un canario lo comprobó.
+2. **Hosts sin registrar.** Un resultado de una búsqueda igual en un sitio que no está en el registro de fuentes ya no se trae ni puede publicarse: queda en «Para revisar» del resumen y del PR. Ninguna propuesta puede citar una página de un sitio sin registrar, salvo las que el responsable pone en el buzón.
+3. **Red.** La recogida solo pide https en el puerto 443 y rechaza también las direcciones IPv6 6to4 que apuntan a redes internas, Teredo e IPv4 traducidas. `yt-dlp` corre sin plugins.
+4. **Git.** El push y el PR en borrador pueden usar un token dedicado, limitado al repositorio del sitio (`N29_GH_TOKEN`; con `N29_EXIGIR_TOKEN=1`, obligatorio). El script comprueba el refspec antes de empujar, y un test comprueba que el código no tiene otro push ni ninguna orden de fusionar.
+5. **Dependencias.** Se instalan con `npm ci`, sin scripts de instalación y solo con versiones publicadas hace al menos 7 días.
+
 ### Recogida diaria: atrasos y fuentes que bloquean
 
 Cambios del proceso, no de los criterios; iguales para los cuatro partidos. Ver [recogida](recogida/README.md#uso) y [agentes/08-diario.md](agentes/08-diario.md).

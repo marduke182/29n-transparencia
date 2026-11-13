@@ -29,8 +29,13 @@
 #   N29_CLAUDE           claude binary (default: claude), version 2.1.321 or later
 #   N29_RAMA_BASE        base branch (default: master), N29_REMOTO (default: origin)
 #   N29_LIMITE_CLAUDE_S, N29_LIMITE_VIDEO_S (above 14400), N29_MODELO_WHISPER   optional
+#   N29_GH_TOKEN         optional: the dedicated token for the push and the PR, used only there
+#   N29_EXIGIR_TOKEN     1: refuse to start without N29_GH_TOKEN (default 0: the machine's git and gh credentials)
 #
-# Security model: Claude never writes outside its answers in the run folder.
+# Security model: each Claude pass gets only its own tools (--tools), folders (--add-dir) and
+# subagents, from diario.ts (ajustesClaude); only the search passes reach the web, and WebFetch
+# only for the hosts of fuentes.json and the day's equal searches.
+# Claude never writes outside its answers in the run folder.
 # Its settings, agents and prompts are built from this repository right before
 # each pass into a fresh folder outside every folder it can write to, checked
 # by sha256, and it starts from an empty folder there. Files the script relies
@@ -178,6 +183,16 @@ else
   BASE="${N29_RAMA_BASE:-master}"
   REMOTO="${N29_REMOTO:-origin}"
   RAMA="data/29n-diario-$FECHA"
+  # The push and the PR: with N29_GH_TOKEN, that token only (a fine-grained PAT for the site repository, see
+  # recogida/README.md); without it, the machine's own git and gh credentials, unless N29_EXIGIR_TOKEN=1.
+  # Kept in an unexported variable: no stage, Claude included, inherits it.
+  TOKEN_GH="${N29_GH_TOKEN:-}"
+  unset N29_GH_TOKEN
+  case "${N29_EXIGIR_TOKEN:-0}" in
+    1) [ -n "$TOKEN_GH" ] || [ "$SIN_GIT" = 1 ] || die "N29_EXIGIR_TOKEN=1 y falta N29_GH_TOKEN: no se hace push sin el token dedicado" ;;
+    0) ;;
+    *) die "N29_EXIGIR_TOKEN debe ser 0 o 1" ;;
+  esac
   command -v "$N29_CLAUDE" >/dev/null || die "no se encuentra claude ($N29_CLAUDE)"
   version_minima "$("$N29_CLAUDE" --version 2>/dev/null | awk '{print $1}')" "$CLAUDE_MINIMA" ||
     die "claude debe ser la versión $CLAUDE_MINIMA o posterior (las opciones y permisos de esta ejecución se comprobaron con ella)"
@@ -569,7 +584,7 @@ preparar_conf() {
   esac
   mkdir "$CONF/vacio" || return $?
   chmod 444 "$CONF"/*.json "$CONF"/*.txt && chmod 555 "$CONF/vacio" "$CONF" || return $?
-  (cd "$CONF" && shasum -a 256 settings.json agentes.json prompt.txt busquedas-web.txt) >"$PRIV/conf.sha"
+  (cd "$CONF" && shasum -a 256 settings.json agentes.json prompt.txt busquedas-web.txt herramientas.txt carpetas.txt) >"$PRIV/conf.sha"
 }
 borrar_conf() {
   [ -n "${CONF:-}" ] || return 0
@@ -596,13 +611,46 @@ auditar_conf() {
     done
   fi
   cp "$CONF/settings.json" "$EJ/claude/$pasada.settings.json" && cp "$CONF/agentes.json" "$EJ/claude/$pasada.agentes.json" &&
-    cp "$CONF/prompt.txt" "$EJ/claude/$pasada.prompt.txt" && cp "$CONF/busquedas-web.txt" "$EJ/claude/$pasada.busquedas-web.txt"
+    cp "$CONF/prompt.txt" "$EJ/claude/$pasada.prompt.txt" && cp "$CONF/busquedas-web.txt" "$EJ/claude/$pasada.busquedas-web.txt" &&
+    cp "$CONF/herramientas.txt" "$EJ/claude/$pasada.herramientas.txt" && cp "$CONF/carpetas.txt" "$EJ/claude/$pasada.carpetas.txt"
+}
+
+# herramientas_pasada: the pass's `--tools` (herramientas.txt), checked: only these built-in tools, and
+# WebFetch or WebSearch only in a search pass (busqueda, busqueda-reintento).
+herramientas_pasada() {
+  local pasada="$1" herramientas h
+  herramientas="$(cat "$CONF/herramientas.txt")" || return 1
+  printf '%s\n' "$herramientas" | grep -E -q -x '[A-Za-z]+(,[A-Za-z]+)*' || { echo "herramientas no válidas: $herramientas" >&2; return 1; }
+  for h in $(printf '%s' "$herramientas" | tr ',' ' '); do
+    case "$h" in
+      Agent | Read | Write | Glob | Grep) ;;
+      WebFetch | WebSearch) case "$pasada" in busqueda | busqueda-reintento) ;; *) echo "la pasada $pasada no puede tener $h" >&2; return 1 ;; esac ;;
+      *) echo "herramienta no admitida: $h" >&2; return 1 ;;
+    esac
+  done
+  printf '%s' "$herramientas"
+}
+# ADD_DIRS: one --add-dir per folder of carpetas.txt, each the run folder, the cached documents or criterios/.
+carpetas_pasada() {
+  local c
+  ADD_DIRS=()
+  while IFS= read -r c; do
+    case "$c" in
+      "$EJ" | "$N29_CACHE/docs" | "$T/criterios") ADD_DIRS+=(--add-dir "$c") ;;
+      *) echo "carpeta no admitida para Claude: $c" >&2; return 1 ;;
+    esac
+  done <"$CONF/carpetas.txt"
+  [ ${#ADD_DIRS[@]} -gt 0 ] || { echo "la pasada no tiene carpetas" >&2; return 1; }
 }
 
 claude_pasada() {
-  local pasada="$1" codigo=0 resto busquedas
+  local pasada="$1" codigo=0 resto busquedas herramientas sin_web=""
   preparar_conf "$pasada" || return $?
   (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || { echo "la configuración de Claude cambió antes de usarla"; return 1; }
+  herramientas="$(herramientas_pasada "$pasada")" || return 1
+  carpetas_pasada || return 1
+  # A pass without WebFetch also has it switched off in Claude Code itself (on top of --tools and the deny rule).
+  case ",$herramientas," in *,WebFetch,*) ;; *) sin_web=1 ;; esac
   # One WebSearch cap shared by every subagent of the pass, sized for all of it (diario.ts, limiteBusquedasWeb).
   busquedas="$(cat "$CONF/busquedas-web.txt")" || return 1
   case "$busquedas" in '' | *[!0-9]* | 0*) echo "límite de búsquedas no válido: $busquedas"; return 1 ;; esac
@@ -610,18 +658,16 @@ claude_pasada() {
   # --restricted ignores user, project and local settings files: only --settings applies.
   (
     cd "$CONF/vacio" &&
-      con_limite "$LIMITE_CLAUDE" env CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION="$busquedas" "$N29_CLAUDE" -p \
+      con_limite "$LIMITE_CLAUDE" env CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION="$busquedas" ${sin_web:+CLAUDE_CODE_DISABLE_WEB_FETCH=1} "$N29_CLAUDE" -p \
         --model opus \
         --restricted \
         --settings "$CONF/settings.json" \
         --strict-mcp-config \
         --agents "$CONF/agentes.json" \
-        --tools "Agent,Read,Write,Glob,Grep,WebFetch,WebSearch" \
+        --tools "$herramientas" \
         --permission-mode dontAsk \
         --permission-prompts none \
-        --add-dir "$EJ" \
-        --add-dir "$N29_CACHE/docs" \
-        --add-dir "$T/criterios" \
+        "${ADD_DIRS[@]}" \
         --no-session-persistence \
         --output-format json \
         --max-budget-usd "$N29_PRESUPUESTO_USD" \
@@ -672,6 +718,7 @@ ensayar_sesion() {
   rutas="$(rutas_sesion "$nombre")" || return 1
   preparar_conf "$nombre" || return $?
   (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || return 1
+  herramientas_pasada "$nombre" >/dev/null && carpetas_pasada || return 1
   auditar_conf "$nombre" || return $?
   CONF="$CONF" perl -pi -e 's{\Q$ENV{CONF}\E}{<CONF>}g' "$EJ/claude/$nombre".* || return $?
   borrar_conf
@@ -713,6 +760,7 @@ ensayar_conf() {
   for pasada in busqueda; do
     preparar_conf "$pasada" || return $?
     (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || return 1
+    herramientas_pasada "$pasada" >/dev/null && carpetas_pasada || return 1
     auditar_conf "$pasada" || return $?
     # The folder's name is random: <CONF> in the copies keeps the digest stable.
     CONF="$CONF" perl -pi -e 's{\Q$ENV{CONF}\E}{<CONF>}g' "$EJ/claude/$pasada".* || return $?
@@ -911,6 +959,14 @@ paso_resumen() {
   glue informe >>"$EJ/resumen.parcial.md"
 }
 
+# REPO_GH: owner/repo of $REMOTO on github.com (ssh or https URL), for the push with the dedicated token.
+repo_github() {
+  local url
+  url="$(git -C "$N29_REPO" remote get-url "$REMOTO")" || return 1
+  REPO_GH="$(printf '%s\n' "$url" | sed -E -n 's#^(git@github\.com:|ssh://git@github\.com/|https://github\.com/)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$#\2#p' | sed 's/\.git$//')"
+  [ -n "$REPO_GH" ] || { echo "$REMOTO no es un repositorio de github.com: $url"; return 1; }
+}
+
 paso_git() {
   case "$RAMA" in
     data/29n-diario-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
@@ -921,15 +977,33 @@ paso_git() {
   git -C "$WT" add -- apps/29n/src/data || return $?
   printf 'chore(29n): datos de la recogida del %s\n\nGenerado por recogida/bin/diario.sh (29n-transparencia) con las propuestas\nadjudicadas del día; el resumen está en el PR.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n' "$FECHA" >"$EJ/commit.txt"
   git -C "$WT" commit --quiet -F "$EJ/commit.txt" || return $?
-  # Only this branch, by explicit refspec: never master, never --force.
-  git -C "$WT" push "$REMOTO" "refs/heads/$RAMA:refs/heads/$RAMA" || return $?
+  # Only this branch, by explicit refspec: never master, never --force (checked again here, and by diario.test.ts).
+  local refspec="refs/heads/$RAMA:refs/heads/$RAMA"
+  [ "$refspec" = "refs/heads/data/29n-diario-$FECHA:refs/heads/data/29n-diario-$FECHA" ] || { echo "refspec inesperado: $refspec"; return 1; }
+  if [ -n "$TOKEN_GH" ]; then
+    repo_github || return 1
+    # The dedicated token, over HTTPS, for this push only: no global or system git config (no insteadOf, no other
+    # credential helper); the helper reads the token from the environment of this one command, never an argument.
+    (
+      export N29_TOKEN_PUSH="$TOKEN_GH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
+      git -C "$WT" -c credential.helper= -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$N29_TOKEN_PUSH"; }; f' \
+        push "https://github.com/$REPO_GH.git" "$refspec"
+    ) || return $?
+  else
+    echo "aviso: sin N29_GH_TOKEN, el push y el PR usan las credenciales de git y gh de esta máquina (N29_EXIGIR_TOKEN=1 lo impide)"
+    git -C "$WT" push "$REMOTO" "$refspec" || return $?
+  fi
   {
     # No GitHub notifications from quoted handles in the summary.
     head -c 60000 "$EJ/resumen.md" | perl -CSD -pe 's/\@(?=\w)/\@\x{200B}/g'
     [ "$(wc -c <"$EJ/resumen.md")" -le 60000 ] || printf '\n\n_Resumen recortado; completo en la carpeta de la ejecución._\n'
     printf '\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n'
   } >"$EJ/pr.md"
-  (cd "$WT" && gh pr create --draft --base "$BASE" --head "$RAMA" --title "chore(29n): datos de la recogida del $FECHA" --body-file "$EJ/pr.md") >"$EJ/pr.txt" || return $?
+  if [ -n "$TOKEN_GH" ]; then
+    (cd "$WT" && export GH_TOKEN="$TOKEN_GH" GH_PROMPT_DISABLED=1 && gh pr create --repo "$REPO_GH" --draft --base "$BASE" --head "$RAMA" --title "chore(29n): datos de la recogida del $FECHA" --body-file "$EJ/pr.md") >"$EJ/pr.txt" || return $?
+  else
+    (cd "$WT" && gh pr create --draft --base "$BASE" --head "$RAMA" --title "chore(29n): datos de la recogida del $FECHA" --body-file "$EJ/pr.md") >"$EJ/pr.txt" || return $?
+  fi
   cat "$EJ/pr.txt"
 }
 

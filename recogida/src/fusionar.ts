@@ -29,6 +29,10 @@
  *   cites (citas.ts, the same check the run makes after the merge); one that
  *   does not, or whose document is not cached, leaves the item out. Only with a
  *   cache reader (`leer`; the CLI always passes the run's cache).
+ * - With `citable` (the CLI always passes it: fuentes.json of the site and the
+ *   owner's documents, citas.ts citableEn), a proposal that names a URL on a
+ *   host the registry does not list is refused, and a quote is checked only
+ *   against citable documents.
  *
  * Perfil files ({partido, periodo, limites, documentos, propuestas, mensajes}):
  * - A proposal adds one documento, propuesta or mensaje (`tipo`). Propuestas and
@@ -119,6 +123,14 @@ export function clavesDe(item: Objeto): string[] {
       return [];
     }
   });
+}
+
+/** Every http(s) URL in a value, at any depth (a proposal's sources, quotes and perfil documents). */
+export function urlsEn(valor: unknown): string[] {
+  if (typeof valor === 'string') return /^https?:\/\//i.test(valor.trim()) ? [valor.trim()] : [];
+  if (Array.isArray(valor)) return valor.flatMap(urlsEn);
+  if (isObjeto(valor)) return Object.values(valor).flatMap(urlsEn);
+  return [];
 }
 
 /** Largest integer found in any ref (e.g. "23, 13" → 23, "50a" → 50, "V1" → 1). */
@@ -392,18 +404,32 @@ async function escribirJson(ruta: string, datos: unknown) {
  * Applies the proposals of `carpeta` to the site at `sitio`. With `escribir:
  * false` it only returns the plan. Files without additions are not touched.
  */
-export async function fusionar(opciones: { sitio: string; carpeta: string; fecha: string; escribir?: boolean; leer?: LectorCache }): Promise<Plan> {
+export async function fusionar(opciones: {
+  sitio: string;
+  carpeta: string;
+  fecha: string;
+  escribir?: boolean;
+  leer?: LectorCache;
+  /** Whether a URL may back a published item (citas.ts, citableEn): with it, a proposal naming any other URL is refused, and quotes are checked only against citable documents. */
+  citable?: (url: string) => boolean;
+}): Promise<Plan> {
   if (!ISO.test(opciones.fecha)) throw new Error(`fecha no es ISO: ${opciones.fecha}`);
   const plan: Plan = { fecha: opciones.fecha, cambios: [], rechazados: [] };
   const dePartido: { archivo: string; indice: number; propuesta: Propuesta }[] = [];
   const dePerfil: { archivo: string; indice: number; propuesta: PropuestaPerfil }[] = [];
+  const { citable, leer: leerCache } = opciones;
+  // A quote counts only in a document on a registered host (or one the owner supplied).
+  const leer = leerCache && citable ? (url: string) => (citable(url) ? leerCache(url) : undefined) : leerCache;
   for (const entrada of await leerPropuestas(opciones.carpeta)) {
     const esPerfil = isObjeto(entrada.propuesta) && entrada.propuesta.destino === 'perfil';
+    const ajena = citable ? urlsEn(entrada.propuesta).find((url) => !citable(url)) : undefined;
     const motivo = !isObjeto(entrada.propuesta)
       ? 'propuesta no es un objeto'
-      : esPerfil
-        ? motivoRechazoPerfil(entrada.propuesta as PropuestaPerfil)
-        : motivoRechazo(entrada.propuesta as unknown as Propuesta, opciones.fecha, opciones.leer);
+      : ajena !== undefined
+        ? `${ajena}: host sin registrar en fuentes.json; no se publica sin revisión`
+        : esPerfil
+          ? motivoRechazoPerfil(entrada.propuesta as PropuestaPerfil)
+          : motivoRechazo(entrada.propuesta as unknown as Propuesta, opciones.fecha, leer);
     if (motivo) plan.rechazados.push({ archivo: entrada.archivo, indice: entrada.indice, motivo });
     else if (esPerfil) dePerfil.push(entrada as (typeof dePerfil)[number]);
     else dePartido.push(entrada as (typeof dePartido)[number]);

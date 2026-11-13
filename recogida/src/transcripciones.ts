@@ -203,8 +203,17 @@ export function faltan(binarios: Binarios): string[] {
   return lista;
 }
 
-/** Common yt-dlp flags: ignore user config (it could add cookies), no cookies, slow requests. */
-const YT_DLP_BASE = ['--ignore-config', '--no-cookies', '--no-cookies-from-browser', '--no-playlist', '--sleep-requests', '3', '--sleep-subtitles', '3', '--retries', '1'];
+/**
+ * Common yt-dlp flags: ignore user config (it could add cookies), no plugins
+ * (a plugin folder would run its code), no cookies, slow requests. The video
+ * URL itself passed Traedor.comprobar (https, port 443, public addresses,
+ * robots.txt) and esVideo (the host and URL shape of FUENTES_VIDEO), and only
+ * that host's extractor runs. Residual risk: yt-dlp's own requests (the
+ * extractor's API and media hosts, and their redirects) do not go through
+ * lookupPublico, so they are not checked against internal addresses; yt-dlp
+ * has no option to restrict them by host or address.
+ */
+export const YT_DLP_BASE = ['--ignore-config', '--no-plugin-dirs', '--no-cookies', '--no-cookies-from-browser', '--no-playlist', '--sleep-requests', '3', '--sleep-subtitles', '3', '--retries', '1'];
 
 /** Plain text of a WebVTT caption file: no header, timings or tags; repeated rolling lines collapsed. */
 export function textoDeVtt(vtt: string): string {

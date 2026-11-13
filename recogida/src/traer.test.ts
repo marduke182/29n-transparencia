@@ -177,6 +177,32 @@ describe('red pública', () => {
     for (const ip of ['93.184.215.14', '8.8.8.8', '172.32.0.1', '198.20.0.1', '2a00:1450::1', '::ffff:8.8.8.8', '::ffff:808:808', '::8.8.8.8']) expect(direccionInterna(ip), ip).toBe(false);
   });
 
+  it('judges 6to4 by its IPv4 address and refuses Teredo and IPv4-translated addresses outright', () => {
+    // 2002:AABB:CCDD::/16 carries AA.BB.CC.DD.
+    for (const ip of ['2002:7f00:1::', '2002:a9fe:a9fe::1', '2002:c0a8:101::1', '2002:a00:1::', '2001::1', '2001:0:4136:e378:8000:63bf:3fff:fdd2', '::ffff:0:8.8.8.8', '::ffff:0:808:808', '::ffff:0:0:0']) {
+      expect(direccionInterna(ip), ip).toBe(true);
+    }
+    for (const ip of ['2002:808:808::1', '2002:5db8:d70e::', '2001:4860:4860::8888']) expect(direccionInterna(ip), ip).toBe(false);
+  });
+
+  it('refuses any explicit port but 443, in comprobar and in the connecting fetch', async () => {
+    const { traedor: t, llamadas } = traedor({}, publica);
+    for (const url of ['https://medio.es:8443/a', 'https://medio.es:80/a', 'https://medio.es:22/a']) {
+      expect(await t.traer(url), url).toMatchObject({ estado: 'error', motivo: expect.stringMatching(/solo el puerto 443/) });
+      await expect(crearFetchSeguro(async () => [{ address: '93.184.215.14', family: 4 }])(url), url).rejects.toThrow(/solo el puerto 443/);
+    }
+    expect(llamadas).toEqual([]);
+    // An explicit :443 is the default port: allowed (and checked like any other URL).
+    expect(await t.comprobar('https://medio.es:443/a')).not.toMatchObject({ motivo: expect.stringMatching(/puerto/) });
+  });
+
+  it('refuses a redirect to another port before requesting it', async () => {
+    const robots = { status: 200, body: 'User-agent: *\nAllow: /' };
+    const { traedor: t, llamadas } = traedor({ 'https://medio.es/robots.txt': robots, 'https://medio.es/a': { status: 302, headers: { location: 'https://medio.es:6379/' } } }, publica);
+    expect((await t.traer('https://medio.es/a')).estado).toBe('error');
+    expect(llamadas.map((l) => l.url)).toEqual(['https://medio.es/robots.txt', 'https://medio.es/a']);
+  });
+
   it('refuses IP literals, localhost, .local and single-label hosts', () => {
     expect(motivoHostNoPublico('127.0.0.1')).toMatch(/dirección IP/);
     expect(motivoHostNoPublico('[::1]')).toMatch(/dirección IP/);

@@ -14,6 +14,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { ORIGEN_ENLACES } from './buzon.ts';
 import { idDocumento, urlCanonica } from './cache.ts';
 
 /** Las citas literales deben tener menos de este número de palabras. */
@@ -216,6 +217,45 @@ export function lectorCache(raiz: string): LectorCache {
     indice ??= construirIndice();
     const clave = indice.get(url) ?? indice.get(canonica);
     return clave === undefined ? undefined : leerClave(clave);
+  };
+}
+
+/** Hosts de todos los emisores de un fuentes.json, en minúsculas y sin www. */
+export function hostsRegistrados(fuentes: unknown): string[] {
+  const emisores = esObjeto(fuentes) && Array.isArray(fuentes.emisores) ? fuentes.emisores : [];
+  const hosts = emisores.flatMap((e) => (esObjeto(e) && Array.isArray(e.hosts) ? e.hosts.filter(esTexto) : []));
+  return [...new Set(hosts.map((h) => h.toLowerCase().replace(/^www\./, '')))].sort();
+}
+
+/**
+ * Si una URL puede respaldar un elemento publicado: su host es el de un
+ * emisor registrado en fuentes.json (o un subdominio suyo), o el documento en
+ * caché lo trajo el dueño (el buzón, via `buzon`, o su lista de enlaces,
+ * origen `buzon-enlaces`). Una página de un host sin registrar que encontró la
+ * búsqueda nunca se publica sola: la regla la aplican preparar (diario.ts) y
+ * fusionar.
+ */
+export function citableEn(raiz: string, hosts: readonly string[]): (url: string) => boolean {
+  return (url) => {
+    let host: string;
+    let canonica: string;
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+      host = parsed.hostname.toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
+      canonica = urlCanonica(url);
+    } catch {
+      return false;
+    }
+    if (hosts.some((otro) => host === otro || host.endsWith(`.${otro}`))) return true;
+    const ruta = join(raiz, 'docs', idDocumento(canonica), 'meta.json');
+    if (!existsSync(ruta)) return false;
+    try {
+      const meta: unknown = JSON.parse(readFileSync(ruta, 'utf8'));
+      return esObjeto(meta) && (meta.via === 'buzon' || meta.origen === ORIGEN_ENLACES);
+    } catch {
+      return false;
+    }
   };
 }
 

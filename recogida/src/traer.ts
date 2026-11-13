@@ -1,8 +1,8 @@
 /**
  * Polite fetching for the daily collection.
  *
- * - Requests go through crearFetchSeguro: https only, never to an internal
- *   address (checked when resolving and again at connect time), no
+ * - Requests go through crearFetchSeguro: https on port 443 only, never to an
+ *   internal address (checked when resolving and again at connect time), no
  *   automatic redirects (each hop passes `comprobar`).
  * - One honest User-Agent, always the same. Never another one, a proxy or a
  *   headless browser.
@@ -115,10 +115,16 @@ export function gruposIPv6(direccion: string): number[] | undefined {
   return grupos.length === 8 ? grupos : undefined;
 }
 
+/** The dotted IPv4 address in two 16-bit groups. */
+const ipv4De = (alto: number, bajo: number) => [alto >> 8, alto & 0xff, bajo >> 8, bajo & 0xff].join('.');
+
 /**
  * Whether an address must never be requested (IPv4 and IPv6). IPv4-mapped
- * (::ffff:a.b.c.d, also in hex) and IPv4-compatible (::a.b.c.d) addresses are
- * judged by their IPv4 address. Anything that is not an IP address counts as internal.
+ * (::ffff:a.b.c.d, also in hex), IPv4-compatible (::a.b.c.d) and 6to4
+ * (2002:AABB:CCDD::/16) addresses are judged by their IPv4 address; Teredo
+ * (2001::/32) and IPv4-translated (::ffff:0:a.b.c.d, ::ffff:0:0:0/96), which
+ * tunnel to an address that cannot be checked here, are always internal.
+ * Anything that is not an IP address counts as internal.
  */
 export function direccionInterna(direccion: string): boolean {
   const ip = direccion.toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '');
@@ -126,9 +132,14 @@ export function direccionInterna(direccion: string): boolean {
   const grupos = gruposIPv6(ip);
   if (!grupos) return true;
   if (grupos.slice(0, 5).every((g) => g === 0) && (grupos[5] === 0xffff || (grupos[5] === 0 && (grupos[6]! > 0 || grupos[7]! > 1)))) {
-    const v4 = [grupos[6]! >> 8, grupos[6]! & 0xff, grupos[7]! >> 8, grupos[7]! & 0xff].join('.');
-    return INTERNAS.check(v4, 'ipv4');
+    return INTERNAS.check(ipv4De(grupos[6]!, grupos[7]!), 'ipv4');
   }
+  // ::ffff:0:0:0/96 (IPv4-translated).
+  if (grupos.slice(0, 4).every((g) => g === 0) && grupos[4] === 0xffff && grupos[5] === 0) return true;
+  // 2001::/32 (Teredo).
+  if (grupos[0] === 0x2001 && grupos[1] === 0) return true;
+  // 2002::/16 (6to4): the IPv4 address in the next two groups.
+  if (grupos[0] === 0x2002) return INTERNAS.check(ipv4De(grupos[1]!, grupos[2]!), 'ipv4');
   return INTERNAS.check(ip, 'ipv6');
 }
 
@@ -167,6 +178,8 @@ export function crearFetchSeguro(resolver?: ResolverDirecciones): typeof fetch {
   return (async (entrada: string | URL | Request, init?: RequestInit) => {
     const url = new URL(entrada instanceof Request ? entrada.url : String(entrada));
     if (url.protocol !== 'https:') throw new TypeError(`solo https: ${url.protocol}`);
+    // https on its default port only (URL drops an explicit :443, so any port left is another one).
+    if (url.port !== '') throw new TypeError(`solo el puerto 443: ${url.port}`);
     const cabeceras: Record<string, string> = {};
     new Headers(init?.headers).forEach((valor, clave) => {
       cabeceras[clave] = valor;
@@ -544,6 +557,7 @@ export class Traedor {
     }
     if (parsed.protocol !== 'https:') return { estado: 'error', url, motivo: `solo https: ${parsed.protocol}` };
     if (parsed.username || parsed.password) return { estado: 'error', url, motivo: 'URL con credenciales' };
+    if (parsed.port !== '') return { estado: 'error', url, motivo: `solo el puerto 443: ${parsed.port}` };
     const host = hostDe(url);
     const red = await this.motivoRed(parsed.hostname);
     if (red) return { estado: 'error', url, motivo: red };
