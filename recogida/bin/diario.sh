@@ -550,6 +550,8 @@ paso_traer_busqueda() {
 copiar_juicio() {
   local cosa
   for cosa in "$@"; do cp -R "$FIJOS/juicio/$cosa" "$EJ/$cosa" || return $?; done
+  # With --atrasos-*, the fixture answers of the atrasos tasks too (fixtures/diario/juicio-atrasos).
+  if [ ${#ATRASOS[@]} -gt 0 ] && [ -d "$FIJOS/juicio-atrasos/busqueda" ]; then cp "$FIJOS/juicio-atrasos/busqueda/"* "$EJ/busqueda/" || return $?; fi
 }
 
 # Builds settings, agents and prompts from this repository into a fresh

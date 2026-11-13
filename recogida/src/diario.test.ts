@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { idDocumento, urlCanonica, type PartyId } from './cache.ts';
-import { Traedor } from './traer.ts';
+import { Traedor, type VetoGuia } from './traer.ts';
+import { registrarBloqueos } from './bloqueos.ts';
 import { consultasFuente, type Alias, type Descubrimiento, type TareaBusqueda } from './descubrir.ts';
 import {
   ajustesClaude,
@@ -23,6 +24,9 @@ import {
   TAMANO_LOTE_CLASIFICAR,
   respuestaAceptable,
   revisarBusqueda,
+  rutasReintento,
+  textoRutasReintento,
+  fuentesEsperadas,
   busquedasRegistradas,
   RESULTADOS_SATURACION,
   marcarBloqueadas,
@@ -701,6 +705,22 @@ describe('búsqueda igual: bloqueada para todos', () => {
     expect(sondeo.find((s) => s.url === 'https://newtral.es/')).toMatchObject({ estado: 'bloqueado', estado_http: 403 });
     expect(marcadas.filter((t) => t.tipo === 'criticos').every((t) => t.consultas[1]!.bloqueada?.host === 'newtral.es')).toBe(true);
   });
+
+  it('sondear: a host that blocks the guide (noTraer, or a robots.txt against Claude\'s agents) is blocked for all four, with the reason', async () => {
+    const robots: Record<string, string> = { 'https://newtral.es/robots.txt': 'User-agent: Claude-User\nDisallow: /\n' };
+    const fetch = (async (url: string) => new Response(robots[String(url)] ?? '', { status: 200, headers: { 'content-type': 'text/html' } })) as unknown as typeof globalThis.fetch;
+    const traedor = new Traedor({ fecha: FECHA, fetch, reloj: () => 0, esperar: async () => {}, resolver: async () => ['93.184.215.14'], soloBuzon: [], noTraer: ['medio.es'] });
+    const { tareas: marcadas } = await sondear(tareas(), traedor);
+    const criticos = marcadas.filter((t) => t.tipo === 'criticos');
+    // The second criticos query reaches newtral.es (robots veto) and medio.es (noTraer): the first host found blocks it, for all four.
+    expect(new Set(criticos.map((t) => JSON.stringify(t.consultas[1]!.bloqueada)))).toHaveLength(1);
+    expect(criticos[0]!.consultas[1]!.bloqueada).toMatchObject({ host: 'newtral.es', estado_http: null, fecha: FECHA, motivo: expect.stringMatching(/no admite agentes de Claude/) });
+    const soloMedio = tareas().map((t) => (t.tipo === 'criticos' ? { ...t, consultas: [t.consultas[0]!, { ...t.consultas[1]!, dominios: ['www.medio.es'] }] } : t));
+    const otra = new Traedor({ fecha: FECHA, fetch, reloj: () => 0, esperar: async () => {}, resolver: async () => ['93.184.215.14'], soloBuzon: [], noTraer: ['medio.es'] });
+    const { tareas: conMedio } = await sondear(soloMedio, otra);
+    expect(conMedio.find((t) => t.tipo === 'criticos')!.consultas[1]!.bloqueada).toMatchObject({ host: 'medio.es', estado_http: null, motivo: expect.stringMatching(/bloquea a la guía/) });
+    expect(conMedio.find((t) => t.tipo === 'criticos')!.consultas[0]!.bloqueada).toBeUndefined();
+  });
 });
 
 describe('problemasAdjudicacion', () => {
@@ -928,6 +948,18 @@ describe('faltasBusqueda', () => {
     expect(revision.faltas).toEqual(['busqueda/a.atrasos.json: falta']);
     expect(revision.reintentables.fuentes).toEqual([atrasos]);
     expect(faltasBusqueda({ ...base, fuentes: [fuenteA, atrasos], porFuente: (_e, tarea) => respuestaFuente(tarea) })).toEqual([]);
+    // A retry round with the atrasos task: its own file in reintento-rutas.txt, and its searches counted against the retry session.
+    expect(rutasReintento(revision.reintentables)).toEqual(['busqueda/a.atrasos.json']);
+    expect(textoRutasReintento(rutasReintento(revision.reintentables))).toBe('./busqueda/a.atrasos.json\n./busqueda/a.atrasos.json.error.txt\n');
+    const reintento = { fuentes: ['busqueda/a.atrasos.json'], iguales: [] };
+    const todas = { ...base, fuentes: [fuenteA, atrasos], porFuente: (_e: string, tarea: TareaBusqueda) => respuestaFuente(tarea) };
+    // Pass 1: a (4) + 16 equal searches × their unblocked queries (28) = 32; the retry: the atrasos task's 4.
+    expect(faltasBusqueda({ ...todas, busquedasReales: 32, reintento: { ...reintento, busquedasReales: 4 } })).toEqual([]);
+    expect(faltasBusqueda({ ...todas, busquedasReales: 32, reintento: { ...reintento, busquedasReales: 3 } })).toEqual([
+      'claude/busqueda-reintento.salida.json: las respuestas reintentadas declaran 4 búsquedas web hechas, pero Claude Code registró 3',
+    ]);
+    // The day task of the same source is not counted as retried: only its own path is.
+    expect(faltasBusqueda({ ...todas, busquedasReales: 31, reintento: { ...reintento, busquedasReales: 500 } })).toHaveLength(1);
     // Only the atrasos file name is accepted as another answer path.
     expect(faltasBusqueda({ ...base, fuentes: [{ ...atrasos, salida: '../fuera.json' }] })).toEqual(['descubrir.json: la tarea de a tiene una salida no admitida (../fuera.json)']);
   });
@@ -1072,5 +1104,21 @@ describe('faltasBusqueda', () => {
 describe('informe: clasificaciones que faltan', () => {
   it('lists them per party', () => {
     expect(informe({ fecha: FECHA, etapas: '', sinClasificar: { pp: ['a', 'b'] } })).toContain('- pp: a, b');
+  });
+});
+
+describe('fuentesEsperadas (alcance-fuentes)', () => {
+  const antes = { meta: 1, emisores: [{ id: 'medio', nombre: 'Medio', hosts: ['medio.es'], tipo: 'medio', recogida: { metodo: 'rss', url: 'https://medio.es/rss' } }] };
+  const veto: VetoGuia = { tipo: 'robots', host: 'medio.es', consultado: FECHA, url: 'https://medio.es/a', evidencia: 'User-agent: Claude-User · Disallow: /', robots: 'https://medio.es/robots.txt', agentes: ['Claude-User'] };
+  it('accepts exactly what fuentes-bloqueo writes, or no change', () => {
+    const escrito = JSON.parse(JSON.stringify(registrarBloqueos(antes as never, [veto], FECHA).registro));
+    expect(fuentesEsperadas(antes, escrito, [veto], FECHA)).toEqual([]);
+    expect(fuentesEsperadas(antes, structuredClone(antes), [veto], FECHA)).toEqual([]);
+  });
+  it('refuses a bloqueo the day\'s vetos do not explain, even with the right shape', () => {
+    const escrito = JSON.parse(JSON.stringify(registrarBloqueos(antes as never, [veto], FECHA).registro));
+    expect(fuentesEsperadas(antes, escrito, [], FECHA)).toHaveLength(1);
+    escrito.emisores[0].bloqueo.agentes = ['Claude-User', 'Claude-SearchBot'];
+    expect(fuentesEsperadas(antes, escrito, [veto], FECHA)).toHaveLength(1);
   });
 });

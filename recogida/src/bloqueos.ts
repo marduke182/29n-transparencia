@@ -10,7 +10,8 @@
  *   robots, agentes) + recogida omitir on the matching emisor, or a minimal
  *   new emisor for an unknown host. Never removes a bloqueo. Anti-bot vetos
  *   are listed for review only, never written: a challenge can be triggered
- *   by the rate of requests rather than a policy against the guide.
+ *   by the rate of requests rather than a policy against the guide. A party
+ *   website is never written either: the same rule for the four parties.
  * - revisarBloqueos: rereads the robots.txt of each recorded bloqueo; one that
  *   no longer excludes Claude's agents is listed for a person to decide.
  * - cambiosFuentesNoAdmitidos: the allowlist for fuentes.json: only those changes.
@@ -91,6 +92,17 @@ export interface InformeBloqueos {
   sin_comprobar: { id: string; robots: string }[];
 }
 
+/** The emisor of a host: the one listing it exactly, else the one with the longest host it falls under (diariodeavisos.elespanol.com before elespanol.com). */
+export function emisorDeHost(emisores: readonly Emisor[], host: string): Emisor | undefined {
+  const exacto = emisores.find((e) => e.hosts.includes(host));
+  if (exacto) return exacto;
+  let mejor: { emisor: Emisor; largo: number } | undefined;
+  for (const emisor of emisores) {
+    for (const propio of emisor.hosts) if (hostEn(host, [propio]) && (!mejor || propio.length > mejor.largo)) mejor = { emisor, largo: propio.length };
+  }
+  return mejor?.emisor;
+}
+
 const idDeHost = (host: string, usados: Set<string>) => {
   const base = host.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   let id = base;
@@ -99,12 +111,14 @@ const idDeHost = (host: string, usados: Set<string>) => {
 };
 
 /**
- * Writes today's robots.txt vetos into the registry: the matching emisor (by
- * host, subdomains included) gets `bloqueo` and recogida omitir unless it
- * already has the same reading; an unknown host gets a minimal emisor (id and
- * nombre from the host, tipo medio) at the end of the list. A robots.txt read
- * on a subdomain the emisor does not list is not written (the site requires
- * the robots.txt of one of its hosts). Anti-bot vetos are only reported.
+ * Writes today's robots.txt vetos into the registry: the matching emisor
+ * (emisorDeHost: exact host first, else the longest host it falls under) gets
+ * `bloqueo` and recogida omitir unless it already has the same reading; an
+ * unknown host gets a minimal emisor (id and nombre from the host, tipo medio)
+ * at the end of the list. Only reported, for review: a robots.txt read on a
+ * subdomain the emisor does not list (the site requires the robots.txt of one
+ * of its hosts), one without agents, a party website (never written alone,
+ * the same rule for the four), and every anti-bot veto.
  * Returns a new registry object (the input is not changed) and the report.
  */
 export function registrarBloqueos<R extends { emisores: Emisor[] }>(registro: R, vetos: readonly VetoGuia[], fecha: string): { registro: R; informe: InformeBloqueos; cambiado: boolean } {
@@ -113,16 +127,26 @@ export function registrarBloqueos<R extends { emisores: Emisor[] }>(registro: R,
   const usados = new Set(emisores.map((e) => e.id));
   let cambiado = false;
   for (const veto of [...vetos].sort((a, b) => a.host.localeCompare(b.host))) {
-    const emisor = emisores.find((e) => hostEn(veto.host, e.hosts));
-    if (veto.tipo !== 'robots' || !veto.robots || !veto.agentes?.length) {
+    const emisor = emisorDeHost(emisores, veto.host);
+    const apartar = (motivo: string) =>
       informe.sin_registrar.push({
         host: veto.host,
         tipo: veto.tipo,
         evidencia: veto.evidencia,
-        motivo: 'para revisar: un reto antibots puede deberse a la frecuencia de las peticiones; no se escribe solo',
+        motivo,
         ...(veto.primera !== undefined ? { primera: veto.primera } : {}),
         ...(emisor ? { id: emisor.id } : {}),
       });
+    if (veto.tipo !== 'robots') {
+      apartar('para revisar: un reto antibots puede deberse a la frecuencia de las peticiones; no se escribe solo');
+      continue;
+    }
+    if (!veto.robots || !veto.agentes?.length) {
+      apartar('para revisar: robots.txt sin agentes ni regla que citar; no se escribe solo');
+      continue;
+    }
+    if (emisor?.tipo === 'partido') {
+      apartar('para revisar: la web de un partido nunca se escribe sola, la misma regla para los cuatro');
       continue;
     }
     const bloqueo = bloqueoDe(veto, fecha);
@@ -175,7 +199,7 @@ export async function revisarBloqueos(emisores: readonly Emisor[], traedor: Pick
 type Obj = Record<string, unknown>;
 const esObjeto = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 /** JSON with sorted keys: key order (Prettier, edits in place) does not count as a change. */
-const canonico = (v: unknown): string => JSON.stringify(v, (_k, valor: unknown) => (esObjeto(valor) ? Object.fromEntries(Object.keys(valor).sort().map((k) => [k, valor[k]])) : valor));
+export const canonico = (v: unknown): string => JSON.stringify(v, (_k, valor: unknown) => (esObjeto(valor) ? Object.fromEntries(Object.keys(valor).sort().map((k) => [k, valor[k]])) : valor));
 const sin = (o: Obj, ...claves: string[]) => Object.fromEntries(Object.entries(o).filter(([k]) => !claves.includes(k)));
 
 function problemasBloqueo(where: string, emisor: Obj): string[] {
@@ -206,7 +230,7 @@ function problemasBloqueo(where: string, emisor: Obj): string[] {
 /**
  * Why the run's fuentes.json differs from the copy taken before it in a way
  * registrarBloqueos never makes, or [] when it does not. Allowed: on an
- * existing emisor, a new or changed `bloqueo` of tipo robots, with every field
+ * existing emisor that is not a party website, a new or changed `bloqueo` of tipo robots, with every field
  * of the site's shape, and recogida omitir (nothing else of it changed, no
  * bloqueo removed); new emisores at the end with
  * exactly id, nombre (= its host), hosts (one), tipo medio, recogida omitir
@@ -228,7 +252,9 @@ export function cambiosFuentesNoAdmitidos(antes: unknown, despues: unknown): str
     const where = `fuentes.${String(a.id)}`;
     if (canonico(sin(a, 'bloqueo', 'recogida')) !== canonico(sin(d, 'bloqueo', 'recogida'))) problemas.push(`${where}: cambió algo más que bloqueo y recogida`);
     if (a.bloqueo !== undefined && d.bloqueo === undefined) problemas.push(`${where}: se quitó el bloqueo (nunca se quita solo)`);
-    if (canonico(a.bloqueo) !== canonico(d.bloqueo) || canonico(a.recogida) !== canonico(d.recogida)) problemas.push(...problemasBloqueo(where, d));
+    const cambiado = canonico(a.bloqueo) !== canonico(d.bloqueo) || canonico(a.recogida) !== canonico(d.recogida);
+    if (cambiado && a.tipo === 'partido') problemas.push(`${where}: la web de un partido no cambia sola (bloqueo y recogida, a mano)`);
+    else if (cambiado) problemas.push(...problemasBloqueo(where, d));
   });
   D.slice(A.length).forEach((d, j) => {
     const where = `fuentes.emisores[${A.length + j + 1}]`;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PARTY_IDS, PARTY_SHORT, leerAtrasos, resumen, type EntradaResumen } from './resumen.ts';
+import { PARTY_IDS, PARTY_SHORT, leerAtrasos, literalMd, resumen, type EntradaResumen } from './resumen.ts';
 
 const item = (ref: string, extra: Record<string, unknown> = {}) => ({
   ref,
@@ -163,8 +163,9 @@ describe('atrasos y fuentes que bloquean', () => {
       },
     });
     expect(texto).toContain('- nuevo-es (nuevo.es): User-agent: Claude-User · Disallow: /');
-    expect(texto).toContain('- medio (medio.es): User-agent: * · Disallow: /; antes, recogida rss');
+    expect(texto).toContain('- medio (medio.es): User-agent: \\* · Disallow: /; antes, recogida rss');
     expect(texto).toContain('### Bloqueos antibots, para revisar (no se escriben solos en fuentes.json)\n\n- dd.es: HTTP 403: DataDome (página de reto); primera vez\n');
+    expect(literalMd('<b>[x](y)</b> *a* `c` | ~d~ \u0007')).toBe('\\<b\\>\\[x\\](y)\\</b\\> \\*a\\* \\`c\\` \\| \\~d\\~  ');
     expect(texto).toContain('### Ya no bloquean (revisar a mano: el bloqueo no se quita solo)\n\n- el-pais: https://elpais.com/robots.txt');
   });
 });

@@ -396,19 +396,23 @@ function bloqueAtrasos(atrasos: NonNullable<EntradaResumen['atrasos']>): string[
  * no se escribe y los bloqueos registrados cuyo robots.txt ya no excluye a los
  * agentes de Claude, que nunca se quitan solos.
  */
+/** Text from outside (a robots.txt rule, a host) shown literally mid-line in Markdown: control characters out; emphasis, code, link brackets, tables, strike-through and HTML escaped. */
+export const literalMd = (texto: string) => texto.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/[\\`*_[\]<>|~]/g, (c) => `\\${c}`);
+
 export function bloqueFuentesQueBloquean(b: InformeBloqueos): string[] {
   const lineas = ['## Fuentes que bloquean', ''];
   const lista = (titulo: string, elementos: string[]) => {
     if (elementos.length) lineas.push(`### ${titulo}`, '', ...elementos, '');
   };
-  lista('Emisores nuevos en fuentes.json (revisar: nombre provisional = host, tipo medio)', b.nuevos.map((n) => `- ${n.id} (${n.host}): ${n.evidencia}`));
-  lista('Bloqueo añadido o cambiado en fuentes.json (recogida omitir)', b.actualizados.map((a) => `- ${a.id} (${a.host}): ${a.evidencia}${a.antes ? `; antes, ${a.antes}` : ''}`));
+  const m = literalMd;
+  lista('Emisores nuevos en fuentes.json (revisar: nombre provisional = host, tipo medio)', b.nuevos.map((n) => `- ${m(n.id)} (${m(n.host)}): ${m(n.evidencia)}`));
+  lista('Bloqueo añadido o cambiado en fuentes.json (recogida omitir)', b.actualizados.map((a) => `- ${m(a.id)} (${m(a.host)}): ${m(a.evidencia)}${a.antes ? `; antes, ${m(a.antes)}` : ''}`));
   const linea = (s: InformeBloqueos['sin_registrar'][number]) =>
-    `- ${s.id ? `${s.id} (${s.host})` : s.host}: ${s.evidencia}${s.primera === undefined ? '' : s.primera ? '; primera vez' : '; ya se había visto antes'}`;
+    `- ${s.id ? `${m(s.id)} (${m(s.host)})` : m(s.host)}: ${m(s.evidencia)}${s.primera === undefined ? '' : s.primera ? '; primera vez' : '; ya se había visto antes'}`;
   lista('Bloqueos antibots, para revisar (no se escriben solos en fuentes.json)', b.sin_registrar.filter((s) => s.tipo === 'antibots').map(linea));
   lista('robots.txt encontrado hoy, no escrito en fuentes.json', b.sin_registrar.filter((s) => s.tipo !== 'antibots').map((s) => `${linea(s)} (${s.motivo})`));
-  lista('Ya no bloquean (revisar a mano: el bloqueo no se quita solo)', b.ya_no_bloquean.map((y) => `- ${y.id}: ${y.robots}`));
-  lista('Bloqueos registrados sin comprobar hoy (robots.txt no leído)', b.sin_comprobar.map((y) => `- ${y.id}: ${y.robots}`));
+  lista('Ya no bloquean (revisar a mano: el bloqueo no se quita solo)', b.ya_no_bloquean.map((y) => `- ${m(y.id)}: ${m(y.robots)}`));
+  lista('Bloqueos registrados sin comprobar hoy (robots.txt no leído)', b.sin_comprobar.map((y) => `- ${m(y.id)}: ${m(y.robots)}`));
   if (lineas.length === 2) lineas.push('_Ningún bloqueo nuevo ni cambiado._', '');
   return lineas;
 }

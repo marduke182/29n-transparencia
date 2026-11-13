@@ -1,0 +1,54 @@
+{
+  "emisor": "medio-b",
+  "consultas": [
+    {
+      "partido": "frente-amplio",
+      "texto": "site:medio-b.example (\"Persona Uno\" OR \"Frente Amplio\")",
+      "estado": "ok",
+      "resultados": 0,
+      "saturada": false,
+      "subconsultas": [],
+      "nota": ""
+    },
+    {
+      "partido": "pp",
+      "texto": "site:medio-b.example (\"Persona Dos\" OR \"Partido Popular\" OR \"PP\")",
+      "estado": "ok",
+      "resultados": 0,
+      "saturada": false,
+      "subconsultas": [],
+      "nota": ""
+    },
+    {
+      "partido": "psoe",
+      "texto": "site:medio-b.example (\"Persona Tres\" OR \"PSOE\")",
+      "estado": "ok",
+      "resultados": 0,
+      "saturada": false,
+      "subconsultas": [],
+      "nota": ""
+    },
+    {
+      "partido": "vox",
+      "texto": "site:medio-b.example (\"Persona Cuatro\" OR \"Vox\")",
+      "estado": "ok",
+      "resultados": 12,
+      "saturada": true,
+      "subconsultas": [
+        {
+          "texto": "site:medio-b.example (\"Persona Cuatro\")",
+          "estado": "ok",
+          "resultados": 10
+        },
+        {
+          "texto": "site:medio-b.example (\"Vox\")",
+          "estado": "ok",
+          "resultados": 2
+        }
+      ],
+      "nota": ""
+    }
+  ],
+  "candidatos": [],
+  "nota": "Atrasos: nada publicado en la ventana."
+}

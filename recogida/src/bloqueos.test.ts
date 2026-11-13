@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SIN_AGENTES_CLAUDE_FIJOS, cambiosFuentesNoAdmitidos, hostsSinClaude, registrarBloqueos, reglasWebFetch, revisarBloqueos } from './bloqueos.ts';
+import { SIN_AGENTES_CLAUDE_FIJOS, cambiosFuentesNoAdmitidos, emisorDeHost, hostsSinClaude, registrarBloqueos, reglasWebFetch, revisarBloqueos } from './bloqueos.ts';
 import type { Emisor } from './descubrir.ts';
 import type { VetoGuia } from './traer.ts';
 
@@ -79,6 +79,36 @@ describe('registrarBloqueos', () => {
       expect.objectContaining({ host: 'busca.es', id: 'busca', tipo: 'antibots', primera: false, motivo: expect.stringMatching(/^para revisar/) }),
       expect.objectContaining({ host: 'dd.es', tipo: 'antibots', primera: true }),
     ]);
+  });
+
+  it('never writes a party website: reported for review, the same rule for the four', () => {
+    const web: Emisor = { id: 'web-pp', nombre: 'Web del PP', hosts: ['pp.es'], tipo: 'partido', partido: 'pp', acceso: { estado: 'abierto', comprobado: FECHA, detalle: 'ok' } };
+    const { cambiado, informe } = registrarBloqueos({ emisores: [...emisores, web] }, [robots('pp.es')], FECHA);
+    expect(cambiado).toBe(false);
+    expect(informe.sin_registrar).toEqual([expect.objectContaining({ host: 'pp.es', id: 'web-pp', tipo: 'robots', motivo: expect.stringMatching(/^para revisar: la web de un partido/) })]);
+    // And the allowlist refuses any bloqueo or recogida change on it.
+    const antes = { emisores: [web] };
+    const tocado = { emisores: [{ ...web, recogida: { metodo: 'omitir', nota: 'x' }, bloqueo: { tipo: 'robots', evidencia: 'e', consultado: FECHA, robots: 'https://pp.es/robots.txt', agentes: ['Claude-User'] } }] };
+    expect(cambiosFuentesNoAdmitidos(antes, tocado)).toEqual(['fuentes.web-pp: la web de un partido no cambia sola (bloqueo y recogida, a mano)']);
+  });
+
+  it('reports a robots veto without agents for review, with its own reason', () => {
+    const { cambiado, informe } = registrarBloqueos(registro, [robots('nuevo.es', { agentes: [] })], FECHA);
+    expect(cambiado).toBe(false);
+    expect(informe.sin_registrar).toEqual([expect.objectContaining({ host: 'nuevo.es', tipo: 'robots', motivo: 'para revisar: robots.txt sin agentes ni regla que citar; no se escribe solo' })]);
+  });
+
+  it('matches a host to its own emisor before a parent domain\'s, in either registry order', () => {
+    const padre: Emisor = { id: 'el-espanol', nombre: 'El Español', hosts: ['elespanol.com'], tipo: 'medio' };
+    const hijo: Emisor = { id: 'diario-de-avisos', nombre: 'Diario de Avisos', hosts: ['diariodeavisos.elespanol.com'], tipo: 'medio' };
+    for (const orden of [[padre, hijo], [hijo, padre]]) {
+      expect(emisorDeHost(orden, 'diariodeavisos.elespanol.com')?.id).toBe('diario-de-avisos');
+      expect(emisorDeHost(orden, 'elespanol.com')?.id).toBe('el-espanol');
+      expect(emisorDeHost(orden, 'otro.elespanol.com')?.id).toBe('el-espanol');
+      const veto = robots('diariodeavisos.elespanol.com', { robots: 'https://diariodeavisos.elespanol.com/robots.txt' });
+      const { informe } = registrarBloqueos({ emisores: orden }, [veto], FECHA);
+      expect(informe.actualizados.map((a) => a.id)).toEqual(['diario-de-avisos']);
+    }
   });
 
   it('gives a new emisor an id not yet used', () => {

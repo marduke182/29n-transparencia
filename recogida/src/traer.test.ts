@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Traedor, USER_AGENT, bloqueosDelDia, decodificarCuerpo, crearFetchSeguro, direccionInterna, firmaAntibots, gruposIPv6, guardarVetos, leerRobots, lookupPublico, motivoBloqueo, motivoHostNoPublico, permitido, vetoClaude } from './traer.ts';
+import { Traedor, USER_AGENT, bloqueosDelDia, decodificarCuerpo, crearFetchSeguro, direccionInterna, firmaAntibots, gruposIPv6, guardarVetos, leerRobots, limpiarEvidencia, MAX_EVIDENCIA, lookupPublico, motivoBloqueo, motivoHostNoPublico, permitido, vetoClaude } from './traer.ts';
 
 type Ruta = { status: number; body?: string; headers?: Record<string, string> };
 
@@ -42,6 +42,19 @@ describe('robots.txt', () => {
   it('prefers a group naming our token', () => {
     const propio = leerRobots('User-agent: *\nAllow: /\n\nUser-agent: 29n-transparencia-recogida\nDisallow: /');
     expect(permitido(propio, '/a')).toBe(false);
+  });
+  it('matches the token exactly, case-insensitively (RFC 9309): a prefix group does not apply', () => {
+    expect(permitido(leerRobots('User-agent: *\nAllow: /\n\nUser-agent: 29n-transparencia\nDisallow: /'), '/a')).toBe(true);
+    expect(permitido(leerRobots('User-agent: *\nAllow: /\n\nUser-agent: 29N-Transparencia-Recogida\nDisallow: /'), '/a')).toBe(false);
+  });
+  it('merges every group naming the token, and falls back to * only when none does', () => {
+    const doble = leerRobots('User-agent: 29n-transparencia-recogida\nDisallow: /a/\n\nUser-agent: *\nDisallow: /\n\nUser-agent: 29n-transparencia-recogida\nDisallow: /b/\n');
+    expect([permitido(doble, '/a/x'), permitido(doble, '/b/x'), permitido(doble, '/c')]).toEqual([false, false, true]);
+  });
+  it('skips empty User-agent values: their rules apply to nobody, and do not join the group before', () => {
+    const vacio = leerRobots('User-agent: *\nAllow: /\n\nUser-agent:\nDisallow: /\n');
+    expect(permitido(vacio, '/a')).toBe(true);
+    expect(permitido(leerRobots('User-agent: *\nDisallow: /x/\nUser-agent:\nDisallow: /\n'), '/a')).toBe(true);
   });
 });
 
@@ -251,6 +264,9 @@ describe('vetoClaude', () => {
     expect(vetoClaude('User-agent: *\nDisallow: /\n')).toEqual({ agentes: ['*'], evidencia: 'User-agent: * · Disallow: /', permitido: [] });
     // Path rules for `*`, or a Claude group that allows the root, are not a site block.
     expect(vetoClaude(ROBOTS_ABIERTO)).toBeUndefined();
+    // `Disallow: /$` closes only the home page.
+    expect(vetoClaude('User-agent: Claude-User\nDisallow: /$\n')).toBeUndefined();
+    expect(vetoClaude('User-agent: *\nDisallow: /$\n')).toBeUndefined();
     expect(vetoClaude('User-agent: *\nDisallow: /\n\nUser-agent: Claude-User\nUser-agent: Claude-SearchBot\nAllow: /\n')).toBeUndefined();
     expect(vetoClaude('')).toBeUndefined();
   });
@@ -350,5 +366,34 @@ describe('Traedor: sources that block the guide', () => {
     expect(guardado['a.es'].primera).toBe(false);
     expect(guardado['b.es']).toMatchObject({ primera: true, evidencia: 'HTTP 403: DataDome (página de reto)' });
     await rm(carpeta, { recursive: true, force: true });
+  });
+});
+
+describe('vetoClaude: RFC 9309 group matching', () => {
+  it('a Claude group does not apply to Claude-User, in either order', () => {
+    expect(vetoClaude('User-agent: Claude\nDisallow: /\n\nUser-agent: Claude-User\nAllow: /\n')).toBeUndefined();
+    expect(vetoClaude('User-agent: Claude-User\nAllow: /\n\nUser-agent: Claude\nDisallow: /\n')).toBeUndefined();
+    // With only a Claude group, Claude-User and Claude-SearchBot fall back to `*`.
+    expect(vetoClaude('User-agent: Claude\nDisallow: /\n\nUser-agent: *\nAllow: /\n')).toBeUndefined();
+  });
+  it('merges duplicate Claude-User groups', () => {
+    expect(vetoClaude('User-agent: Claude-User\nDisallow: /privado/\n\nUser-agent: *\nAllow: /\n\nUser-agent: claude-user\nDisallow: /\n')).toEqual({
+      agentes: ['Claude-User', 'claude-user'],
+      evidencia: 'User-agent: Claude-User, claude-user · Disallow: /',
+      permitido: [],
+    });
+  });
+  it('skips empty User-agent values: no group of agents, no veto', () => {
+    expect(vetoClaude('User-agent:\nDisallow: /\n')).toBeUndefined();
+    expect(vetoClaude('User-agent:\nUser-agent: Claude-SearchBot\nDisallow: /\n')?.agentes).toEqual(['Claude-SearchBot']);
+  });
+  it('keeps the evidence plain and short: no control characters, no HTML or code marks, at most MAX_EVIDENCIA characters', () => {
+    const veto = vetoClaude(`User-agent: Claude-User<script>\u0007\nUser-agent: Claude-User\nDisallow: /\nAllow: /\`x\`<b>${'a'.repeat(400)}\n`)!;
+    expect(veto.evidencia).toBe('User-agent: Claude-User script , Claude-User · Disallow: /');
+    expect(veto.agentes).toEqual(['Claude-User script', 'Claude-User']);
+    expect(veto.permitido[0]).toMatch(/^\/ x b a+…$/);
+    expect(veto.permitido[0]!.length).toBe(100);
+    expect(limpiarEvidencia(`a\u0000b<c>\`d\`\n${'x'.repeat(500)}`)).toHaveLength(MAX_EVIDENCIA);
+    expect(limpiarEvidencia('a\u0000b<c>`d`')).toBe('a b c d');
   });
 });

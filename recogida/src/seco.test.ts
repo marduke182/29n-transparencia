@@ -87,3 +87,32 @@ describe('diario.sh --seco', () => {
     expect(motivos).toContain('texto: cita «Ganaremos en toda Castilla-La Mancha» no aparece en https://medio-b.example/politica/2026/11/09/persona-cuatro-mitin');
   });
 });
+
+describe('diario.sh --seco with atrasos', () => {
+  let carpeta: string;
+  let r: { status: number | null; salida: string };
+  const ej = () => join(carpeta, 'cache', 'ejecuciones', FECHA);
+  beforeAll(() => {
+    carpeta = mkdtempSync(join(tmpdir(), 'n29-seco-atrasos-'));
+    rmSync(carpeta, { recursive: true });
+    const args = [SCRIPT, '--fecha', FECHA, '--seco', '--salida', carpeta, '--atrasos-desde', '2026-10-05', '--atrasos-hasta', '2026-11-07', '--atrasos-emisores', 'medio-b'];
+    const p = spawnSync('bash', args, { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: tmpdir() } });
+    r = { status: p.status, salida: `${p.stdout}${p.stderr}` };
+  }, 120_000);
+  afterAll(() => rmSync(carpeta, { recursive: true, force: true }));
+
+  it('adds the atrasos task, checks its answer like any other, and says so in the stage table and the summary', () => {
+    expect(r.status, r.salida).toBe(0);
+    const descubierto = JSON.parse(readFileSync(join(ej(), 'descubrir.json'), 'utf8')) as Objeto;
+    expect(descubierto.atrasos).toEqual({ desde: '2026-10-05', hasta: '2026-11-07', emisores: ['medio-b'] });
+    const tareas = (descubierto.tareas_busqueda as Objeto[]).filter((t) => t.emisor === 'medio-b');
+    expect(tareas.map((t) => [t.salida ?? null, t.desde, t.hasta])).toEqual([
+      [null, '2026-11-08', FECHA],
+      ['busqueda/medio-b.atrasos.json', '2026-10-05', '2026-11-07'],
+    ]);
+    expect(tareas[1]!.busquedas.map((b: Objeto) => b.partido)).toEqual([...PARTY_IDS]);
+    expect(readFileSync(join(ej(), 'etapas.tsv'), 'utf8')).toMatch(/^atrasos\tok\t2026-10-05 a 2026-11-07: medio-b$/m);
+    expect(readFileSync(join(ej(), 'etapas.tsv'), 'utf8')).toMatch(/^busqueda-completa\tok\t$/m);
+    expect(readFileSync(join(ej(), 'resumen.md'), 'utf8')).toContain('## Atrasos\n\nAdemás de la ventana del día, se buscó del 2026-10-05 al 2026-11-07 en esta fuente');
+  });
+});

@@ -22,7 +22,7 @@ import { leerBuzon, leerListaEnlaces } from '../src/buzon.ts';
 import { accesoDesdeRegistro, descubrir, leerCandidatos, leerRegistro, type Atrasos, type Descubrimiento } from '../src/descubrir.ts';
 import { lectorCache } from '../src/citas.ts';
 import { fusionar } from '../src/fusionar.ts';
-import { Traedor, bloqueosDelDia, escribirBloqueados, guardarDesdeFeed, guardarVetos, leerBloqueados, traerEnlaces, traerYGuardar } from '../src/traer.ts';
+import { Traedor, bloqueosDelDia, escribirBloqueados, guardarDesdeFeed, guardarVetos, hostsVetadosRobots, leerBloqueados, leerVetos, traerEnlaces, traerYGuardar } from '../src/traer.ts';
 import { detectarBinarios, faltan, transcribir } from '../src/transcripciones.ts';
 
 const AYUDA = `Uso: 29n-recogida <descubrir|traer|buzon|enlaces|transcribir|binarios|fusionar> --fecha AAAA-MM-DD [opciones]`;
@@ -56,11 +56,15 @@ async function traedorDelDia(cache: string, dia: string) {
   const ruta = join(cache, 'bloqueados.json');
   const todos = await leerBloqueados(ruta);
   const { emisores } = await leerRegistro(rutaDeEntorno('N29_SITIO'));
-  const traedor = new Traedor({ fecha: dia, bloqueados: bloqueosDelDia(todos, dia), ...accesoDesdeRegistro(emisores) });
+  const acceso = accesoDesdeRegistro(emisores);
+  const rutaVetos = join(carpetaEjecucion(cache, dia), 'bloqueos-guia.json');
+  // Hosts whose robots.txt excluded Claude's agents in an earlier stage of the day are not fetched again.
+  const noTraer = [...new Set([...acceso.noTraer, ...hostsVetadosRobots(await leerVetos(rutaVetos))])].sort();
+  const traedor = new Traedor({ fecha: dia, bloqueados: bloqueosDelDia(todos, dia), ...acceso, noTraer });
   // The blocks the guide lists (robots.txt against Claude's agents, anti-bot answers) go to the run's bloqueos-guia.json.
   const guardar = async () => {
     await escribirBloqueados(ruta, { ...todos, ...traedor.bloqueados });
-    await guardarVetos(join(carpetaEjecucion(cache, dia), 'bloqueos-guia.json'), traedor.vetos, todos);
+    await guardarVetos(rutaVetos, traedor.vetos, todos);
   };
   return { traedor, guardar };
 }

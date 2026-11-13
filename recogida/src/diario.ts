@@ -29,8 +29,8 @@ import { clavesDe, VEDA_ENCUESTAS } from './fusionar.ts';
 import { motivoContexto, motivoPregunta, type Pregunta } from './preguntas.ts';
 import { PARTY_SHORT } from './resumen.ts';
 import { esVideo } from './transcripciones.ts';
-import { Traedor, bloqueosDelDia, escribirBloqueados, guardarVetos, hostDe, hostEn, leerBloqueados, type ResultadoEnlace, type VetoGuia } from './traer.ts';
-import { SIN_AGENTES_CLAUDE_FIJOS, cambiosFuentesNoAdmitidos, hostsSinClaude, registrarBloqueos, reglasWebFetch, revisarBloqueos } from './bloqueos.ts';
+import { Traedor, bloqueosDelDia, escribirBloqueados, guardarVetos, hostDe, hostEn, hostsVetadosRobots, leerBloqueados, leerVetos, type ResultadoEnlace, type VetoGuia } from './traer.ts';
+import { SIN_AGENTES_CLAUDE_FIJOS, canonico, cambiosFuentesNoAdmitidos, hostsSinClaude, registrarBloqueos, reglasWebFetch, revisarBloqueos } from './bloqueos.ts';
 import { ORIGEN_ENLACES, type AvisoEnlace } from './buzon.ts';
 
 type Objeto = Record<string, unknown>;
@@ -242,7 +242,13 @@ export async function sondear(tareas: TareaEquidad[], traedor: Traedor): Promise
     else if (r.estado === 'bloqueado') sondeo.push({ url, estado: 'bloqueado', estado_http: r.bloqueo.estado_http, motivo: r.bloqueo.motivo });
     else sondeo.push({ url, estado: r.estado, motivo: r.motivo });
   }
-  return { tareas: marcarBloqueadas(tareas, traedor.bloqueados), sondeo };
+  // A host that blocks the guide (bloqueo in fuentes.json, the fixed list, a robots.txt veto of the day) is blocked for all four too.
+  const vetados: Record<string, { fecha: string; estado_http: number | null; motivo: string }> = {};
+  for (const host of new Set(tareas.flatMap((t) => t.consultas.flatMap(hostsDeConsulta)))) {
+    const motivo = traedor.vetado(host);
+    if (motivo && !traedor.bloqueados[host]) vetados[host] = { fecha: traedor.fecha, estado_http: null, motivo };
+  }
+  return { tareas: marcarBloqueadas(tareas, { ...traedor.bloqueados, ...vetados }), sondeo };
 }
 
 const colapsar = (texto: unknown) => (typeof texto === 'string' ? texto.replace(/\s+/g, ' ').trim() : undefined);
@@ -434,6 +440,23 @@ export function revisarBusqueda(entrada: {
     definitiva(`claude/busqueda-reintento.salida.json: las respuestas reintentadas declaran ${declaradas.reintento} búsquedas web hechas, pero Claude Code registró ${reales}`);
   }
   return revision;
+}
+
+/** The answer paths a retry session redoes: each source task's own file (busqueda/<emisor>.json or its atrasos file), then each equal search's. */
+export const rutasReintento = (reintento: RevisionBusqueda['reintentables']): string[] => [...reintento.fuentes.map(salidaTarea), ...reintento.iguales.map((t) => t.salida)];
+
+/** reintento-rutas.txt: the only files the retry session may create, each answer and its .error.txt. */
+export const textoRutasReintento = (rutas: readonly string[]): string => rutas.flatMap((r) => [`./${r}\n`, `./${r}.error.txt\n`]).join('');
+
+/**
+ * fuentes.json must be exactly what fuentes-bloqueo writes: registrarBloqueos
+ * on the copy taken before the run, with the day's vetos (key order aside).
+ * Empty when it is, or when nothing changed.
+ */
+export function fuentesEsperadas(antes: unknown, despues: unknown, vetos: readonly VetoGuia[], fecha: string): string[] {
+  if (!esObjeto(antes) || !Array.isArray(antes.emisores)) return [];
+  const esperado = registrarBloqueos(antes as { emisores: Emisor[] }, vetos, fecha).registro;
+  return canonico(esperado) === canonico(despues) || canonico(antes) === canonico(despues) ? [] : ['fuentes.json: no es lo que fuentes-bloqueo escribe con la copia de antes/ y bloqueos-guia.json'];
 }
 
 export const faltasBusqueda = (entrada: Parameters<typeof revisarBusqueda>[0]): string[] => revisarBusqueda(entrada).faltas;
@@ -1497,7 +1520,9 @@ async function main(args: string[]): Promise<number> {
       const ruta = join(cache, 'bloqueados.json');
       const todos = await leerBloqueados(ruta);
       const { emisores } = await leerRegistro(rutaDeEntorno('N29_SITIO'));
-      const traedor = new Traedor({ fecha, bloqueados: bloqueosDelDia(todos, fecha), ...accesoDesdeRegistro(emisores) });
+      const acceso = accesoDesdeRegistro(emisores);
+      const noTraer = [...new Set([...acceso.noTraer, ...hostsVetadosRobots(await leerVetos(join(ejecucion, 'bloqueos-guia.json')))])].sort();
+      const traedor = new Traedor({ fecha, bloqueados: bloqueosDelDia(todos, fecha), ...acceso, noTraer });
       const { tareas, sondeo } = await sondear((leerJson(join(ejecucion, 'equidad-tareas.json')) ?? []) as TareaEquidad[], traedor);
       await escribirBloqueados(ruta, { ...todos, ...traedor.bloqueados });
       await guardarVetos(join(ejecucion, 'bloqueos-guia.json'), traedor.vetos, todos);
@@ -1715,7 +1740,7 @@ async function main(args: string[]): Promise<number> {
         // The same task definitions, verbatim, for just these tasks; the old answers are kept aside for the audit.
         escribirJson(join(ejecucion, 'reintento-fuentes.json'), { tareas_busqueda: reintento.fuentes });
         escribirJson(join(ejecucion, 'reintento-equidad.json'), reintento.iguales);
-        const reintentadas = [...reintento.fuentes.map(salidaTarea), ...reintento.iguales.map((t) => t.salida)];
+        const reintentadas = rutasReintento(reintento);
         for (const relativa of reintentadas) {
           for (const archivo of [relativa, `${relativa}.error.txt`]) {
             if (!existsSync(join(ejecucion, archivo))) continue;
@@ -1726,7 +1751,7 @@ async function main(args: string[]): Promise<number> {
         // What was missing, and what is redone: an equal search with its four parties.
         writeFileSync(join(ejecucion, 'busqueda-reintentadas.txt'), [...faltas.map((falta) => `- ${falta}\n`), `- se rehacen: ${reintentadas.join(', ')}\n`].join(''));
         // The only files the retry session may create: diario.sh seals everything else in the run folder.
-        writeFileSync(join(ejecucion, 'reintento-rutas.txt'), reintentadas.flatMap((r) => [`./${r}\n`, `./${r}.error.txt\n`]).join(''));
+        writeFileSync(join(ejecucion, 'reintento-rutas.txt'), textoRutasReintento(reintentadas));
         process.stdout.write(`${faltas.length} faltas: se reintentan ${reintentadas.length} tareas en una sesión más (busqueda-reintentadas.txt)\n`);
         return 3;
       }
@@ -1751,8 +1776,11 @@ async function main(args: string[]): Promise<number> {
       return 0;
     }
     case 'alcance-fuentes': {
-      // The allowlist of fuentes.json: only the changes fuentes-bloqueo makes.
-      const problemas = cambiosFuentesNoAdmitidos(leerJsonSiExiste(join(ejecucion, 'antes', 'fuentes.json')), leerJsonSiExiste(join(datos, 'fuentes.json')));
+      // The allowlist of fuentes.json: only the changes fuentes-bloqueo makes, recomputed from the copy before the run and the day's vetos.
+      const antes = leerJsonSiExiste(join(ejecucion, 'antes', 'fuentes.json'));
+      const despues = leerJsonSiExiste(join(datos, 'fuentes.json'));
+      const vetos = Object.values((leerJsonSiExiste(join(ejecucion, 'bloqueos-guia.json')) ?? {}) as Record<string, VetoGuia>);
+      const problemas = [...cambiosFuentesNoAdmitidos(antes, despues), ...fuentesEsperadas(antes, despues, vetos, fecha)];
       for (const problema of problemas) process.stdout.write(`${problema}\n`);
       return problemas.length ? 1 : 0;
     }

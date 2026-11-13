@@ -282,8 +282,11 @@ function gruposRobots(texto: string): GrupoRobots[] {
         actual = { agentes: [], escritos: [], reglas: [] };
         grupos.push(actual);
       }
-      actual.agentes.push(valor.toLowerCase());
-      actual.escritos.push(valor);
+      // An empty value names no agent: the group still holds its rules, which then apply to nobody.
+      if (valor) {
+        actual.agentes.push(valor.toLowerCase());
+        actual.escritos.push(valor);
+      }
       leyendoAgentes = true;
       continue;
     }
@@ -299,10 +302,23 @@ function gruposRobots(texto: string): GrupoRobots[] {
   return grupos;
 }
 
-/** The group that applies to a product token: the first naming it (prefix, case-insensitive), or else `*`. */
-function grupoPara(grupos: GrupoRobots[], token: string): GrupoRobots | undefined {
-  const propio = grupos.find((grupo) => grupo.agentes.some((agente) => agente !== '*' && token.toLowerCase().startsWith(agente)));
-  return propio ?? grupos.find((g) => g.agentes.includes('*'));
+/**
+ * The rules that apply to a product token (RFC 9309, 2.2.1): every group whose
+ * user-agent equals the token, case-insensitively, merged in file order; only
+ * when none names it, every `*` group, merged. `comodin` tells which.
+ */
+function grupoPara(grupos: GrupoRobots[], token: string): (GrupoRobots & { comodin: boolean }) | undefined {
+  const fundir = (lista: GrupoRobots[], comodin: boolean) =>
+    lista.length
+      ? {
+          agentes: lista.flatMap((g) => g.agentes),
+          escritos: lista.flatMap((g) => g.escritos),
+          reglas: lista.flatMap((g) => g.reglas),
+          espera: lista.map((g) => g.espera).find((e) => e !== undefined),
+          comodin,
+        }
+      : undefined;
+  return fundir(grupos.filter((g) => g.agentes.includes(token.toLowerCase())), false) ?? fundir(grupos.filter((g) => g.agentes.includes('*')), true);
 }
 
 /** Parses robots.txt and keeps the group for our token, or else `*`. */
@@ -329,17 +345,33 @@ export const AGENTES_CLAUDE = ['Claude-User', 'Claude-SearchBot'] as const;
  */
 export function vetoClaude(texto: string): { agentes: string[]; evidencia: string; permitido: string[] } | undefined {
   const grupos = gruposRobots(texto);
-  const decisivos: GrupoRobots[] = [];
+  const decisivos: { grupo: GrupoRobots & { comodin: boolean }; regla: Regla }[] = [];
   for (const token of AGENTES_CLAUDE) {
     const grupo = grupoPara(grupos, token);
-    if (grupo && !permitido({ reglas: grupo.reglas, esperaMs: 0 }, '/') && !decisivos.includes(grupo)) decisivos.push(grupo);
+    const regla = grupo && reglaDecisiva(grupo.reglas, '/');
+    // A rule anchored with `$` (`Disallow: /$`) closes only the home page, not the site.
+    if (grupo && regla && !regla.permitir && !regla.patron.endsWith('$')) decisivos.push({ grupo, regla });
   }
   if (!decisivos.length) return undefined;
-  const anthropic = (g: GrupoRobots) => (g.agentes.includes('*') ? ['*'] : g.escritos.filter((a) => /claude|anthropic/i.test(a)));
-  const agentes = [...new Set(decisivos.flatMap(anthropic))];
-  const regla = decisivos[0]!.reglas.filter((r) => !r.permitir && coincide(r.patron, '/')).sort((a, b) => b.patron.length - a.patron.length)[0];
-  const permitidas = [...new Set(decisivos.flatMap((g) => g.reglas.filter((r) => r.permitir && r.patron.startsWith('/') && r.patron !== '/').map((r) => r.patron)))];
-  return { agentes, evidencia: `User-agent: ${anthropic(decisivos[0]!).join(', ')} · Disallow: ${regla?.patron ?? '/'}`, permitido: permitidas };
+  const anthropic = (g: GrupoRobots & { comodin: boolean }) => (g.comodin ? ['*'] : g.escritos.filter((a) => /claude|anthropic/i.test(a)));
+  const agentes = [...new Set(decisivos.flatMap((d) => anthropic(d.grupo)))].map((a) => limpiarEvidencia(a, 100)).filter(Boolean);
+  const permitidas = [...new Set(decisivos.flatMap((d) => d.grupo.reglas.filter((r) => r.permitir && r.patron.startsWith('/') && r.patron !== '/').map((r) => limpiarEvidencia(r.patron, 100))))].filter(Boolean);
+  const primero = decisivos[0]!;
+  return { agentes, evidencia: limpiarEvidencia(`User-agent: ${anthropic(primero.grupo).join(', ')} · Disallow: ${primero.regla.patron}`), permitido: permitidas };
+}
+
+/** Longest evidence text kept. */
+export const MAX_EVIDENCIA = 300;
+
+/**
+ * Evidence text from a page or a robots.txt, safe to store and to show: no
+ * control characters, no `<`, `>` or backticks (HTML and code spans), one
+ * space between words, at most `maximo` characters (ending in «…»). Markdown
+ * is escaped where it is shown (resumen.ts).
+ */
+export function limpiarEvidencia(texto: string, maximo = MAX_EVIDENCIA): string {
+  const limpio = texto.replace(/[\u0000-\u001f\u007f-\u009f<>`]/g, ' ').replace(/\s+/g, ' ').trim();
+  return limpio.length > maximo ? `${limpio.slice(0, maximo - 1).trimEnd()}…` : limpio;
 }
 
 /** A block the guide lists on /fuentes/: robots.txt against Claude's agents, or an anti-bot answer. */
@@ -376,12 +408,17 @@ function coincide(patron: string, ruta: string): boolean {
 
 /** Whether robots allows a path+query: the longest matching rule wins, Allow on ties. */
 export function permitido(robots: Robots, rutaYConsulta: string): boolean {
+  return reglaDecisiva(robots.reglas, rutaYConsulta)?.permitir ?? true;
+}
+
+/** The rule that decides a path: the longest matching one, Allow on ties; undefined when none matches. */
+function reglaDecisiva(reglas: Regla[], rutaYConsulta: string): Regla | undefined {
   let mejor: Regla | undefined;
-  for (const regla of robots.reglas) {
+  for (const regla of reglas) {
     if (!coincide(regla.patron, rutaYConsulta)) continue;
     if (!mejor || regla.patron.length > mejor.patron.length || (regla.patron.length === mejor.patron.length && regla.permitir)) mejor = regla;
   }
-  return mejor?.permitir ?? true;
+  return mejor;
 }
 
 /** Markers of anti-bot challenge pages (Cloudflare, Incapsula, Akamai, DataDome, captchas). */
@@ -508,7 +545,7 @@ export class Traedor {
     const host = hostDe(url);
     const red = await this.motivoRed(parsed.hostname);
     if (red) return { estado: 'error', url, motivo: red };
-    if (hostEn(host, this.noTraer)) return { estado: 'solo-buzon', url, motivo: `${host} bloquea a la guía (bloqueo en fuentes.json): no se trae (solo el buzón)` };
+    if (hostEn(host, this.noTraer)) return { estado: 'solo-buzon', url, motivo: `${host} bloquea a la guía (bloqueo en fuentes.json o robots.txt contra los agentes de Claude): no se trae (solo el buzón)` };
     if (hostEn(host, this.soloBuzon)) return { estado: 'solo-buzon', url, motivo: `${host} bloquea a clientes automatizados: solo por el buzón` };
     const listados = Object.entries(this.soloListado).find(([otro]) => hostEn(host, [otro]))?.[1];
     if (listados && !listados.some((permitida) => urlCanonica(permitida) === urlCanonica(url))) {
@@ -542,7 +579,7 @@ export class Traedor {
   private bloquear(host: string, url: string, estado: number | null, motivo: string, firma?: string): Respuesta {
     const bloqueo: Bloqueo = { fecha: this.fecha, estado_http: estado, motivo, url };
     this.bloqueados[host] = bloqueo;
-    if (firma && estado !== null) this.vetos[host] ??= { tipo: 'antibots', host, consultado: this.fecha, url, evidencia: `HTTP ${estado}: ${firma}`, estado_http: estado };
+    if (firma && estado !== null) this.vetos[host] ??= { tipo: 'antibots', host, consultado: this.fecha, url, evidencia: limpiarEvidencia(`HTTP ${estado}: ${firma}`), estado_http: estado };
     return { estado: 'bloqueado', url, bloqueo };
   }
 
@@ -582,6 +619,14 @@ export class Traedor {
     }
     this.robots.set(host, resultado);
     return resultado;
+  }
+
+  /** Why a host blocks the guide (noTraer, or a robots.txt veto found by this fetcher), or undefined. */
+  vetado(host: string): string | undefined {
+    const limpio = host.toLowerCase().replace(/^www\./, '');
+    if (hostEn(limpio, this.noTraer)) return `${limpio} bloquea a la guía (bloqueo en fuentes.json o robots.txt contra los agentes de Claude)`;
+    const veto = Object.values(this.vetos).find((v) => v.tipo === 'robots' && hostEn(limpio, [v.host]));
+    return veto ? `robots.txt de ${veto.host} no admite agentes de Claude (${veto.evidencia})` : undefined;
   }
 
   /**
@@ -706,6 +751,22 @@ export async function guardarVetos(ruta: string, vetos: Record<string, VetoGuia>
   await mkdir(dirname(ruta), { recursive: true });
   await writeFile(ruta, `${JSON.stringify(ordenado, null, 2)}\n`);
 }
+
+/** The run's bloqueos-guia.json (host → VetoGuia), or {} when there is none yet. */
+export async function leerVetos(ruta: string): Promise<Record<string, VetoGuia>> {
+  try {
+    return JSON.parse(await readFile(ruta, 'utf8')) as Record<string, VetoGuia>;
+  } catch {
+    return {};
+  }
+}
+
+/** Hosts of the day's robots.txt vetos: later stages never fetch them (noTraer), without reading their robots.txt again. */
+export const hostsVetadosRobots = (vetos: Record<string, VetoGuia>) =>
+  Object.values(vetos)
+    .filter((v) => v.tipo === 'robots')
+    .map((v) => v.host)
+    .sort();
 
 /** Blocks recorded on the run date only: an older block is retried once on a new day, with the same User-Agent. */
 export const bloqueosDelDia = (bloqueados: Record<string, Bloqueo>, fecha: string) =>
