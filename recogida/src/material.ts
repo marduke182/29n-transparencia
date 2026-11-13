@@ -257,6 +257,8 @@ export const tareasVisibles = (tareas: readonly TareaClasificar[]) => tareas.map
 /** One prompt and what it carries: recorded in claude/<session>.lotes.json. */
 export interface LotePrompt {
   documentos: string[];
+  /** The documents of the batch that carry a classification for the party (adjudication): each needs a decision. */
+  clasificados?: string[];
   resultados?: string[];
   grupos?: string[];
   secciones?: string[];
@@ -276,6 +278,8 @@ export interface Pieza {
   secciones: string[];
   /** The equal-search result URLs it carries (adjudication). */
   resultados: string[];
+  /** Whether it carries a classification for the party (adjudication). */
+  clasificado?: boolean;
 }
 
 /**
@@ -453,12 +457,12 @@ export function promptsAdjudicacion(base: string, m: MaterialAdjudicacion, objet
       if (recorte) recortes.push(recorte);
       const secciones = seccionesDe(doc.clasificacion, doc.resultados);
       const extra = { ...(doc.clasificacion ? { clasificacion: doc.clasificacion } : {}), ...(doc.resultados.length ? { resultados_equidad: doc.resultados } : {}) };
-      return bloquesDocumento(doc.id, doc.meta, texto, extra, fijoMax, MAX_PROMPT, ESPACIO_DOCUMENTOS_ADJUDICACION).map((bloque, k) => ({ id: k ? `${doc.id}#${k + 1}` : doc.id, bloque, grupo: doc.id, secciones, resultados: k ? [] : urls(doc.resultados), orden: secciones[0] ?? '~' }));
+      return bloquesDocumento(doc.id, doc.meta, texto, extra, fijoMax, MAX_PROMPT, ESPACIO_DOCUMENTOS_ADJUDICACION).map((bloque, k) => ({ id: k ? `${doc.id}#${k + 1}` : doc.id, bloque, grupo: doc.id, secciones, resultados: k ? [] : urls(doc.resultados), orden: secciones[0] ?? '~', clasificado: doc.clasificacion !== undefined }));
     }),
     ...m.resultadosSueltos.map((r) => {
       const secciones = seccionesDe(undefined, [r]);
       const id = `resultado ${String(r.url)}`;
-      return { id, bloque: `RESULTADO DE LA BÚSQUEDA IGUAL (sin documento en la caché):\n${datosNoFiables(id, JSON.stringify(r))}`, grupo: id, secciones, resultados: urls([r]), orden: secciones[0] ?? '~' };
+      return { id, bloque: `RESULTADO DE LA BÚSQUEDA IGUAL (sin documento en la caché):\n${datosNoFiables(id, JSON.stringify(r))}`, grupo: id, secciones, resultados: urls([r]), orden: secciones[0] ?? '~', clasificado: false };
     }),
   ]
     // In section order, so a batch touches few sections, but never a break forced between sections: a batch holds
@@ -472,6 +476,7 @@ export function promptsAdjudicacion(base: string, m: MaterialAdjudicacion, objet
     prompts,
     lotes: grupos.map((lote, i) => ({
       documentos: [...new Set(lote.filter((p) => !p.id.startsWith('resultado ')).map((p) => p.id.replace(/#\d+$/, '')))],
+      clasificados: [...new Set(lote.filter((p) => p.clasificado).map((p) => p.id.replace(/#\d+$/, '')))],
       resultados: lote.flatMap((p) => p.resultados),
       secciones: [...new Set(lote.flatMap((p) => p.secciones))].sort(comparar),
       comun: base.length + AVISO_DATOS.length + comun.length + 4,

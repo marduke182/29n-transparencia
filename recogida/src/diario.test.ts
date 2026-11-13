@@ -29,6 +29,7 @@ import {
   lotesClasificar,
   motivoNoArticulo,
   nombreLote,
+  decisionesQueFaltan,
   documentosAdjudicacion,
   NOMBRE_LOTE,
   busquedasDeSesion,
@@ -544,6 +545,24 @@ describe('preparar: una fuente citada por varios elementos', () => {
     expect(descartes).toEqual([]);
     expect(revisar.length).toBe(12);
     expect(new Set(revisar.map((r) => r.en_ficha))).toEqual(new Set(['ref 3, por-escrito']));
+  });
+});
+
+describe('informe: hechos para revisar', () => {
+  it('lists what the facts merge kept or left out, for the summary and the PR', () => {
+    const md = informe({ fecha: FECHA, etapas: '', hechosRevisar: ['hecho "x": se añadieron partidos (pp) sin fuente propia'] });
+    expect(md).toContain('### Hechos para revisar (al unir los lotes de hechos) (1)\n\n- hecho "x": se añadieron partidos (pp) sin fuente propia');
+  });
+});
+
+describe('decisionesQueFaltan: a batch is kept for a second round only when complete', () => {
+  it('asks for the party and a decision for every classified document and every equal-search result of the batch', () => {
+    const lote = { clasificados: ['d1', 'd2'], resultados: ['https://www.medio.es/r?utm_source=x', 'https://medio.es/otro'] };
+    const respuesta = (partido: string, decisiones: object[]) => ({ partido, decisiones });
+    const completas = [{ doc_id: 'd1' }, { doc_id: 'd2' }, { url: 'https://medio.es/r' }, { doc_id: idDocumento('https://medio.es/otro') }];
+    expect(decisionesQueFaltan(respuesta('pp', completas), 'pp', lote)).toEqual([]);
+    expect(decisionesQueFaltan(respuesta('vox', completas), 'pp', lote)).toEqual(['la respuesta es de vox, no de pp']);
+    expect(decisionesQueFaltan(respuesta('pp', completas.slice(1, 3)), 'pp', lote)).toEqual(['sin decisión para el documento d1', 'sin decisión para el resultado https://medio.es/otro']);
   });
 });
 

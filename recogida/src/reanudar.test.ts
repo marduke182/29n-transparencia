@@ -277,6 +277,39 @@ console.log(JSON.stringify({ is_error: false, total_cost_usd: 0.1, structured_ou
     expect(pp.decisiones.map((d: { doc_id: string }) => d.doc_id)).toEqual(docs);
   });
 
+  it('does not keep for the second round a batch whose answer leaves out a decision: it is asked again, and the day passes', () => {
+    const { ej } = adjudicacionConCoste('0.1');
+    const doc_id = 'cccccccccccccccc';
+    writeFileSync(join(ej, 'tareas-clasificar.json'), `${JSON.stringify([{ doc_id, partido: 'pp', url: 'https://medio.es/c', url_canonica: 'https://medio.es/c', via: 'rss', consultado: FECHA, origen: ['alias'], texto: '', meta: '', salida: `clasificacion/${doc_id}.pp.json` }])}\n`);
+    mkdirSync(join(ej, 'clasificacion'));
+    writeFileSync(join(ej, 'clasificacion', `${doc_id}.pp.json`), JSON.stringify({ doc_id, partido: 'pp', relevante: true, seccion: 'temas' }));
+    mkdirSync(join(raiz, 'cache', 'docs', doc_id), { recursive: true });
+    writeFileSync(join(raiz, 'cache', 'docs', doc_id, 'meta.json'), JSON.stringify({ url: 'https://medio.es/c', url_canonica: 'https://medio.es/c', consultado: FECHA, via: 'rss' }));
+    writeFileSync(join(raiz, 'cache', 'docs', doc_id, 'texto.txt'), 'Texto.');
+    for (const p of ['psoe', 'vox']) writeFileSync(join(ej, 'adjudicado', `${p}.json`), `{"partido": "${p}", "propuestas": [], "decisiones": []}\n`);
+    // Round 1: a schema-valid answer with no decision for the document. Round 2: complete.
+    const llamadas = join(raiz, 'llamadas.txt');
+    writeFileSync(
+      join(raiz, 'bin', 'claude'),
+      `#!/usr/bin/env node
+if (process.argv[2] === '--version') { console.log('2.1.322 (Claude Code)'); process.exit(0); }
+const fs = require('node:fs');
+const prompt = fs.readFileSync(0, 'utf8');
+const docs = [...prompt.matchAll(/^DOCUMENTO ([0-9a-f]{16}):$/gm)].map((m) => m[1]);
+fs.appendFileSync('${llamadas}', 'pp\\n');
+const primera = fs.readFileSync('${llamadas}', 'utf8').split('\\n').filter(Boolean).length === 1;
+const decisiones = primera ? [] : docs.map((doc_id) => ({ doc_id, decision: 'descartado', motivo: 'x' }));
+console.log(JSON.stringify({ is_error: false, total_cost_usd: 0.1, structured_output: { partido: 'pp', propuestas: [], decisiones, objeciones_hechos: [], hosts_sin_registrar: [], avisos: [] } }));
+`,
+    );
+    chmodSync(join(raiz, 'bin', 'claude'), 0o755);
+    diario('--reanudar', sellar());
+    expect(readFileSync(llamadas, 'utf8')).toBe('pp\npp\n');
+    expect(readFileSync(join(ej, 'diario.log'), 'utf8')).toContain(`sin decisión para el documento ${doc_id}`);
+    expect(readFileSync(join(ej, 'diario.log'), 'utf8')).not.toMatch(/se reutiliza/);
+    expect(readFileSync(join(ej, 'etapas.tsv'), 'utf8')).toMatch(/^adjudicacion-completa\tok\t$/m);
+  });
+
   // A day stopped at the site checks after the merge (11 Nov 2026): the merge runs again from the kept adjudication.
   const trasLaFusion = (ej: string) => {
     writeFileSync(join(ej, 'etapas.tsv'), 'traer-busqueda\tok\t\nclasificacion\tok\t\nadjudicacion-completa\tok\t\npreparar\tok\t\nfusionar\tok\t\najustar\tok\t\nalcance\tok\t\ntest\tfallo\tcódigo 1\nresumen\tok\t\ncomprobaciones\tfallo\talguna comprobación falló\n');

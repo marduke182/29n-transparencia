@@ -710,7 +710,8 @@ claude_pasada() {
     guardado=""
     case "$pasada" in
       adjudicacion-*)
-        huella="$(shasum -a 256 "$entrada" | cut -c1-24)"
+        # The key: the prompt, the model and the schema; a batch is kept only when its answer is complete (juicio-valida).
+        huella="$( { cat "$entrada" "$CONF/modelo.txt" "$CONF/esquema.json"; } | shasum -a 256 | cut -c1-24)"
         guardado="$EJ/adjudicado-lotes/${pasada#adjudicacion-}/$huella.json"
         ;;
     esac
@@ -746,7 +747,7 @@ claude_pasada() {
       ) || echo "llamada $i de $n terminó con código $? (sus respuestas faltarán; la comprobación de después decide)"
       coste="$(node -e 'try { const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); const c = Number(r.total_cost_usd); console.log(r.total_cost_usd !== undefined && Number.isFinite(c) && c >= 0 ? c : ""); } catch { console.log(""); }' "$salida")"
       printf '%s\t%s\t%s\t%s\n' "$pasada" "$i" "${coste:-sin dato}" "$((SECONDS - t0))" >>"$PRIV/gasto.nuevo"
-      if [ -n "$guardado" ] && opciones_sesion "$pasada" && glue juicio-valida "${SESION[@]}" --salida "$salida" >/dev/null 2>&1; then
+      if [ -n "$guardado" ] && opciones_sesion "$pasada" && glue juicio-valida "${SESION[@]}" --salida "$salida" --lotes "$CONF/lotes.json" --indice "$i"; then
         printf '%s\t%s\n' "$salida" "$guardado" >>"$PRIV/validos.tsv"
       fi
     fi

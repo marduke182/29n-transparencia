@@ -67,13 +67,20 @@ describe('validarEsquema and respuestaEstructurada: the answer of each pass, che
     const conDesliz = unirRespuestas('hechos', [uno, otro]);
     expect(conDesliz.conflictos).toEqual([]);
     expect(conDesliz.valor.hechos).toEqual([hecho(['frente-amplio', 'pp', 'vox'])]);
-    expect(conDesliz.valor.avisos).toEqual(['hecho "debate-oficial-2026-11-26": otro lote lo escribió con distinto item, pregunta o seccion; se mantiene el primero y se unen los partidos (para revisar)']);
-    // A later batch may add parties with just {hecho, partidos}; one for a key nobody wrote is left out with an aviso.
-    const solo = { hechos: [{ hecho: 'debate-oficial-2026-11-26', partidos: ['psoe'] }, { hecho: 'otro-2026-11-26', partidos: ['pp'] }], descartados: [], avisos: [] };
+    expect(conDesliz.valor.para_revisar).toEqual(['hecho "debate-oficial-2026-11-26": otro lote lo escribió con distinto item, pregunta o seccion; se mantiene el primero, con sus fuentes nuevas']);
+    // A later batch may add parties with {hecho, partidos, fuentes}: its sources join the item, so each party has one.
+    const fuentePsoe = { url: 'https://medio.es/debate-psoe', medio: 'Medio' };
+    const solo = { hechos: [{ hecho: 'debate-oficial-2026-11-26', partidos: ['psoe'], fuentes: [fuentePsoe, item.fuentes[0]] }, { hecho: 'otro-2026-11-26', partidos: ['pp'] }], descartados: [], avisos: [] };
     expect(validarEsquema(ESQUEMAS.hechos, solo)).toEqual([]);
     const sumado = unirRespuestas('hechos', [uno, solo]);
-    expect(sumado.valor.hechos).toEqual([hecho(['pp', 'psoe', 'vox'])]);
-    expect(sumado.valor.avisos).toEqual(['hecho "otro-2026-11-26": solo añade partidos y ningún lote lo escribió; se deja fuera (para revisar)']);
+    expect(sumado.valor.hechos).toEqual([hecho(['pp', 'psoe', 'vox'], { ...item, fuentes: [...item.fuentes, fuentePsoe] })]);
+    // The input is never changed.
+    expect((uno.hechos[0]!.item as { fuentes: unknown }).fuentes).toEqual(item.fuentes);
+    expect(sumado.valor.para_revisar).toEqual(['hecho "otro-2026-11-26": un lote le añadió partidos (pp) pero ningún lote lo escribió; se deja fuera']);
+    // Parties added without a source of their own are kept, and listed for review.
+    const sinFuente = unirRespuestas('hechos', [uno, { hechos: [{ hecho: 'debate-oficial-2026-11-26', partidos: ['frente-amplio'] }], descartados: [], avisos: [] }]);
+    expect(sinFuente.valor.hechos).toEqual([hecho(['frente-amplio', 'pp', 'vox'])]);
+    expect(sinFuente.valor.para_revisar).toEqual(['hecho "debate-oficial-2026-11-26": se añadieron partidos (frente-amplio) sin fuente propia']);
   });
 });
 
@@ -195,7 +202,7 @@ describe('juicio-guardar: the script writes only the answers each call may give'
     expect(r.codigo).toBe(0);
     const escrito = JSON.parse(readFileSync(join(ej, 'hechos.json'), 'utf8'));
     expect(escrito.hechos).toEqual([{ ...lote(['pp', 'vox']).hechos[0] }]);
-    expect(escrito.avisos[0]).toContain('distinto item');
+    expect(escrito.para_revisar[0]).toContain('distinto item');
   });
 
   it('adjudication in several batches: one answer file, the lists joined in batch order; one bad batch writes nothing', () => {

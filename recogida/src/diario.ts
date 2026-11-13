@@ -45,6 +45,7 @@ import {
   salidasBusqueda,
   terminosNeutrales,
   type DocumentoMaterial,
+  type LotePrompt,
   type Prompts,
   type Recorte,
 } from './material.ts';
@@ -1265,6 +1266,8 @@ export function informe(entrada: {
   clasificar?: Pick<TareaClasificar, 'url_canonica' | 'partido'>[];
   /** descubrir.busqueda.json `para_revisar`: equal-search results on hosts fuentes.json does not list, never fetched or published. */
   paraRevisar?: ParaRevisar[];
+  /** hechos.json `para_revisar`: what the facts merge kept or left out for the owner to review. */
+  hechosRevisar?: string[];
   /** recortes/<sesión>.json: the documents a Claude call got as a party-neutral excerpt (longer than MAX_DOCUMENTO), by session. */
   recortes?: { sesion: string; recorte: Recorte }[];
 }): string {
@@ -1278,6 +1281,7 @@ export function informe(entrada: {
   const lineas = ['', '---', '', `# Ejecución del ${entrada.fecha}`, '', '| Etapa | Estado | Detalle |', '|---|---|---|', ...etapas, ''];
   lineas.push(...apartado('Propuestas apartadas antes de fusionar', (entrada.preparar?.descartes ?? []).map((d) => `- \`${d.archivo}\` #${d.indice}${d.partido ? ` (${d.partido})` : ''}: ${d.motivo}`)));
   lineas.push(`Elementos generados desde hechos.json: ${entrada.preparar?.deHechos ?? 0}.`, '');
+  lineas.push(...apartado('Hechos para revisar (al unir los lotes de hechos)', (entrada.hechosRevisar ?? []).map((r) => `- ${r}`)));
   lineas.push(
     ...apartado(
       'Para revisar: propuestas que citan una URL que la ficha ya cita (pasan; solo un duplicado exacto se aparta)',
@@ -1857,6 +1861,25 @@ export function documentosAdjudicacion(
   return { documentos: ids.map((id) => ({ ...documento(id), ...(suyas.has(id) ? { clasificacion: suyas.get(id)! } : {}), resultados: porDoc.get(id) ?? [] })), sueltos };
 }
 
+/**
+ * What an adjudication batch's answer leaves out: another party, or a
+ * document it carried with a classification (by doc_id) or an equal-search
+ * result (by canonical URL, or the doc_id of its document) with no decision.
+ */
+export function decisionesQueFaltan(respuesta: Objeto, partido: string, lote: Pick<LotePrompt, 'clasificados' | 'resultados'>): string[] {
+  if (respuesta.partido !== partido) return [`la respuesta es de ${String(respuesta.partido)}, no de ${partido}`];
+  const decisiones = lista(respuesta.decisiones).filter(esObjeto);
+  const ids = new Set(decisiones.flatMap((d) => (typeof d.doc_id === 'string' ? [d.doc_id] : [])));
+  const urls = new Set(decisiones.flatMap((d) => (typeof d.url === 'string' ? [canonicaSegura(d.url) ?? d.url] : [])));
+  return [
+    ...(lote.clasificados ?? []).filter((id) => !ids.has(id)).map((id) => `sin decisión para el documento ${id}`),
+    ...(lote.resultados ?? []).filter((url) => {
+      const canonica = canonicaSegura(url) ?? url;
+      return !urls.has(canonica) && !ids.has(idDocumento(canonica));
+    }).map((url) => `sin decisión para el resultado ${url}`),
+  ];
+}
+
 /** The name of a Claude session: the pass, with its batch or party (diario.sh: busqueda, clasificacion-01, adjudicacion-pp…). */
 const nombreSesion = (pasada: Pasada, lote?: string, partido?: string) => (lote ? `${pasada}-${lote}` : partido ? `${pasada}-${partido}` : pasada);
 
@@ -2168,13 +2191,24 @@ async function main(args: string[]): Promise<number> {
       return 0;
     }
     case 'juicio-valida': {
-      // Exit 0 when one `claude -p` output (--salida) is a valid answer of the pass (diario.sh keeps it for a second round).
-      const { pasada } = sesionDeArgs(args);
-      const o = args.indexOf('--salida');
-      const archivo = o === -1 ? undefined : args[o + 1];
-      if (!archivo || !existsSync(archivo)) return 1;
+      // Exit 0 when one `claude -p` output (--salida) is a complete answer of one adjudication batch (--lotes lotes.json,
+      // --indice n, from 1): valid against the schema, for the session's party, and with a decision for every document
+      // and equal-search result the batch carried. Only then does diario.sh keep it for a second round.
+      const { pasada, partido } = sesionDeArgs(args);
+      const valor = (opcion: string) => {
+        const k = args.indexOf(opcion);
+        return k === -1 ? undefined : args[k + 1];
+      };
+      const archivo = valor('--salida');
+      const lotes = valor('--lotes');
+      const indice = Number(valor('--indice'));
+      if (pasada !== 'adjudicacion' || !partido || !archivo || !existsSync(archivo) || !lotes || !Number.isInteger(indice) || indice < 1) return 1;
       try {
-        return respuestaEstructurada(esPasadaBusqueda(pasada) ? 'busqueda' : (pasada as PasadaJuicio), leerJson(archivo)).valor ? 0 : 1;
+        const respuesta = respuestaEstructurada('adjudicacion', leerJson(archivo)).valor;
+        const lote = (leerJson(lotes) as LotePrompt[])[indice - 1];
+        const faltan = respuesta && lote ? decisionesQueFaltan(respuesta, partido, lote) : ['sin respuesta o sin lote'];
+        for (const f of faltan) process.stdout.write(`${f}\n`);
+        return faltan.length ? 1 : 0;
       } catch {
         return 1;
       }
@@ -2390,6 +2424,7 @@ async function main(args: string[]): Promise<number> {
           enlaces: leerJsonSiExiste(join(ejecucion, 'enlaces.json')) as never,
           clasificar: (leerJsonSiExiste(join(ejecucion, 'tareas-clasificar.json')) ?? []) as TareaClasificar[],
           paraRevisar: lista((leerJsonSiExiste(join(ejecucion, 'descubrir.busqueda.json')) as { para_revisar?: unknown } | undefined)?.para_revisar) as ParaRevisar[],
+          hechosRevisar: lista((leerJsonSiExiste(join(ejecucion, 'hechos.json')) as { para_revisar?: unknown } | undefined)?.para_revisar).filter(esTexto),
           recortes: (existsSync(join(ejecucion, 'recortes')) ? readdirSync(join(ejecucion, 'recortes')).filter((f) => f.endsWith('.json')).sort(comparar) : []).flatMap((f) =>
             (lista(leerJson(join(ejecucion, 'recortes', f))) as Recorte[]).map((recorte) => ({ sesion: f.replace(/\.json$/, ''), recorte })),
           ),

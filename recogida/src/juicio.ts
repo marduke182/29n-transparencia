@@ -133,7 +133,7 @@ export const ESQUEMAS = {
     required: ['hechos', 'descartados', 'avisos'],
     properties: {
       // A later facts batch may add parties to a fact already written today with just {hecho, partidos}.
-      hechos: lista({ type: 'object', required: ['hecho', 'partidos'], properties: { hecho: texto, pregunta: { enum: PREGUNTAS }, seccion: { enum: SECCIONES }, partidos: lista(texto), item: { type: 'object' }, motivo: texto } }),
+      hechos: lista({ type: 'object', required: ['hecho', 'partidos'], properties: { hecho: texto, pregunta: { enum: PREGUNTAS }, seccion: { enum: SECCIONES }, partidos: lista(texto), item: { type: 'object' }, fuentes: lista({ type: 'object' }), motivo: texto } }),
       descartados: lista({ type: 'object', required: ['doc_id', 'motivo'], properties: { doc_id: texto, motivo: texto } }),
       avisos: lista(texto),
     },
@@ -207,11 +207,12 @@ export const canonico = (v: unknown): string =>
  * file: lists concatenated in batch order. Facts that share a key are one
  * fact: the first batch's item, question and section, and the union of the
  * parties of every batch (in party order). A later batch may name only
- * `{hecho, partidos}` to add parties; one that rewrites the item differently
- * keeps the first item, and the difference goes to `avisos` for review:
- * a copy slip never costs the day. An entry with no item for a key no batch
- * wrote is left out, with an aviso. `conflictos` is kept for callers and is
- * always empty.
+ * `{hecho, partidos, fuentes}` to add parties: its sources join the item's
+ * (by URL), so every party a fact names has a source for it. A copy slip never
+ * costs the day: a rewritten item keeps the first one (its new sources join),
+ * an entry for a key no batch wrote is left out, and parties added without a
+ * source are kept; each goes to `para_revisar` (the summary's «Hechos para
+ * revisar»). `conflictos` is kept for callers and is always empty.
  */
 export function unirRespuestas(pasada: 'hechos' | 'adjudicacion', valores: readonly Objeto[]): { valor: Objeto; conflictos: string[] } {
   const listas = pasada === 'hechos' ? ['hechos', 'descartados', 'avisos'] : ['propuestas', 'decisiones', 'objeciones_hechos', 'hosts_sin_registrar', 'avisos'];
@@ -220,40 +221,47 @@ export function unirRespuestas(pasada: 'hechos' | 'adjudicacion', valores: reado
   if (pasada === 'adjudicacion') unido.hosts_sin_registrar = [...new Set(unido.hosts_sin_registrar as string[])].sort();
   if (pasada === 'hechos') {
     const ORDEN = ['frente-amplio', 'pp', 'psoe', 'vox'];
-    const avisos = unido.avisos as unknown[];
+    const ordenar = (partidos: Iterable<unknown>) => [...new Set([...partidos].map(String))].sort((a, b) => (ORDEN.indexOf(a) + 1 || 99) - (ORDEN.indexOf(b) + 1 || 99) || (a < b ? -1 : a > b ? 1 : 0));
+    const revisar: string[] = [];
     const porClave = new Map<string, Objeto>();
     const hechos: Objeto[] = [];
-    const pendientes: Objeto[] = [];
+    const urlDe = (f: unknown) => (esObjeto(f) && typeof f.url === 'string' ? f.url.trim().replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, '') : undefined);
+    /** Adds the sources of a later entry to a fact's item, by URL; how many were new. */
+    const sumarFuentes = (previo: Objeto, fuentes: unknown) => {
+      const item = previo.item as Objeto;
+      const actuales = Array.isArray(item.fuentes) ? (item.fuentes as unknown[]) : [];
+      const vistas = new Set(actuales.map(urlDe));
+      const nuevas = (Array.isArray(fuentes) ? fuentes : []).filter((f) => urlDe(f) !== undefined && !vistas.has(urlDe(f)));
+      item.fuentes = [...actuales, ...nuevas];
+      return nuevas.length;
+    };
+    const posteriores: Objeto[] = [];
     for (const h of unido.hechos as unknown[]) {
       if (!esObjeto(h) || typeof h.hecho !== 'string') continue;
-      const previo = porClave.get(h.hecho);
-      if (!previo) {
-        if (!esObjeto(h.item)) {
-          pendientes.push(h);
-          continue;
-        }
-        const copia = { ...h, partidos: Array.isArray(h.partidos) ? [...h.partidos] : [] };
+      if (!porClave.has(h.hecho) && esObjeto(h.item)) {
+        const copia = { ...h, item: structuredClone(h.item), partidos: Array.isArray(h.partidos) ? ordenar(h.partidos) : [] };
         porClave.set(h.hecho, copia);
         hechos.push(copia);
-        continue;
-      }
-      if (h.item !== undefined && (canonico(previo.item) !== canonico(h.item) || (h.pregunta !== undefined && previo.pregunta !== h.pregunta) || (h.seccion !== undefined && previo.seccion !== h.seccion))) {
-        avisos.push(`hecho "${h.hecho}": otro lote lo escribió con distinto item, pregunta o seccion; se mantiene el primero y se unen los partidos (para revisar)`);
-      }
-      const partidos = new Set([...(Array.isArray(previo.partidos) ? previo.partidos : []), ...(Array.isArray(h.partidos) ? h.partidos : [])].map(String));
-      previo.partidos = [...partidos].sort((a, b) => (ORDEN.indexOf(a) + 1 || 99) - (ORDEN.indexOf(b) + 1 || 99) || (a < b ? -1 : a > b ? 1 : 0));
+      } else posteriores.push(h);
     }
-    // Entries that only add parties, to a key written by a later batch or by none.
-    for (const h of pendientes) {
-      const previo = porClave.get(String(h.hecho));
+    for (const h of posteriores) {
+      const clave = String(h.hecho);
+      const previo = porClave.get(clave);
       if (!previo) {
-        avisos.push(`hecho "${String(h.hecho)}": solo añade partidos y ningún lote lo escribió; se deja fuera (para revisar)`);
+        revisar.push(`hecho "${clave}": un lote le añadió partidos (${ordenar(Array.isArray(h.partidos) ? h.partidos : []).join(', ')}) pero ningún lote lo escribió; se deja fuera`);
         continue;
       }
-      const partidos = new Set([...(previo.partidos as unknown[]), ...(Array.isArray(h.partidos) ? h.partidos : [])].map(String));
-      previo.partidos = [...partidos].sort((a, b) => (ORDEN.indexOf(a) + 1 || 99) - (ORDEN.indexOf(b) + 1 || 99) || (a < b ? -1 : a > b ? 1 : 0));
+      const nuevos = ordenar(Array.isArray(h.partidos) ? h.partidos : []).filter((p) => !(previo.partidos as string[]).includes(p));
+      const fuentes = h.fuentes ?? (esObjeto(h.item) ? h.item.fuentes : undefined);
+      if (h.item !== undefined && (canonico(previo.item) !== canonico(h.item) || (h.pregunta !== undefined && previo.pregunta !== h.pregunta) || (h.seccion !== undefined && previo.seccion !== h.seccion))) {
+        revisar.push(`hecho "${clave}": otro lote lo escribió con distinto item, pregunta o seccion; se mantiene el primero, con sus fuentes nuevas`);
+      }
+      const sumadas = sumarFuentes(previo, fuentes);
+      if (nuevos.length && !sumadas && !(Array.isArray(fuentes) && fuentes.length)) revisar.push(`hecho "${clave}": se añadieron partidos (${nuevos.join(', ')}) sin fuente propia`);
+      previo.partidos = ordenar([...(previo.partidos as string[]), ...nuevos]);
     }
     unido.hechos = hechos;
+    unido.para_revisar = revisar;
   }
   return { valor: unido, conflictos: [] };
 }
