@@ -44,6 +44,7 @@ Cambio del texto, no del proceso ni de los criterios. El apartado «Actualizaci�
 2. **Límites de los agentes.** Los imponen los ajustes del programa: la clasificación, los hechos y la adjudicación no tienen herramientas, lo que reciben va marcado como dato no fiable y solo la búsqueda usa la web.
 3. **Fuentes.** Solo las del registro, salvo lo que aporta el autor. Los sitios que bloquean a los agentes de Claude o el acceso automatizado no se recogen, con enlace a la lista de /fuentes/.
 4. **Atrasos e igualdad.** La búsqueda única de La Razón y elDiario.es del 5 de octubre al 12 de noviembre, el mismo espacio por lote para los cuatro partidos, y un fallo en la adjudicación de un partido deja el día sin publicar.
+5. **Copia pública al día.** [metodologia/metodologia.md](metodologia/metodologia.md) coincide ahora con la metodología del sitio a 13 de noviembre de 2026. La frase sobre las encuestas de Podemos lleva el texto que el sitio genera de sus datos.
 
 ## 12 de noviembre de 2026
 

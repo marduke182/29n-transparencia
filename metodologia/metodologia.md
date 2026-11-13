@@ -3,15 +3,17 @@
 El contenido se preparó en dos pasos, igual para los cuatro partidos:
 
 1. **Una investigación por partido** con el mismo esquema de investigación: candidatura, lema, temas, programa, afirmaciones, historial, cambios de discurso, críticos y defensores, y encuestas. Las fichas publicadas se organizan después en ocho preguntas (véase más abajo).
-2. **Una verificación independiente** que abrió cada enlace y buscó la fuente primaria siempre que existía (BOE, INE, Eurostat, CIS, Seguridad Social, Ministerio del Interior). Se descartó todo lo que solo aparecía en resúmenes de buscador, sin una página que lo respaldara.
+2. **Una verificación independiente de la investigación** que abrió cada enlace y buscó la fuente primaria siempre que existía (BOE, INE, Eurostat, CIS, Seguridad Social, Ministerio del Interior). Se descartó todo lo que solo aparecía en resúmenes de buscador, sin una página que lo respaldara.
+
+Ambos pasos los realizaron agentes de IA (modelos Claude) siguiendo los prompts y criterios publicados, y los revisó el autor.
 
 Desde el entorno de verificación **no fueron accesibles newtral.es ni interior.gob.es**. Por eso no se citan verificaciones de Newtral, y las cifras de inmigración irregular proceden de prensa que cita los informes de Interior (se indica en cada caso).
 
 <h2 id="partidos">Por qué estos cuatro partidos</h2>
 
-La guía cubre los cuatro partidos con mayor estimación de voto en todas las encuestas publicadas en el periodo (del 5 de octubre al 12 de noviembre de 2026): Frente Amplio, PP, PSOE y Vox. Esta regla queda fijada a fecha de 12 de noviembre de 2026; cualquier cambio se anunciaría en esta página.
+La guía cubre los cuatro partidos con mayor estimación de voto en todas las encuestas publicadas en el periodo que los estiman por separado (del 5 de octubre al 12 de noviembre de 2026): Frente Amplio, PP, PSOE y Vox. Esta regla queda fijada a fecha de 12 de noviembre de 2026; cualquier cambio se anunciaría en esta página.
 
-Podemos se cubrió hasta el 12 de noviembre de 2026. Desde entonces queda fuera porque fue quinto en estimación de voto en las siete encuestas del periodo (entre el 1,9 % y el 3,1 % en las cinco que dan porcentaje; las otras dos le dan un escaño).
+Podemos se cubrió hasta el 12 de noviembre de 2026. Desde entonces queda fuera porque fue quinto en estimación de voto en las nueve encuestas del periodo que lo estiman por separado (entre el 1,1 % y el 3,1 % en las siete que dan porcentaje; las otras dos solo dan escaños); una más lo agrupa con otros partidos en una sola cifra.
 
 El Frente Amplio es una coalición constituida para las elecciones del 29-N el 16 de octubre de 2026 por 11 organizaciones, entre ellas Izquierda Unida, Movimiento Sumar, Catalunya en Comú y Más Madrid; su candidata es Ada Colau. Sus marcas regionales se agrupan aquí bajo Frente Amplio. La web de Movimiento Sumar es la de un partido miembro, no la de la coalición.
 
@@ -155,6 +157,5 @@ Los prompts de los agentes, los criterios, los validadores y el proceso diario e
 
 Todo el contenido está actualizado a la **fecha de corte** que figura en el pie de página y en cada ficha. Puntos que se actualizarán después:
 
-- Convalidación de los decretos de vivienda: hacia el **12 de noviembre**.
 - Cara a cara: **16 de noviembre**.
 - Debate a cuatro: **26 de noviembre** (sede en disputa).
