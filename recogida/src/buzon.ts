@@ -183,6 +183,9 @@ async function listar(carpeta: string): Promise<string[]> {
 /** Origin mark of the documents fetched from the inbox links list, in their meta.json and in the run summary. */
 export const ORIGEN_ENLACES = 'buzon-enlaces';
 
+/** `origen` in the meta.json of a transcript of a video the owner listed ($N29_BUZON/videos/<fecha>.txt). */
+export const ORIGEN_VIDEOS = 'buzon-videos';
+
 export interface Enlace {
   linea: number;
   url: string;

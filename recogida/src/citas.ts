@@ -14,7 +14,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ORIGEN_ENLACES } from './buzon.ts';
+import { ORIGEN_ENLACES, ORIGEN_VIDEOS } from './buzon.ts';
 import { idDocumento, urlCanonica } from './cache.ts';
 
 /** Las citas literales deben tener menos de este número de palabras. */
@@ -182,40 +182,62 @@ export function comprobarCitas(citas: Cita[], leer: LectorCache): Problema[] {
  * de cache.ts) y, si no está, por el índice de `url` y `url_canonica` de cada
  * meta.json, de modo que una URL guardada con otra forma encuentra su documento.
  */
+/** The URLs a cached document answers to: its stored URL and canonical URL, the video it transcribes, the URL the owner listed (before redirects). */
+const CAMPOS_URL = ['url_canonica', 'url', 'video_url', 'url_pedida'] as const;
+
+/** Canonical form of a URL, or the URL itself when it does not parse. */
+const canonicaO = (url: string) => {
+  try {
+    return urlCanonica(url);
+  } catch {
+    return url;
+  }
+};
+
+/** Every cached document by each URL it answers to (CAMPOS_URL, as stored and canonical): document keys, in key order. */
+function indiceUrls(docs: string): Map<string, string[]> {
+  const mapa = new Map<string, string[]>();
+  const claves = existsSync(docs) ? readdirSync(docs).sort() : [];
+  for (const clave of claves) {
+    const ruta = join(docs, clave, 'meta.json');
+    if (!existsSync(ruta)) continue;
+    try {
+      const meta: unknown = JSON.parse(readFileSync(ruta, 'utf8'));
+      if (!esObjeto(meta)) continue;
+      for (const campo of CAMPOS_URL) {
+        const url = meta[campo];
+        if (!esTexto(url)) continue;
+        for (const forma of new Set([url, canonicaO(url)])) {
+          const lista = mapa.get(forma) ?? [];
+          if (!lista.includes(clave)) mapa.set(forma, [...lista, clave]);
+        }
+      }
+    } catch {
+      // meta.json ilegible: el documento cuenta como ausente
+    }
+  }
+  return mapa;
+}
+
+/**
+ * Lector sobre la carpeta de caché. Busca por la clave de la URL canónica (la
+ * de cache.ts) y, si no está, por el índice de las URL de cada meta.json (la
+ * guardada, la canónica, la del vídeo que transcribe y la que listó el dueño),
+ * de modo que una URL guardada con otra forma encuentra su documento.
+ */
 export function lectorCache(raiz: string): LectorCache {
   const docs = join(raiz, 'docs');
-  let indice: Map<string, string> | undefined;
-  const construirIndice = () => {
-    const mapa = new Map<string, string>();
-    const claves = existsSync(docs) ? readdirSync(docs).sort() : [];
-    for (const clave of claves) {
-      const ruta = join(docs, clave, 'meta.json');
-      if (!existsSync(ruta)) continue;
-      try {
-        const meta: unknown = JSON.parse(readFileSync(ruta, 'utf8'));
-        if (!esObjeto(meta)) continue;
-        for (const url of [meta.url_canonica, meta.url]) if (esTexto(url) && !mapa.has(url)) mapa.set(url, clave);
-      } catch {
-        // meta.json ilegible: el documento cuenta como ausente
-      }
-    }
-    return mapa;
-  };
+  let indice: Map<string, string[]> | undefined;
   const leerClave = (clave: string) => {
     const ruta = join(docs, clave, 'texto.txt');
     return existsSync(ruta) ? readFileSync(ruta, 'utf8') : undefined;
   };
   return (url) => {
-    let canonica = url;
-    try {
-      canonica = urlCanonica(url);
-    } catch {
-      // URL no válida: solo puede estar en el índice tal cual
-    }
+    const canonica = canonicaO(url);
     const directo = leerClave(idDocumento(canonica));
     if (directo !== undefined) return directo;
-    indice ??= construirIndice();
-    const clave = indice.get(url) ?? indice.get(canonica);
+    indice ??= indiceUrls(docs);
+    const clave = (indice.get(url) ?? indice.get(canonica))?.[0];
     return clave === undefined ? undefined : leerClave(clave);
   };
 }
@@ -227,35 +249,45 @@ export function hostsRegistrados(fuentes: unknown): string[] {
   return [...new Set(hosts.map((h) => h.toLowerCase().replace(/^www\./, '')))].sort();
 }
 
+/** `origen` values of the documents the owner supplied (buzon.ts): their links list and the videos they listed. */
+const ORIGENES_DUENO: readonly unknown[] = ['buzon', ORIGEN_ENLACES, ORIGEN_VIDEOS];
+
 /**
- * Si una URL puede respaldar un elemento publicado: su host es el de un
- * emisor registrado en fuentes.json (o un subdominio suyo), o el documento en
- * caché lo trajo el dueño (el buzón, via `buzon`, o su lista de enlaces,
- * origen `buzon-enlaces`). Una página de un host sin registrar que encontró la
- * búsqueda nunca se publica sola: la regla la aplican preparar (diario.ts) y
- * fusionar.
+ * Si una URL puede respaldar un elemento publicado: su host es exactamente el
+ * de un emisor registrado en fuentes.json (sin www.; la misma regla que el
+ * validador del sitio, `emisorDe`, que no admite subdominios sin registrar), o
+ * el documento en caché lo trajo el dueño: el buzón (via `buzon`), su lista de
+ * enlaces (origen `buzon-enlaces`) o un vídeo que listó (origen
+ * `buzon-videos`). El documento se busca por su URL y por las de su meta.json
+ * (también la del vídeo que transcribe y la que listó el dueño antes de las
+ * redirecciones). Una página de un host sin registrar que encontró la búsqueda
+ * nunca se publica sola: la regla la aplican preparar (diario.ts) y fusionar.
  */
 export function citableEn(raiz: string, hosts: readonly string[]): (url: string) => boolean {
+  const docs = join(raiz, 'docs');
+  let indice: Map<string, string[]> | undefined;
+  const delDueno = (clave: string) => {
+    try {
+      const meta: unknown = JSON.parse(readFileSync(join(docs, clave, 'meta.json'), 'utf8'));
+      return esObjeto(meta) && (meta.via === 'buzon' || ORIGENES_DUENO.includes(meta.origen));
+    } catch {
+      return false;
+    }
+  };
   return (url) => {
     let host: string;
-    let canonica: string;
     try {
       const parsed = new URL(url);
       if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
       host = parsed.hostname.toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
-      canonica = urlCanonica(url);
     } catch {
       return false;
     }
-    if (hosts.some((otro) => host === otro || host.endsWith(`.${otro}`))) return true;
-    const ruta = join(raiz, 'docs', idDocumento(canonica), 'meta.json');
-    if (!existsSync(ruta)) return false;
-    try {
-      const meta: unknown = JSON.parse(readFileSync(ruta, 'utf8'));
-      return esObjeto(meta) && (meta.via === 'buzon' || meta.origen === ORIGEN_ENLACES);
-    } catch {
-      return false;
-    }
+    if (hosts.includes(host)) return true;
+    const canonica = canonicaO(url);
+    indice ??= indiceUrls(docs);
+    const claves = new Set([idDocumento(canonica), ...(indice.get(url) ?? []), ...(indice.get(canonica) ?? [])]);
+    return [...claves].some((clave) => existsSync(join(docs, clave, 'meta.json')) && delDueno(clave));
   };
 }
 

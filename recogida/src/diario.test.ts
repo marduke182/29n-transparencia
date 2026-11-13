@@ -7,6 +7,7 @@ import { registrarBloqueos } from './bloqueos.ts';
 import { consultasFuente, type Alias, type Descubrimiento, type TareaBusqueda } from './descubrir.ts';
 import {
   AGENTES_POR_PASADA,
+  CLAUDE_VERIFICADA,
   ajustesClaude,
   carpetasDe,
   esPasadaBusqueda,
@@ -200,8 +201,8 @@ describe('videosDelDia', () => {
     ].join('\n');
     expect(videosDelDia(descubierto, buzon)).toEqual([
       { video: 'https://www.rtve.es/play/videos/debate/x/123/' },
-      { video: 'https://www.youtube.com/watch?v=bbbbbb', oficial: 'https://partido.es/transcripcion.pdf' },
-      { video: 'https://www.youtube.com/watch?v=eeeeee' },
+      { video: 'https://www.youtube.com/watch?v=bbbbbb', oficial: 'https://partido.es/transcripcion.pdf', buzon: true },
+      { video: 'https://www.youtube.com/watch?v=eeeeee', buzon: true },
     ]);
   });
 });
@@ -986,6 +987,20 @@ describe('permisos de Claude: restricciones duras por pasada', () => {
         [tarea([{ texto: 'x', motor: 'WebSearch', dominios: ['newtral.es'] }, { texto: 'maldita.es/buscar?q=x', motor: 'WebFetch', dominios: [] }])],
       ),
     ).toEqual(['maldita.es', 'medio.es', 'newtral.es', 'otro.com']);
+  });
+});
+
+describe('versión de Claude Code', () => {
+  it('diario.sh accepts only the version the preapproved WebFetch list was read from, unless N29_CLAUDE_VERSION_OK=1', () => {
+    const sh = readFileSync(join(import.meta.dirname, '..', 'bin', 'diario.sh'), 'utf8');
+    expect(sh).toContain(`CLAUDE_VERIFICADA="${CLAUDE_VERIFICADA}"`);
+    expect(sh).toContain(`CLAUDE_MINIMA="${CLAUDE_VERIFICADA}"`);
+    expect(sh).toMatch(/\[ "\$VERSION_CLAUDE" != "\$CLAUDE_VERIFICADA" \] && \[ "\$\{N29_CLAUDE_VERSION_OK:-0\}" != 1 \]/);
+  });
+
+  it('confines the file tools twice: --restricted and the block settings', () => {
+    const plantilla = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'claude-settings.diario.template.json'), 'utf8'));
+    expect(plantilla.permissions).toMatchObject({ blockReadsOutsideWorkingDirectories: true, blockWritesOutsideWorkingDirectories: true });
   });
 });
 

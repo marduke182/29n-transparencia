@@ -28,6 +28,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { guardar, urlCanonica, type Guardado } from './cache.ts';
+import { ORIGEN_VIDEOS } from './buzon.ts';
 import { decodificarCuerpo, extraer, type Traedor } from './traer.ts';
 
 /**
@@ -241,6 +242,8 @@ export interface Peticion {
   fecha: string;
   /** whisper.cpp model file (only for whisper-cli). */
   modeloWhisper?: string;
+  /** ORIGEN_VIDEOS when the owner listed the video in the inbox: written to the meta, so its transcript may back a published item (citas.ts, citableEn). */
+  origen?: typeof ORIGEN_VIDEOS;
 }
 
 export type ResultadoTranscripcion =
@@ -262,6 +265,7 @@ const meta = (peticion: Peticion, fuente: FuenteTranscripcion, calidad_primaria:
   video_url: peticion.video_url,
   idioma: 'es',
   calidad_primaria,
+  ...(peticion.origen === ORIGEN_VIDEOS ? { origen: ORIGEN_VIDEOS } : {}),
   ...extra,
 });
 

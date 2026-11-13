@@ -823,7 +823,7 @@ export interface ResultadoEnlace {
  * Fetches each link through the same Traedor and cache as every discovered
  * article (https, public address at connect, robots.txt, blocked and
  * inbox-only hosts, redirects, size limits), with no date window. Stored with
- * via 'web' and `origen: buzon-enlaces`; the owner's party note stays in
+ * via 'web', `origen: buzon-enlaces` and `url_pedida` (the listed URL); the owner's party note stays in
  * enlaces.json only, never in the cached meta.json that classifiers and
  * adjudicators read. A link not fetched becomes an aviso.
  */
@@ -831,7 +831,8 @@ export async function traerEnlaces(traedor: Traedor, raizCache: string, lista: {
   const avisos = [...lista.avisos];
   const enlaces: ResultadoEnlace[] = [];
   for (const enlace of lista.enlaces) {
-    const { respuesta, guardado } = await traerYGuardar(traedor, raizCache, enlace.url, 'web', { origen: ORIGEN_ENLACES });
+    // The URL the owner listed is kept next to the final one (after redirects): either may be cited.
+    const { respuesta, guardado } = await traerYGuardar(traedor, raizCache, enlace.url, 'web', { origen: ORIGEN_ENLACES, url_pedida: enlace.url });
     const motivo = respuesta.estado === 'bloqueado' ? respuesta.bloqueo.motivo : 'motivo' in respuesta ? respuesta.motivo : undefined;
     enlaces.push({
       ...enlace,

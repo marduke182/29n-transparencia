@@ -13,6 +13,8 @@ Cambios del proceso, no de los criterios; iguales para los cuatro partidos. Las 
 3. **Red.** La recogida solo pide https en el puerto 443 y rechaza también las direcciones IPv6 6to4 que apuntan a redes internas, Teredo e IPv4 traducidas. `yt-dlp` corre sin plugins.
 4. **Git.** El push y el PR en borrador pueden usar un token dedicado, limitado al repositorio del sitio (`N29_GH_TOKEN`; con `N29_EXIGIR_TOKEN=1`, obligatorio). El script comprueba el refspec antes de empujar, y un test comprueba que el código no tiene otro push ni ninguna orden de fusionar.
 5. **Dependencias.** Se instalan con `npm ci`, sin scripts de instalación y solo con versiones publicadas hace al menos 7 días.
+6. **Documentos del dueño.** La transcripción de un vídeo que el responsable lista en el buzón queda marcada como suya y puede respaldar un elemento, igual que los archivos del buzón y su lista de enlaces; se encuentra por la URL del vídeo y, en un enlace redirigido, por la URL listada o la final. La marca no se pierde si la ejecución ya tenía ese documento. Un host cuenta como registrado solo si está tal cual en el registro de fuentes (la misma regla que el validador del sitio).
+7. **Versión de Claude Code.** La ejecución solo corre con la versión con la que se comprobaron los permisos (2.1.322), salvo que el responsable la autorice tras revisarlos. Las herramientas de archivos quedan confinadas por dos mecanismos independientes.
 
 ### Recogida diaria: atrasos y fuentes que bloquean
 
