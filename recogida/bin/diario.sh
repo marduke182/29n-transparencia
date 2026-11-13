@@ -32,10 +32,11 @@
 #   N29_GH_TOKEN         optional: the dedicated token for the push and the PR, used only there
 #   N29_EXIGIR_TOKEN     1: refuse to start without N29_GH_TOKEN (default 0: the machine's git and gh credentials)
 #
-# Security model: each Claude pass gets only its own tools (--tools), folders (--add-dir) and
-# subagents, from diario.ts (ajustesClaude); only the search passes reach the web, and WebFetch
-# only for the hosts of fuentes.json and the day's equal searches.
-# Claude never writes outside its answers in the run folder.
+# Security model: no Claude call reads or writes a file. The script puts each pass's material
+# into its prompt (diario.ts, juicio.ts), the answer comes back on stdout as structured output
+# (--json-schema), and the script checks it and writes the answer files. The classification,
+# facts and adjudication calls have no tools at all; only the search passes have Agent for their
+# two subagents, WebSearch and WebFetch for the hosts of fuentes.json and the day's equal searches.
 # Its settings, agents and prompts are built from this repository right before
 # each pass into a fresh folder outside every folder it can write to, checked
 # by sha256, and it starts from an empty folder there. Files the script relies
@@ -561,30 +562,27 @@ paso_traer_busqueda() {
   return $codigo
 }
 
-# Stand-in for the Claude passes in --seco: the fixture's judgment outputs.
-copiar_juicio() {
-  local cosa
-  for cosa in "$@"; do cp -R "$FIJOS/juicio/$cosa" "$EJ/$cosa" || return $?; done
-  # With --atrasos-*, the fixture answers of the atrasos tasks too (fixtures/diario/juicio-atrasos).
-  if [ ${#ATRASOS[@]} -gt 0 ] && [ -d "$FIJOS/juicio-atrasos/busqueda" ]; then cp "$FIJOS/juicio-atrasos/busqueda/"* "$EJ/busqueda/" || return $?; fi
-}
-
 # Builds settings, agents and prompts from this repository into a fresh
 # folder outside every writable one, read-only, with an empty start folder.
 # preparar_conf <nombre>: a session name is a pass, clasificacion-<lote> for one classification batch,
 # or adjudicacion-<partido> for one party's adjudication.
+# SESION: the diario.ts options of a session name (--pasada, and --lote or --partido).
+opciones_sesion() {
+  case "$1" in
+    clasificacion-*) SESION=(--pasada clasificacion --lote "${1#clasificacion-}") ;;
+    adjudicacion-*) SESION=(--pasada adjudicacion --partido "${1#adjudicacion-}") ;;
+    *) SESION=(--pasada "$1") ;;
+  esac
+}
 preparar_conf() {
   local nombre="$1"
   CONF="$(real "$(mktemp -d "${TMPDIR:-/tmp}/29n-claude.XXXXXX")")" || return $?
   comprobar_separadas "$CONF" "$N29_CACHE" "$N29_BUZON" "$N29_WORKTREES" "$T" "$PRIV" || return 1
-  case "$nombre" in
-    clasificacion-*) glue claude --dir "$CONF" --pasada clasificacion --lote "${nombre#clasificacion-}" || return $? ;;
-    adjudicacion-*) glue claude --dir "$CONF" --pasada adjudicacion --partido "${nombre#adjudicacion-}" || return $? ;;
-    *) glue claude --dir "$CONF" --pasada "$nombre" || return $? ;;
-  esac
+  opciones_sesion "$nombre"
+  glue claude --dir "$CONF" "${SESION[@]}" || return $?
   mkdir "$CONF/vacio" || return $?
   chmod 444 "$CONF"/*.json "$CONF"/*.txt && chmod 555 "$CONF/vacio" "$CONF" || return $?
-  (cd "$CONF" && shasum -a 256 settings.json agentes.json prompt.txt busquedas-web.txt herramientas.txt carpetas.txt) >"$PRIV/conf.sha"
+  (cd "$CONF" && find . -maxdepth 1 -type f -print | LC_ALL=C sort | xargs shasum -a 256) >"$PRIV/conf.sha"
 }
 borrar_conf() {
   [ -n "${CONF:-}" ] || return 0
@@ -610,25 +608,35 @@ auditar_conf() {
       mv "$f" "$EJ/claude/$pasada.intento-$n.${f##*/"$pasada".}" || return $?
     done
   fi
-  cp "$CONF/settings.json" "$EJ/claude/$pasada.settings.json" && cp "$CONF/agentes.json" "$EJ/claude/$pasada.agentes.json" &&
-    cp "$CONF/prompt.txt" "$EJ/claude/$pasada.prompt.txt" && cp "$CONF/busquedas-web.txt" "$EJ/claude/$pasada.busquedas-web.txt" &&
-    cp "$CONF/herramientas.txt" "$EJ/claude/$pasada.herramientas.txt" && cp "$CONF/carpetas.txt" "$EJ/claude/$pasada.carpetas.txt"
+  for f in "$CONF"/*; do
+    [ -f "$f" ] || continue
+    cp "$f" "$EJ/claude/$pasada.${f##*/}" || return $?
+  done
 }
 
-# herramientas_pasada: the pass's `--tools` (herramientas.txt), checked: only these built-in tools, and
-# WebFetch or WebSearch only in a search pass (busqueda, busqueda-reintento).
+# herramientas_pasada: the pass's `--tools` (herramientas.txt), checked: a search pass (busqueda,
+# busqueda-reintento) only Agent, WebFetch and WebSearch; any other pass none at all (empty).
 herramientas_pasada() {
   local pasada="$1" herramientas h
   herramientas="$(cat "$CONF/herramientas.txt")" || return 1
+  case "$pasada" in
+    busqueda | busqueda-reintento) ;;
+    *) [ -z "$herramientas" ] || { echo "la pasada $pasada no puede tener herramientas: $herramientas" >&2; return 1; }; return 0 ;;
+  esac
   printf '%s\n' "$herramientas" | grep -E -q -x '[A-Za-z]+(,[A-Za-z]+)*' || { echo "herramientas no válidas: $herramientas" >&2; return 1; }
   for h in $(printf '%s' "$herramientas" | tr ',' ' '); do
     case "$h" in
-      Agent | Read | Write | Glob | Grep) ;;
-      WebFetch | WebSearch) case "$pasada" in busqueda | busqueda-reintento) ;; *) echo "la pasada $pasada no puede tener $h" >&2; return 1 ;; esac ;;
+      Agent | WebFetch | WebSearch) ;;
       *) echo "herramienta no admitida: $h" >&2; return 1 ;;
     esac
   done
   printf '%s' "$herramientas"
+}
+# modelo_pasada: the pass's model (modelo.txt), haiku or opus.
+modelo_pasada() {
+  local m
+  m="$(cat "$CONF/modelo.txt")" || return 1
+  case "$m" in haiku | opus) printf '%s' "$m" ;; *) echo "modelo no admitido: $m" >&2; return 1 ;; esac
 }
 # ADD_DIRS: one --add-dir per folder of carpetas.txt, each the run folder, the cached documents or criterios/.
 carpetas_pasada() {
@@ -640,42 +648,62 @@ carpetas_pasada() {
       *) echo "carpeta no admitida para Claude: $c" >&2; return 1 ;;
     esac
   done <"$CONF/carpetas.txt"
-  [ ${#ADD_DIRS[@]} -gt 0 ] || { echo "la pasada no tiene carpetas" >&2; return 1; }
+}
+# prompts_pasada: how many calls the pass makes (prompt-1.txt … prompt-<n>.txt, all present).
+prompts_pasada() {
+  local n=0
+  while [ -f "$CONF/prompt-$((n + 1)).txt" ]; do n=$((n + 1)); done
+  [ "$n" -gt 0 ] && [ -z "$(cd "$CONF" && find . -maxdepth 1 -name 'prompt-*.txt' ! -name "prompt-[0-9]*.txt" -print)" ] || { echo "la pasada no tiene prompts" >&2; return 1; }
+  printf '%s' "$n"
 }
 
 claude_pasada() {
-  local pasada="$1" codigo=0 resto busquedas herramientas sin_web=""
+  local pasada="$1" codigo=0 resto busquedas herramientas modelo sin_web="" n i salidas=()
   preparar_conf "$pasada" || return $?
   (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || { echo "la configuración de Claude cambió antes de usarla"; return 1; }
   herramientas="$(herramientas_pasada "$pasada")" || return 1
   carpetas_pasada || return 1
+  modelo="$(modelo_pasada)" || return 1
+  n="$(prompts_pasada)" || return 1
   # A pass without WebFetch also has it switched off in Claude Code itself (on top of --tools and the deny rule).
   case ",$herramientas," in *,WebFetch,*) ;; *) sin_web=1 ;; esac
   # One WebSearch cap shared by every subagent of the pass, sized for all of it (diario.ts, limiteBusquedasWeb).
   busquedas="$(cat "$CONF/busquedas-web.txt")" || return 1
   case "$busquedas" in '' | *[!0-9]* | 0*) echo "límite de búsquedas no válido: $busquedas"; return 1 ;; esac
   sellar "$pasada" || return $?
-  # --restricted ignores user, project and local settings files: only --settings applies.
-  (
-    cd "$CONF/vacio" &&
-      con_limite "$LIMITE_CLAUDE" env CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION="$busquedas" ${sin_web:+CLAUDE_CODE_DISABLE_WEB_FETCH=1} "$N29_CLAUDE" -p \
-        --model opus \
-        --restricted \
-        --settings "$CONF/settings.json" \
-        --strict-mcp-config \
-        --agents "$CONF/agentes.json" \
-        --tools "$herramientas" \
-        --permission-mode dontAsk \
-        --permission-prompts none \
-        "${ADD_DIRS[@]}" \
-        --no-session-persistence \
-        --output-format json \
-        --max-budget-usd "$N29_PRESUPUESTO_USD" \
-        <"$CONF/prompt.txt" >"$PRIV/$pasada.salida.json"
-  ) || codigo=$?
+  # One call per prompt (a batch). --restricted ignores user, project and local settings files: only --settings
+  # applies. The answer comes back on stdout as structured output (--json-schema); the pass writes nothing.
+  i=1
+  while [ "$i" -le "$n" ]; do
+    echo "llamada $i de $n ($(wc -c <"$CONF/prompt-$i.txt" | tr -d ' ') caracteres)"
+    (
+      cd "$CONF/vacio" &&
+        con_limite "$LIMITE_CLAUDE" env CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION="$busquedas" ${sin_web:+CLAUDE_CODE_DISABLE_WEB_FETCH=1} "$N29_CLAUDE" -p \
+          --model "$modelo" \
+          --restricted \
+          --settings "$CONF/settings.json" \
+          --strict-mcp-config \
+          --agents "$CONF/agentes.json" \
+          --tools "$herramientas" \
+          --permission-mode dontAsk \
+          --permission-prompts none \
+          ${ADD_DIRS[@]+"${ADD_DIRS[@]}"} \
+          --no-session-persistence \
+          --output-format json \
+          --json-schema "$(cat "$CONF/esquema.json")" \
+          --max-budget-usd "$N29_PRESUPUESTO_USD" \
+          <"$CONF/prompt-$i.txt" >"$PRIV/$pasada.salida-$i.json"
+    ) || codigo=$?
+    salidas+=("$PRIV/$pasada.salida-$i.json")
+    i=$((i + 1))
+  done
   verificar_sello "$pasada" || codigo=1
+  # The script, not Claude, checks the answers and writes the pass's own files.
+  opciones_sesion "$pasada"
+  # An answer that is missing or does not match its schema is not written: the gate after the pass (busqueda-completa,
+  # clasificacion-completa, hechos-completo, adjudicacion-completa) finds it missing and retries or fails, as before.
+  glue juicio-guardar "${SESION[@]}" --salidas "${salidas[@]}" || echo "la sesión $pasada dejó respuestas que no valen: las comprobaciones siguientes deciden"
   # Search and classification sessions run before the adjudication: its answers must not exist yet.
-  # (A facts or party session may create only its own files: the seal checks every other.)
   if [ "$pasada" = busqueda ] || [ "$pasada" = busqueda-reintento ] || [ "${pasada#clasificacion-}" != "$pasada" ]; then
     resto="$(cd "$EJ" && find . -maxdepth 1 \( -name adjudicado -o -name 'hechos.json*' \) -print)"
     [ -z "$resto" ] || { printf 'la sesión %s dejó archivos de la adjudicación:\n%s\n' "$pasada" "$resto"; codigo=1; }
@@ -686,10 +714,9 @@ claude_pasada() {
   fi
   # Audit copy of what ran, made after the check so the pass cannot have touched it.
   auditar_conf "$pasada" || codigo=1
-  [ ! -f "$PRIV/$pasada.salida.json" ] || cp "$PRIV/$pasada.salida.json" "$EJ/claude/" || codigo=1
+  for i in "${salidas[@]}"; do [ ! -f "$i" ] || cp "$i" "$EJ/claude/" || codigo=1; done
   borrar_conf
-  [ "$codigo" = 0 ] || return $codigo
-  node -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); if (r.is_error) { console.error(r.result ?? r.subtype); process.exit(1); } console.log(r.result);' "$EJ/claude/$pasada.salida.json"
+  return $codigo
 }
 
 # The search gate. Exit 3 from the first check means it prepared a retry: one
@@ -710,23 +737,25 @@ paso_busqueda_completa() {
   glue busqueda-completa
 }
 
-# ensayar_sesion <nombre> <carpeta>: in --seco, a retry or batch session. The
-# configuration is built and checked as for Claude; the fixture answers in
-# <carpeta> that this session may create stand in for it, under the same seal.
+# ensayar_sesion <nombre> <carpeta…>: in --seco, one session rehearsed. The
+# configuration and the prompts are built and checked as for Claude; the
+# fixture answers in <carpeta…> become the structured output Claude would
+# return (diario.ts juicio-ensayo), and the same check and write as a live run
+# (juicio-guardar) apply, under the same seal.
 ensayar_sesion() {
-  local nombre="$1" fijos="$2" rutas
-  rutas="$(rutas_sesion "$nombre")" || return 1
+  local nombre="$1" f fijos=()
+  shift
+  for f in "$@"; do fijos+=(--fijos "$f"); done
   preparar_conf "$nombre" || return $?
   (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || return 1
-  herramientas_pasada "$nombre" >/dev/null && carpetas_pasada || return 1
+  herramientas_pasada "$nombre" >/dev/null && carpetas_pasada && modelo_pasada >/dev/null && prompts_pasada >/dev/null || return 1
   auditar_conf "$nombre" || return $?
   CONF="$CONF" perl -pi -e 's{\Q$ENV{CONF}\E}{<CONF>}g' "$EJ/claude/$nombre".* || return $?
   borrar_conf
+  opciones_sesion "$nombre"
+  glue juicio-ensayo "${SESION[@]}" "${fijos[@]}" >"$PRIV/$nombre.salida-1.json" || return 1
   sellar "$nombre" || return $?
-  (cd "$fijos" && find . -type f -print) | LC_ALL=C sort | while IFS= read -r f; do
-    grep -q -x -F "$f" "$rutas" || continue
-    mkdir -p "$(dirname "$EJ/$f")" && cp "$fijos/$f" "$EJ/$f" || exit 1
-  done || return 1
+  glue juicio-guardar "${SESION[@]}" --salidas "$PRIV/$nombre.salida-1.json" || echo "la sesión $nombre dejó respuestas que no valen: las comprobaciones siguientes deciden"
   verificar_sello "$nombre" || return 1
 }
 
@@ -751,21 +780,6 @@ paso_clasificacion() {
   : >"$EJ/clasificacion-reintento.iniciado"
   if [ "$SECO" = 1 ]; then ensayar_sesion clasificacion-reintento "$FIJOS/juicio-reintento" || return $?; else claude_pasada clasificacion-reintento || return $?; fi
   glue clasificacion-completa
-}
-
-# --seco builds and checks the Claude configuration too, without running Claude
-# (the facts and party sessions are rehearsed by ensayar_sesion).
-ensayar_conf() {
-  local pasada
-  for pasada in busqueda; do
-    preparar_conf "$pasada" || return $?
-    (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || return 1
-    herramientas_pasada "$pasada" >/dev/null && carpetas_pasada || return 1
-    auditar_conf "$pasada" || return $?
-    # The folder's name is random: <CONF> in the copies keeps the digest stable.
-    CONF="$CONF" perl -pi -e 's{\Q$ENV{CONF}\E}{<CONF>}g' "$EJ/claude/$pasada".* || return $?
-    borrar_conf
-  done
 }
 
 # One Claude session, or in --seco its rehearsal with the fixture's answers.
@@ -1045,8 +1059,12 @@ etapa sondeo fatal glue sondear
 
 # 2a. Search (Claude), then fetch what it found
 if [ "$SECO" = 1 ]; then
-  etapa configuracion-claude fatal ensayar_conf
-  etapa busqueda fatal copiar_juicio busqueda equidad
+  # With --atrasos-*, the fixture answers of the atrasos tasks too (fixtures/diario/juicio-atrasos).
+  if [ ${#ATRASOS[@]} -gt 0 ]; then
+    etapa busqueda fatal ensayar_sesion busqueda "$FIJOS/juicio" "$FIJOS/juicio-atrasos"
+  else
+    etapa busqueda fatal ensayar_sesion busqueda "$FIJOS/juicio"
+  fi
 else
   etapa busqueda fatal claude_pasada busqueda
 fi

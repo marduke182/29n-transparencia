@@ -4,6 +4,14 @@ Registro fechado de los cambios en el proceso, los criterios y los validadores. 
 
 ## 13 de noviembre de 2026
 
+### Recogida diaria: la clasificación, los hechos y la adjudicación, sin herramientas
+
+Cambio del proceso, no de los criterios; igual para los cuatro partidos. Ver [recogida](recogida/README.md#permisos-de-claude) y [agentes/08-diario.md](agentes/08-diario.md).
+
+1. **Sin capacidades.** La clasificación, los hechos compartidos y la adjudicación ya no son sesiones con subagentes que leen y escriben archivos: son llamadas a Claude sin ninguna herramienta, que el script lanza con todo el material en el prompt (las tareas, los documentos en caché, las clasificaciones, la ficha resumida, el registro de fuentes, las búsquedas iguales, los hechos y los criterios). Lo que viene de la web o de otro modelo va marcado como dato no fiable. La respuesta vuelve como JSON con un esquema fijo; el script la comprueba y escribe él los archivos. Las comprobaciones de siempre (citas literales en la caché, fuentes de emisores registrados, `fusionar`, los validadores del sitio y los sellos) no cambian.
+2. **Lotes.** Si el material de un día no cabe en una llamada, se parte en lotes por tamaño, en orden y de forma determinista, y los lotes quedan registrados: la clasificación, hasta 25 tareas y 120.000 caracteres de documentos por llamada (antes, 100 tareas por sesión); los hechos y cada adjudicación, una llamada si caben en 400.000 caracteres y, si no, varias con el mismo contexto. Los documentos se recortan a 40.000 caracteres.
+3. **Búsqueda.** Es la única pasada con capacidades: sus dos subagentes, con la búsqueda web y la lectura de páginas solo de los sitios permitidos. Ya no escribe archivos: devuelve las respuestas de los subagentes como JSON, y el script las guarda.
+
 ### Recogida diaria: restricciones duras de seguridad
 
 Cambios del proceso, no de los criterios; iguales para los cuatro partidos. Las restricciones las imponen los permisos de Claude Code, las listas de herramientas y el código, no el texto de los prompts. Ver [recogida](recogida/README.md#permisos-de-claude) y [agentes/08-diario.md](agentes/08-diario.md).

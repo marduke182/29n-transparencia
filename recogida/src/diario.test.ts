@@ -7,6 +7,7 @@ import { registrarBloqueos } from './bloqueos.ts';
 import { consultasFuente, type Alias, type Descubrimiento, type TareaBusqueda } from './descubrir.ts';
 import {
   AGENTES_POR_PASADA,
+  MODELO_JUICIO,
   ajustesClaude,
   carpetasDe,
   esPasadaBusqueda,
@@ -331,8 +332,12 @@ describe('clasificación por lotes', () => {
     expect(lotes.flat().map((t) => t.salida)).toEqual([...tareas.map((t) => t.salida)].sort());
     expect(lotes[0]!.map((t) => `${t.doc_id}.${t.partido}`)).toEqual(['a1.frente-amplio', 'a1.pp', 'a1.psoe', 'a1.vox', 'b2.frente-amplio']);
     expect(lotesClasificar(tareas, 5)).toEqual(lotesClasificar([...tareas].reverse(), 5));
-    expect(TAMANO_LOTE_CLASIFICAR).toBe(100);
-    expect(lotesClasificar(Array.from({ length: 617 }, (_, n) => tarea(`d${String(n).padStart(3, '0')}`, 'pp'))).length).toBe(7);
+    expect(TAMANO_LOTE_CLASIFICAR).toBe(25);
+    expect(lotesClasificar(Array.from({ length: 617 }, (_, n) => tarea(`d${String(n).padStart(3, '0')}`, 'pp'))).length).toBe(25);
+    // By size too: each batch carries at most 120 000 characters of documents, and a larger document goes alone.
+    const porTamano = lotesClasificar(tareas, 25, (t) => (t.doc_id === 'b2' ? 200_000 : 50_000));
+    expect(porTamano.map((l) => l.map((t) => `${t.doc_id}.${t.partido}`))).toEqual([['a1.frente-amplio', 'a1.pp'], ['a1.psoe', 'a1.vox'], ['b2.frente-amplio'], ['b2.pp'], ['b2.psoe'], ['b2.vox'], ['c3.frente-amplio', 'c3.pp'], ['c3.psoe', 'c3.vox']]);
+    expect(porTamano).toEqual(lotesClasificar([...tareas].reverse(), 25, (t) => (t.doc_id === 'b2' ? 200_000 : 50_000)));
     expect(nombreLote(3)).toBe('03');
   });
 
@@ -598,62 +603,35 @@ describe('prompts of agentes/08-diario.md', () => {
   const md = readFileSync(join(import.meta.dirname, '..', '..', 'agentes', '08-diario.md'), 'utf8');
   const valores = { FECHA, EJECUCION: '/c/ejecuciones/2026-11-10', CACHE: '/c', DATOS: '/w/apps/29n/src/data', CRITERIOS: '/t/criterios', ENCUESTAS: reglaEncuestas(FECHA), SATURACION: '10' };
 
-  it('extracts both session prompts and the five subagents with every placeholder filled', () => {
-    const salida = prompts(md, valores);
-    const textos = [salida.busqueda, salida.hechos, salida.adjudicacion, ...Object.values(salida.agentes).map((a) => a.prompt)];
-    expect(Object.keys(salida.agentes)).toEqual(['buscador-fuente', 'buscador-equidad', 'clasificador', 'redactor-hechos', 'adjudicador']);
+  it('extracts the session prompts and the two search subagents with every placeholder filled', () => {
+    const salida = prompts(md, { ...valores, PARTIDO: 'pp' });
+    const textos = [salida.busqueda, salida.clasificacion, salida.hechos, salida.adjudicacion, ...Object.values(salida.agentes).map((a) => a.prompt)];
+    expect(Object.keys(salida.agentes)).toEqual(['buscador-fuente', 'buscador-equidad']);
     expect(textos.every((t) => t.length > 200 && !t.includes('{{'))).toBe(true);
-    expect(salida.adjudicacion).toContain('/c/ejecuciones/2026-11-10/adjudicado/<partido>.json');
-    expect(salida.agentes.adjudicador!.prompt).toContain('diario-2026-11-10-<tipo>');
     expect(salida.agentes['buscador-fuente']!.prompt).toContain('returns 10 or more results');
-    // The retry session: the same prompt, on the subset files.
-    expect(salida.busqueda).toContain('Read /c/ejecuciones/2026-11-10/equidad-tareas.json.');
-    expect(salida['busqueda-reintento']).toBe(salida.busqueda.replace('/equidad-tareas.json', '/reintento-equidad.json').replace('/descubrir.json', '/reintento-fuentes.json'));
+    expect(salida.adjudicacion).toContain('diario-2026-11-10-<tipo>');
+    // The retry session: the same prompt, on the subset of tasks the CLI appends.
+    expect(salida['busqueda-reintento']).toBe(salida.busqueda);
+    expect(salida.busqueda).toContain('For each task of TAREAS_EQUIDAD below');
   });
 
-  it('pins every subagent to haiku or opus; none has Bash or Edit; the searchers, which read the open web, never Write', () => {
-    const { agentes } = prompts(md, valores);
-    for (const [nombre, def] of Object.entries(agentes)) {
-      expect(['haiku', 'opus']).toContain(def.model);
-      expect(def.tools.some((t) => ['Bash', 'Edit', 'NotebookEdit'].includes(t))).toBe(false);
-      if (nombre.startsWith('buscador-')) expect(def.tools).not.toContain('Write');
-    }
-    // The fact writer and the adjudicator write their own answer: a large one comes back to the session cut off.
-    // No web for the judgement subagents: they work from the cache only.
-    expect(agentes['redactor-hechos']!.tools).toEqual(['Read', 'Glob', 'Grep', 'Write']);
-    expect(agentes.adjudicador!.tools).toEqual(['Read', 'Glob', 'Grep', 'Write']);
-    expect(agentes['redactor-hechos']!.prompt).toContain('Write exactly one file: your answer, with the Write tool, at <path>/hechos.json');
-    expect(agentes.adjudicador!.prompt).toContain('Write exactly one file: your answer, with the Write tool, at /c/ejecuciones/2026-11-10/adjudicado/<id>.json.');
-    for (const nombre of ['redactor-hechos', 'adjudicador']) expect(agentes[nombre as 'adjudicador']!.prompt).toContain('then reply with only the file path:');
-    expect(agentes.clasificador!.tools).toEqual(['Read', 'Write']);
-    expect(agentes.clasificador!.prompt).toContain('Write exactly one file: your answer, with the Write tool, at /c/ejecuciones/2026-11-10/<salida>');
-  });
-
-  it('runs the classification sessions on their batch file only, and the adjudication without classifiers', () => {
-    const salida = prompts(md, { ...valores, TAREAS_CLASIFICAR: '/c/ejecuciones/2026-11-10/lotes/clasificar-03.json' });
-    expect(salida.clasificacion).toContain('Read /c/ejecuciones/2026-11-10/lotes/clasificar-03.json.');
-    expect(salida.clasificacion).toContain('Never write, edit, fix or complete any file.');
-    expect(salida.adjudicacion).not.toContain('"clasificador"');
-    expect(salida.adjudicacion).toContain('Do not launch any classifier.');
-  });
-
-  it('runs the shared facts in their own session, then one session per party with one adjudicator, waited for in the foreground', () => {
+  it('pins the searchers to haiku with only WebSearch and WebFetch; no session reads or writes a file', () => {
     const salida = prompts(md, valores);
-    expect(salida.hechos).toContain('subagent_type "redactor-hechos"');
-    expect(salida.hechos).not.toContain('subagent_type "adjudicador"');
-    expect(salida.hechos).toContain('It writes its answer to /c/ejecuciones/2026-11-10/hechos.json and replies with that path.');
-    const porPartido = ['frente-amplio', 'pp', 'psoe', 'vox'].map((p) => prompts(md, { ...valores, PARTIDO: p }).adjudicacion);
-    expect(porPartido[1]).toContain('as prompt exactly `PARTIDO=pp` and nothing else. It writes its answer to /c/ejecuciones/2026-11-10/adjudicado/pp.json and replies with that path.');
-    // The session never writes: it checks that the subagent's file exists.
-    for (const texto of [salida.hechos, porPartido[1]!]) {
-      expect(texto).toContain('Never write, edit, fix or complete any file.');
-      expect(texto).toMatch(/check with Glob that \S+ exists\. Do not read it\./);
+    for (const def of Object.values(salida.agentes)) {
+      expect(def.model).toBe('haiku');
+      expect(def.tools).toEqual(['WebSearch', 'WebFetch']);
     }
-    expect(porPartido[1]).not.toContain('redactor-hechos"');
-    // The same prompt for the four, but for the party id.
-    const sinPartido = porPartido.map((t, i) => t.split(`one party, ${['frente-amplio', 'pp', 'psoe', 'vox'][i]},`).join('one party, X,').replace(/PARTIDO=[a-z-]+|Adjudicar [a-z-]+|adjudicado\/[a-z-]+\.json|"partido": "[a-z-]+"/g, 'X'));
-    expect(new Set(sinPartido).size).toBe(1);
-    for (const texto of [salida.hechos, ...porPartido]) expect(texto).toContain('Run the subagent in the foreground: never set run_in_background.');
+    for (const texto of [salida.busqueda, salida.clasificacion, salida.hechos, salida.adjudicacion]) {
+      expect(texto).not.toMatch(/with the Write tool|Read \/|check with Glob|Write exactly one file/);
+      expect(texto).toContain('structured output');
+    }
+    expect(MODELO_JUICIO).toEqual({ clasificacion: 'haiku', hechos: 'opus', adjudicacion: 'opus' });
+  });
+
+  it('gives the four parties the same adjudication prompt but for the party id', () => {
+    const porPartido = ['frente-amplio', 'pp', 'psoe', 'vox'].map((p) => prompts(md, { ...valores, PARTIDO: p }).adjudicacion);
+    expect(porPartido[1]).toContain('Your party is pp: below, <id> means pp.');
+    expect(new Set(porPartido.map((t) => t.replace(/Your party is [a-z-]+: below, <id> means [a-z-]+\./, 'X'))).size).toBe(1);
   });
 
   it('switches the polls rule on the ban date and refuses unknown placeholders', () => {
@@ -813,169 +791,65 @@ describe('problemasAdjudicacion', () => {
   });
 });
 
-describe('ajustesClaude', () => {
-  const plantilla = readFileSync(join(import.meta.dirname, '..', 'claude-settings.diario.template.json'), 'utf8');
-  const valores = { EJ: '/c/ejecuciones/2026-11-10', N29_CACHE: '/c', T: '/t', HOME: '/h', CONF: '/tmp/conf' };
-
-  const escrituras = (ajustes: { permissions: { allow: string[]; deny: string[] } }, lista: 'allow' | 'deny') =>
-    ajustes.permissions[lista].filter((r) => /^(Write|Edit)\(\/\/c\/ejecuciones/.test(r)).sort();
-  const reglas = (rutas: readonly string[]) => rutas.flatMap((ruta) => [`Edit(//c/ejecuciones/2026-11-10/${ruta})`, `Write(//c/ejecuciones/2026-11-10/${ruta})`]).sort();
-
-  it('pass busqueda writes only busqueda/ and equidad/; a classification batch only its own files; hechos only hechos.json; a party session only its answer', () => {
-    const uno = JSON.parse(ajustesClaude(plantilla, valores, 'busqueda'));
-    const pp = ['adjudicado/pp.json', 'adjudicado/pp.json.error.txt'];
-    const dos = JSON.parse(ajustesClaude(plantilla, valores, 'adjudicacion', pp));
-    const hechos = JSON.parse(ajustesClaude(plantilla, valores, 'hechos', ['hechos.json', 'hechos.json.error.txt']));
-    expect(escrituras(uno, 'allow')).toEqual(reglas(['busqueda/**', 'equidad/**']));
-    expect(escrituras(dos, 'allow')).toEqual(reglas(pp));
-    expect(escrituras(hechos, 'allow')).toEqual(reglas(['hechos.json', 'hechos.json.error.txt']));
-    expect(() => ajustesClaude(plantilla, valores, 'hechos')).toThrow(/sesión de hechos necesita sus rutas/);
-    expect(() => ajustesClaude(plantilla, valores, 'hechos', ['hechos.json*'])).toThrow(/ruta de hechos no admitida/);
-    expect(uno.permissions.deny).toEqual(expect.arrayContaining(reglas(['clasificacion/**', 'adjudicado/**', 'hechos.json*'])));
-    expect(dos.permissions.deny).toEqual(expect.arrayContaining(reglas(['busqueda/**', 'equidad/**', 'clasificacion/**', 'hechos.json*'])));
-    expect(hechos.permissions.deny).toEqual(expect.arrayContaining(reglas(['busqueda/**', 'equidad/**', 'clasificacion/**', 'adjudicado/**'])));
-    expect(() => ajustesClaude(plantilla, valores, 'adjudicacion')).toThrow(/rutas de su partido/);
-    for (const mala of ['adjudicado/*.json', 'adjudicado/podemos.json', 'adjudicado/../hechos.json', 'hechos.json']) {
-      expect(() => ajustesClaude(plantilla, valores, 'adjudicacion', [mala]), mala).toThrow(/ruta de partido no admitida/);
-    }
-    expect(ESCRITURA_POR_PASADA).toEqual({ busqueda: ['busqueda/**', 'equidad/**'], 'busqueda-reintento': ['busqueda/**', 'equidad/**'], clasificacion: ['clasificacion/**'], hechos: ['hechos.json*'], adjudicacion: ['adjudicado/**'] });
-    const lote = ['clasificacion/aa11.pp.json', 'clasificacion/bb22.frente-amplio.json'];
-    const tres = JSON.parse(ajustesClaude(plantilla, valores, 'clasificacion', lote));
-    expect(escrituras(tres, 'allow')).toEqual(reglas(lote));
-    expect(tres.permissions.allow.some((r: string) => r.includes('clasificacion/**'))).toBe(false);
-    expect(tres.permissions.deny).toEqual(expect.arrayContaining(reglas(['busqueda/**', 'equidad/**', 'adjudicado/**', 'hechos.json*'])));
-    expect(() => ajustesClaude(plantilla, valores, 'clasificacion')).toThrow(/rutas de su lote/);
-    expect(() => ajustesClaude(plantilla, valores, 'adjudicacion', lote)).toThrow(/ruta de partido no admitida/);
-    expect(() => ajustesClaude(plantilla, valores, 'hechos', lote)).toThrow(/ruta de hechos no admitida/);
-    expect(() => ajustesClaude(plantilla, valores, 'busqueda', lote)).toThrow(/solo una sesión de clasificación, de hechos o de adjudicación/);
-    for (const mala of ['clasificacion/*.pp.json', 'clasificacion/../x.json', 'adjudicado/pp.json', 'clasificacion/aa.podemos.json']) {
-      expect(() => ajustesClaude(plantilla, valores, 'clasificacion', [mala]), mala).toThrow(/ruta de lote no admitida/);
-    }
-    // The retry session writes what pass 1 writes, and is denied only the adjudication's answers.
-    const reintento = JSON.parse(ajustesClaude(plantilla, valores, 'busqueda-reintento'));
-    expect(escrituras(reintento, 'allow')).toEqual(reglas(['busqueda/**', 'equidad/**']));
-    expect(reintento.permissions.deny).toEqual(expect.arrayContaining(reglas(['clasificacion/**', 'adjudicado/**', 'hechos.json*'])));
-    for (const regla of reglas(['busqueda/**', 'equidad/**'])) expect(reintento.permissions.deny).not.toContain(regla);
-  });
-
-  it('fills every placeholder, allows no Bash, and denies the sensitive paths', () => {
-    const ajustes = JSON.parse(ajustesClaude(plantilla, valores, 'busqueda'));
-    expect(JSON.stringify(ajustes)).not.toMatch(/__[A-Z0-9_]+__/);
-    expect(ajustes.permissions.allow.some((r: string) => r.startsWith('Bash'))).toBe(false);
-    expect(ajustes.permissions.deny).toEqual(expect.arrayContaining(['Bash', 'NotebookEdit', 'mcp__*', 'Write(//**/.claude/**)', 'Write(//**/*.mjs)', 'Read(//tmp/conf/**)', 'Read(//c/ejecuciones/2026-11-10/diario.log)']));
-    expect(ajustes.disableAllHooks).toBe(true);
-    expect(ajustes.enableAllProjectMcpServers).toBe(false);
-    expect(ajustes.permissions.defaultMode).toBe('dontAsk');
-  });
-
-  it('denies WebFetch of the sites whose robots.txt excludes Claude\'s agents in every pass, subdomains included', () => {
-    const pasadas: [Parameters<typeof ajustesClaude>[2], string[] | undefined][] = [
-      ['busqueda', undefined],
-      ['busqueda-reintento', undefined],
-      ['clasificacion', ['clasificacion/aa11.pp.json']],
-      ['hechos', ['hechos.json']],
-      ['adjudicacion', ['adjudicado/pp.json']],
-    ];
-    for (const [pasada, rutas] of pasadas) {
-      const ajustes = JSON.parse(ajustesClaude(plantilla, valores, pasada, rutas, ['otro-medio.es']));
-      expect(ajustes.permissions.deny, pasada).toEqual(
-        expect.arrayContaining(['abc.es', 'elmundo.es', 'elpais.com', 'otro-medio.es'].flatMap((h) => [`WebFetch(domain:${h})`, `WebFetch(domain:*.${h})`])),
-      );
-      // Without the registry the fixed list still applies.
-      expect(JSON.parse(ajustesClaude(plantilla, valores, pasada, rutas)).permissions.deny, pasada).toEqual(expect.arrayContaining(['WebFetch(domain:elpais.com)', 'WebFetch(domain:*.elpais.com)']));
-    }
-    expect(() => ajustesClaude(plantilla, valores, 'busqueda', undefined, ['*.es'])).toThrow(/host no admitido/);
-    expect(() => ajustesClaude(plantilla, valores, 'busqueda', undefined, ['a.es)'])).toThrow(/host no admitido/);
-  });
-
-  it('refuses paths that could widen a rule, a template that allows writes or Bash, and an unknown pass', () => {
-    expect(() => ajustesClaude(plantilla, { ...valores, EJ: '/c/**' }, 'busqueda')).toThrow(/ruta no admitida/);
-    expect(() => ajustesClaude(plantilla, { ...valores, CONF: 'relativa' }, 'busqueda')).toThrow(/ruta no admitida/);
-    expect(() => ajustesClaude(plantilla.replace('"allow": []', '"allow": ["Bash(node *)"]'), valores, 'busqueda')).toThrow(/no puede permitir/);
-    expect(() => ajustesClaude(plantilla.replace('"allow": []', '"allow": ["Write(/__EJ__/busqueda/**)"]'), valores, 'busqueda')).toThrow(/no puede permitir/);
-    expect(() => ajustesClaude(plantilla.replace('"allow": []', '"allow": ["Glob"]'), valores, 'busqueda')).toThrow(/no puede permitir/);
-    expect(() => ajustesClaude(plantilla.replace('"allow": []', '"additionalDirectories": ["/"], "allow": []'), valores, 'busqueda')).toThrow(/carpetas de cada pasada/);
-    expect(() => ajustesClaude(plantilla, valores, 'otra' as never)).toThrow(/pasada desconocida/);
-    expect(() => ajustesClaude(plantilla, { EJ: '/c' }, 'busqueda')).toThrow(/marcador desconocido/);
-  });
-});
-
 describe('permisos de Claude: restricciones duras por pasada', () => {
   const plantilla = readFileSync(join(import.meta.dirname, '..', 'claude-settings.diario.template.json'), 'utf8');
   const valores = { EJ: '/c/ejecuciones/2026-11-10', N29_CACHE: '/c', T: '/t', HOME: '/h', CONF: '/tmp/conf' };
   const md = readFileSync(join(import.meta.dirname, '..', '..', 'agentes', '08-diario.md'), 'utf8');
   const { agentes } = prompts(md, { FECHA, EJECUCION: valores.EJ, CACHE: '/c', DATOS: `${valores.EJ}/antes`, CRITERIOS: '/t/criterios', ENCUESTAS: reglaEncuestas(FECHA), SATURACION: '10' });
   const hostsBusqueda = ['medio.es', 'docs.python.org', 'elpais.com'];
-  type Ajustes = { permissions: { allow: string[]; deny: string[]; additionalDirectories: string[]; defaultMode: string } };
-  const pasadas: [Pasada, string[] | undefined][] = [
-    ['busqueda', undefined],
-    ['busqueda-reintento', undefined],
-    ['clasificacion', ['clasificacion/aa11.pp.json']],
-    ['hechos', ['hechos.json']],
-    ['adjudicacion', ['adjudicado/pp.json']],
-  ];
-  const generar = (pasada: Pasada, rutas: string[] | undefined): Ajustes =>
-    JSON.parse(ajustesClaude(plantilla, valores, pasada, rutas, ['otro-medio.es'], esPasadaBusqueda(pasada) ? hostsBusqueda : []));
-  const juicio = pasadas.filter(([p]) => !esPasadaBusqueda(p));
+  type Ajustes = { permissions: { allow: string[]; deny: string[]; additionalDirectories: string[]; defaultMode: string }; disableAllHooks: boolean; enableAllProjectMcpServers: boolean };
+  const pasadas: Pasada[] = ['busqueda', 'busqueda-reintento', 'clasificacion', 'hechos', 'adjudicacion'];
+  const generar = (pasada: Pasada): Ajustes => JSON.parse(ajustesClaude(plantilla, valores, pasada, ['otro-medio.es'], esPasadaBusqueda(pasada) ? hostsBusqueda : []));
+  const juicio = pasadas.filter((p) => !esPasadaBusqueda(p));
 
-  it('allows no rule without a specifier but the reviewed list (WebSearch, search passes only), in dontAsk mode', () => {
-    expect(PERMITIDAS_SIN_ESPECIFICADOR).toEqual(['WebSearch']);
-    for (const [pasada, rutas] of pasadas) {
-      const ajustes = generar(pasada, rutas);
+  it('allows no rule without a specifier but the reviewed list, reads and writes no file, in dontAsk mode with no hooks or MCP', () => {
+    expect(PERMITIDAS_SIN_ESPECIFICADOR).toEqual(['StructuredOutput', 'WebSearch']);
+    for (const pasada of pasadas) {
+      const ajustes = generar(pasada);
       expect(ajustes.permissions.defaultMode, pasada).toBe('dontAsk');
+      expect(ajustes.disableAllHooks).toBe(true);
+      expect(ajustes.enableAllProjectMcpServers).toBe(false);
       const sinEspecificador = ajustes.permissions.allow.filter((regla) => !/^[A-Za-z]+\(.+\)$/.test(regla));
-      expect(sinEspecificador, pasada).toEqual(esPasadaBusqueda(pasada) ? ['WebSearch'] : []);
-      // No allow rule may name a tool that runs code, or Glob and Grep (Read rules cover them).
-      expect(ajustes.permissions.allow.filter((r) => /^(Bash|PowerShell|Monitor|NotebookEdit|Glob|Grep|Skill|mcp__)/.test(r)), pasada).toEqual([]);
-      expect(ajustes.permissions.deny, pasada).toEqual(expect.arrayContaining(['Bash', 'PowerShell', 'NotebookEdit', 'mcp__*', 'Agent(general-purpose)', 'Agent(Explore)']));
+      expect(sinEspecificador, pasada).toEqual(esPasadaBusqueda(pasada) ? ['StructuredOutput', 'WebSearch'] : ['StructuredOutput']);
+      expect(ajustes.permissions.allow.filter((r) => /^(Bash|PowerShell|Monitor|NotebookEdit|Glob|Grep|Read|Write|Edit|Skill|mcp__)/.test(r)), pasada).toEqual([]);
+      expect(ajustes.permissions.deny, pasada).toEqual(expect.arrayContaining(['Bash', 'PowerShell', 'NotebookEdit', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__*']));
+      expect(ajustes.permissions.additionalDirectories, pasada).toEqual([]);
+      expect(carpetasDe(pasada, valores), pasada).toEqual([]);
     }
+    expect(() => ajustesClaude(plantilla.replace('"allow": []', '"allow": ["Bash(node *)"]'), valores, 'busqueda')).toThrow(/no puede permitir/);
+    expect(() => ajustesClaude(plantilla.replace('"allow": []', '"allow": ["Glob"]'), valores, 'busqueda')).toThrow(/no puede permitir/);
+    expect(() => ajustesClaude(plantilla.replace('"allow": []', '"additionalDirectories": ["/"], "allow": []'), valores, 'busqueda')).toThrow(/carpetas de cada pasada/);
+    expect(() => ajustesClaude(plantilla, { ...valores, EJ: '/c/**' }, 'busqueda')).toThrow(/ruta no admitida/);
+    expect(() => ajustesClaude(plantilla, valores, 'otra' as never)).toThrow(/pasada desconocida/);
+    expect(() => ajustesClaude(plantilla, { EJ: '/c' }, 'busqueda')).toThrow(/marcador desconocido/);
   });
 
-  it('gives the classification, facts and adjudication passes no WebFetch or WebSearch at all: tools, subagents, allow, and a bare deny', () => {
-    for (const [pasada, rutas] of juicio) {
-      const ajustes = generar(pasada, rutas);
-      expect(ajustes.permissions.allow.filter((r) => /^Web(Fetch|Search)/.test(r)), pasada).toEqual([]);
-      expect(ajustes.permissions.deny, pasada).toEqual(expect.arrayContaining(['WebFetch', 'WebSearch']));
-      expect(herramientasDe(pasada), pasada).not.toEqual(expect.arrayContaining(['WebFetch']));
-      expect(herramientasDe(pasada).filter((h) => h.startsWith('Web')), pasada).toEqual([]);
-      for (const nombre of AGENTES_POR_PASADA[pasada]) expect(agentes[nombre]!.tools.filter((h: string) => h.startsWith('Web')), nombre).toEqual([]);
-      expect(() => ajustesClaude(plantilla, valores, pasada, rutas, [], ['medio.es']), pasada).toThrow(/no tiene WebFetch/);
+  it('gives the classification, facts and adjudication passes no tool at all: --tools empty, no subagent, Agent, WebFetch and WebSearch denied', () => {
+    for (const pasada of juicio) {
+      const ajustes = generar(pasada);
+      expect(herramientasDe(pasada), pasada).toEqual([]);
+      expect(AGENTES_POR_PASADA[pasada], pasada).toEqual([]);
+      expect(ajustes.permissions.allow, pasada).toEqual(['StructuredOutput']);
+      expect(ajustes.permissions.deny, pasada).toEqual(expect.arrayContaining(['Agent', 'WebFetch', 'WebSearch']));
+      expect(() => ajustesClaude(plantilla, valores, pasada, [], ['medio.es']), pasada).toThrow(/no tiene WebFetch/);
     }
   });
 
   it('lets the search passes WebFetch only the listed hosts, never by a bare rule, and denies the preapproved domains and the vetoed hosts', () => {
     for (const pasada of ['busqueda', 'busqueda-reintento'] as const) {
-      const ajustes = generar(pasada, undefined);
-      const fetch = ajustes.permissions.allow.filter((r) => r.startsWith('WebFetch'));
-      expect(fetch, pasada).toEqual(['WebFetch(domain:medio.es)', 'WebFetch(domain:*.medio.es)', 'WebFetch(domain:docs.python.org)', 'WebFetch(domain:*.docs.python.org)']);
+      const ajustes = generar(pasada);
+      expect(herramientasDe(pasada)).toEqual(['Agent', 'WebFetch', 'WebSearch']);
+      expect(ajustes.permissions.allow.filter((r) => r.startsWith('Agent('))).toEqual(['Agent(buscador-fuente)', 'Agent(buscador-equidad)']);
+      expect(ajustes.permissions.deny).toEqual(expect.arrayContaining(['Agent(general-purpose)', 'Agent(Explore)']));
+      expect(ajustes.permissions.allow.filter((r) => r.startsWith('WebFetch'))).toEqual(['WebFetch(domain:medio.es)', 'WebFetch(domain:*.medio.es)', 'WebFetch(domain:docs.python.org)', 'WebFetch(domain:*.docs.python.org)']);
       expect(ajustes.permissions.allow).not.toContain('WebFetch');
       expect(ajustes.permissions.deny).not.toContain('WebFetch');
-      expect(ajustes.permissions.deny.filter((r) => r === 'WebFetch(domain:*)')).toEqual([]);
-      // A preapproved documentation domain is denied unless the run lists it; a vetoed host stays denied.
-      expect(ajustes.permissions.deny).toEqual(expect.arrayContaining(['WebFetch(domain:github.com)', 'WebFetch(domain:developer.mozilla.org)', 'WebFetch(domain:elpais.com)', 'WebFetch(domain:*.otro-medio.es)']));
+      expect(ajustes.permissions.deny).toEqual(expect.arrayContaining(['WebFetch(domain:github.com)', 'WebFetch(domain:elpais.com)', 'WebFetch(domain:*.elpais.com)', 'WebFetch(domain:*.otro-medio.es)', 'WebFetch(domain:abc.es)']));
       expect(ajustes.permissions.deny).not.toContain('WebFetch(domain:docs.python.org)');
-      expect(herramientasDe(pasada)).toEqual(['Agent', 'Read', 'Write', 'Glob', 'Grep', 'WebFetch', 'WebSearch']);
     }
     expect(WEBFETCH_PREAPROBADOS).toEqual([...WEBFETCH_PREAPROBADOS].sort());
-  });
-
-  it('reads only the pass\'s own folders, and launches only its own subagents', () => {
-    const carpetas: Record<Pasada, string[]> = {
-      busqueda: ['/c/ejecuciones/2026-11-10'],
-      'busqueda-reintento': ['/c/ejecuciones/2026-11-10'],
-      clasificacion: ['/c/ejecuciones/2026-11-10', '/c/docs'],
-      hechos: ['/c/ejecuciones/2026-11-10', '/c/docs'],
-      adjudicacion: ['/c/ejecuciones/2026-11-10', '/c/docs', '/t/criterios'],
-    };
-    for (const [pasada, rutas] of pasadas) {
-      const ajustes = generar(pasada, rutas);
-      expect(ajustes.permissions.additionalDirectories, pasada).toEqual(carpetas[pasada]);
-      expect(carpetasDe(pasada, valores), pasada).toEqual(carpetas[pasada]);
-      expect(ajustes.permissions.allow.filter((r) => r.startsWith('Read(')), pasada).toEqual(carpetas[pasada].map((c) => `Read(/${c}/**)`));
-      const propios = AGENTES_POR_PASADA[pasada];
-      expect(ajustes.permissions.allow.filter((r) => r.startsWith('Agent(')), pasada).toEqual(propios.map((n) => `Agent(${n})`));
-      for (const otro of Object.keys(agentes).filter((n) => !(propios as readonly string[]).includes(n))) expect(ajustes.permissions.deny, pasada).toContain(`Agent(${otro})`);
-    }
+    expect(Object.values(agentes).every((a) => a.tools.every((h: string) => h === 'WebSearch' || h === 'WebFetch'))).toBe(true);
+    expect(() => ajustesClaude(plantilla, valores, 'busqueda', ['*.es'])).toThrow(/host no admitido/);
   });
 
   it('collects the WebFetch hosts of the search pass from the registry and the equal-search tasks', () => {

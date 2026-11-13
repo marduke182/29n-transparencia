@@ -6,7 +6,7 @@
  * cached source (the citas check after the merge failed).
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -35,6 +35,23 @@ describe('diario.sh --seco', () => {
   it('ends without a failed stage (citas included)', () => {
     expect(codigo, salida).toBe(0);
     expect(salida).toMatch(/Seco terminado/);
+  });
+
+  it('generates a call with no tools for every judgement pass, and only Agent and the web for the search, all answering on stdout', () => {
+    const claude = join(raiz, 'cache', 'ejecuciones', FECHA, 'claude');
+    const leer = (f: string) => readFileSync(join(claude, f), 'utf8');
+    const sesiones = readdirSync(claude).filter((f) => f.endsWith('.herramientas.txt')).map((f) => f.replace('.herramientas.txt', ''));
+    expect(sesiones).toEqual(expect.arrayContaining(['busqueda', 'clasificacion-01', 'hechos', 'adjudicacion-pp']));
+    for (const sesion of sesiones) {
+      const busqueda = sesion.startsWith('busqueda');
+      expect(leer(`${sesion}.herramientas.txt`), sesion).toBe(busqueda ? 'Agent,WebFetch,WebSearch\n' : '\n');
+      expect(leer(`${sesion}.carpetas.txt`), sesion).toBe('');
+      const ajustes = JSON.parse(leer(`${sesion}.settings.json`));
+      if (!busqueda) expect(ajustes.permissions.allow, sesion).toEqual(['StructuredOutput']);
+      expect(JSON.parse(leer(`${sesion}.esquema.json`)).type, sesion).toBe('object');
+      expect(JSON.parse(leer(`${sesion}.agentes.json`)), sesion).toEqual(busqueda ? expect.objectContaining({ 'buscador-fuente': expect.anything() }) : {});
+      expect(JSON.parse(leer(`${sesion}.lotes.json`)).length, sesion).toBe(busqueda ? 0 : readdirSync(claude).filter((f) => f.startsWith(`${sesion}.prompt-`)).length);
+    }
   });
 
   it('runs every perfil to its party sheet corte and publishes the held documents it reaches', () => {

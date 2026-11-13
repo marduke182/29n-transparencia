@@ -154,17 +154,19 @@ describe('diario.sh --reanudar', { timeout: 60_000 }, () => {
     const valida = (p: string) => `{"partido": "${p}", "propuestas": [], "decisiones": []}\n`;
     writeFileSync(join(ej, 'adjudicado', 'frente-amplio.json'), valida('frente-amplio'));
     writeFileSync(join(ej, 'adjudicado', 'vox.json.error.txt'), '{"partido": "vox", ...\n');
-    // A stand-in session: its subagent writes its party's answer where the prompt says, except in pp's first session, where it writes nothing.
+    // A stand-in call: it answers its party's adjudication on stdout, except in pp's first call, where it returns no structured output.
     const sesiones = join(raiz, 'sesiones.txt');
     writeFileSync(
       join(raiz, 'bin', 'claude'),
       `#!/bin/sh
 [ "$1" = --version ] && { echo "2.1.322 (Claude Code)"; exit 0; }
-destino="$(sed -n 's/.*It writes its answer to \\(.*\\) and replies with that path\\.$/\\1/p' | head -n 1)"
-p="$(basename "$destino" .json)"
+p="$(sed -n 's/^Your party is \\([a-z-]*\\):.*/\\1/p' | head -n 1)"
 echo "$p" >>'${sesiones}'
-if [ "$p" != pp ] || [ "$(grep -c -x pp '${sesiones}')" = 2 ]; then printf '{"partido": "%s", "propuestas": [], "decisiones": []}\\n' "$p" >"$destino"; fi
-echo '{"is_error": false, "result": "ok"}'
+if [ "$p" != pp ] || [ "$(grep -c -x pp '${sesiones}')" = 2 ]; then
+  printf '{"is_error": false, "structured_output": {"partido": "%s", "propuestas": [], "decisiones": [], "objeciones_hechos": [], "hosts_sin_registrar": [], "avisos": []}}\\n' "$p"
+else
+  echo '{"is_error": false, "result": "sin salida estructurada"}'
+fi
 `,
     );
     const { salida } = diario('--reanudar', sellar());
@@ -178,9 +180,12 @@ echo '{"is_error": false, "result": "ok"}'
     expect(readFileSync(join(ej, 'anterior', 'adjudicacion-1', 'adjudicado', 'vox.json.error.txt'), 'utf8')).toBe('{"partido": "vox", ...\n');
     // Each session's audit copy under its own name; pp's first attempt kept as .intento-1.
     const claude = readdirSync(join(ej, 'claude'));
-    expect(claude).toEqual(expect.arrayContaining(['adjudicacion-pp.prompt.txt', 'adjudicacion-pp.intento-1.prompt.txt', 'adjudicacion-vox.settings.json']));
+    expect(claude).toEqual(expect.arrayContaining(['adjudicacion-pp.prompt-1.txt', 'adjudicacion-pp.intento-1.prompt-1.txt', 'adjudicacion-vox.settings.json', 'adjudicacion-vox.esquema.json']));
     expect(claude.some((f) => f.startsWith('hechos.') || f.startsWith('adjudicacion-frente-amplio.'))).toBe(false);
-    expect(readFileSync(join(ej, 'claude', 'adjudicacion-pp.prompt.txt'), 'utf8')).toContain('`PARTIDO=pp`');
+    expect(readFileSync(join(ej, 'claude', 'adjudicacion-pp.prompt-1.txt'), 'utf8')).toContain('Your party is pp:');
+    // The script wrote the answer from the structured output; pp's failed first call left only its error file, set aside.
+    expect(JSON.parse(readFileSync(join(ej, 'adjudicado', 'pp.json'), 'utf8')).partido).toBe('pp');
+    expect(readFileSync(join(ej, 'anterior', 'adjudicacion-2', 'adjudicado', 'pp.json.error.txt'), 'utf8')).toMatch(/structured_output/);
   });
 
   // A day stopped at the site checks after the merge (11 Nov 2026): the merge runs again from the kept adjudication.
