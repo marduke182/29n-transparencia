@@ -1,0 +1,23 @@
+{
+  "doc_id": "0cad46f5803fb0ca",
+  "partido": "psoe",
+  "url": "https://psoe.example/prensa/2026/11/10/nota-programa",
+  "relevante": true,
+  "motivo": "Ejemplo.",
+  "fecha_publicacion": null,
+  "titular": "Ejemplo",
+  "medio": "psoe.example",
+  "firma": null,
+  "genero": "noticia",
+  "fuente_primaria": false,
+  "pregunta": null,
+  "contexto": false,
+  "seccion": null,
+  "habla": null,
+  "tema": "POL",
+  "afirmaciones": [],
+  "otros_partidos": [],
+  "hecho_compartido": false,
+  "estado_sugerido": "PARCIAL",
+  "matiz_sugerido": null
+}

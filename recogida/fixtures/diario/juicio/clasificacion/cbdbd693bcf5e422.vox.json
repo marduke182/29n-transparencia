@@ -1,0 +1,23 @@
+{
+  "doc_id": "cbdbd693bcf5e422",
+  "partido": "vox",
+  "url": "https://medio-b.example/politica/2026/11/09/persona-cuatro-mitin",
+  "relevante": true,
+  "motivo": "Ejemplo.",
+  "fecha_publicacion": null,
+  "titular": "Ejemplo",
+  "medio": "medio-b.example",
+  "firma": null,
+  "genero": "noticia",
+  "fuente_primaria": false,
+  "pregunta": null,
+  "contexto": false,
+  "seccion": null,
+  "habla": null,
+  "tema": "POL",
+  "afirmaciones": [],
+  "otros_partidos": [],
+  "hecho_compartido": false,
+  "estado_sugerido": "PARCIAL",
+  "matiz_sugerido": null
+}

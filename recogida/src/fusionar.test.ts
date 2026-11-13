@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SECCIONES, clavesDe, fusionar, huella, maxRef, normalizar, ordenarItem } from './fusionar.ts';
+import { SECCIONES, clavesDe, fusionar, huella, maxRef, motivoRechazo, normalizar, ordenarItem } from './fusionar.ts';
 
 let raiz: string;
 let sitio: string;
@@ -170,6 +170,39 @@ describe('fusionar', () => {
     expect(segundo.cambios[0]).toMatchObject({ añadidos: [], duplicados: 1 });
   });
 
+});
+
+describe('motivoRechazo: the site publication rules it shares', () => {
+  const FECHA = '2026-11-11';
+  const quince = 'han decidido despertar de la siesta después de ocho años sin salir a la calle';
+  const catorce = 'han decidido despertar de la siesta después de ocho años sin salir afuera';
+  const bulo = (estado: string) =>
+    propuesta('vox', 'verificacion', 'Según Maldita.es, no hay tal acuerdo.', 'https://maldita.es/desinfo/x', {
+      pregunta: 'Q6',
+      item: { texto: 'Según Maldita.es, no hay tal acuerdo.', estado, matiz: 'Según el relato de Maldita.es.', bulo: true, veredicto: 'Engañoso', fuentes: [{ medio: 'Maldita.es', url: 'https://maldita.es/desinfo/x' }] },
+    });
+
+  it('refuses a bulo that is not VERIFICADO (the site requires it for every party)', () => {
+    expect(motivoRechazo(bulo('PARCIAL') as never, FECHA)).toMatch(/bulo.*VERIFICADO/);
+    expect(motivoRechazo(bulo('VERIFICADO') as never, FECHA)).toBeUndefined();
+  });
+
+  it('refuses quotes of 15 words or more, in texto «…» or in cita, like the site', () => {
+    expect(motivoRechazo(propuesta('pp', 'temas', `Tellado dijo que los sindicatos «${catorce}».`, 'https://medio.es/t') as never, FECHA)).toBeUndefined();
+    expect(motivoRechazo(propuesta('pp', 'temas', `Tellado dijo que los sindicatos «${quince}».`, 'https://medio.es/t') as never, FECHA)).toMatch(/15 palabras/);
+    const conCita = propuesta('pp', 'temas', 'Tellado habló de los sindicatos.', 'https://medio.es/t');
+    (conCita.item as Record<string, unknown>).cita = { texto: quince, url: 'https://medio.es/t' };
+    expect(motivoRechazo(conCita as never, FECHA)).toMatch(/15 palabras/);
+  });
+
+  it('refuses a quote that is not literally in the cached text of the URL it cites (citas.ts), only with a cache reader', () => {
+    const leer = (url: string) => (url === 'https://medio.es/t' ? 'Tellado dijo que los sindicatos han despertado de la siesta.' : undefined);
+    const con = (texto: string, url = 'https://medio.es/t') => propuesta('pp', 'temas', texto, url) as never;
+    expect(motivoRechazo(con('Tellado dijo que «los sindicatos han despertado».'), FECHA, leer)).toBeUndefined();
+    expect(motivoRechazo(con('Tellado dijo que «los sindicatos se han despertado».'), FECHA, leer)).toBe('texto: cita «los sindicatos se han despertado» no aparece en https://medio.es/t');
+    expect(motivoRechazo(con('Tellado dijo que «los sindicatos».', 'https://medio.es/otra'), FECHA, leer)).toMatch(/^texto: cita «los sindicatos» sin texto en caché/);
+    expect(motivoRechazo(con('Tellado dijo que «los sindicatos se han despertado».'), FECHA)).toBeUndefined();
+  });
 });
 
 describe('fusionar: perfiles', () => {

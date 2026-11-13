@@ -23,8 +23,8 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import https from 'node:https';
 import { BlockList, isIP } from 'node:net';
 import { dirname } from 'node:path';
-import { guardar, textoDePdf, urlCanonica, type Guardado, type Via } from './cache.ts';
-import { textoDeHtml } from './buzon.ts';
+import { guardar, textoDePdf, urlCanonica, type Guardado, type PartyId, type Via } from './cache.ts';
+import { ORIGEN_ENLACES, textoDeHtml, type AvisoEnlace, type Enlace } from './buzon.ts';
 
 export const USER_AGENT = '29n-transparencia-recogida/1.0 (+https://29n.jrquintana.dev/metodologia/)';
 /** Product token matched against robots.txt groups. */
@@ -547,4 +547,46 @@ export async function guardarDesdeFeed(raizCache: string, fecha: string, item: {
     texto: textoDeHtml(item.contenido),
     extra: { listado: item.listado, ...item.extra },
   });
+}
+
+export interface ResultadoEnlace {
+  linea: number;
+  url: string;
+  partido?: PartyId;
+  /** The fetch result: ok, bloqueado, robots, solo-buzon or error. */
+  estado: string;
+  id?: string;
+  url_canonica?: string;
+  /** nuevo, version or sin-cambios (already cached with the same content: not new today, so not classified again). */
+  cache?: Guardado['estado'];
+  motivo?: string;
+}
+
+/**
+ * Fetches each link through the same Traedor and cache as every discovered
+ * article (https, public address at connect, robots.txt, blocked and
+ * inbox-only hosts, redirects, size limits), with no date window. Stored with
+ * via 'web' and `origen: buzon-enlaces`; the owner's party note stays in
+ * enlaces.json only, never in the cached meta.json that classifiers and
+ * adjudicators read. A link not fetched becomes an aviso.
+ */
+export async function traerEnlaces(traedor: Traedor, raizCache: string, lista: { enlaces: Enlace[]; avisos: AvisoEnlace[] }): Promise<{ enlaces: ResultadoEnlace[]; avisos: AvisoEnlace[] }> {
+  const avisos = [...lista.avisos];
+  const enlaces: ResultadoEnlace[] = [];
+  for (const enlace of lista.enlaces) {
+    const { respuesta, guardado } = await traerYGuardar(traedor, raizCache, enlace.url, 'web', { origen: ORIGEN_ENLACES });
+    const motivo = respuesta.estado === 'bloqueado' ? respuesta.bloqueo.motivo : 'motivo' in respuesta ? respuesta.motivo : undefined;
+    enlaces.push({
+      ...enlace,
+      estado: respuesta.estado,
+      ...(guardado ? { id: guardado.id, url_canonica: guardado.meta.url_canonica, cache: guardado.estado } : {}),
+      ...(motivo ? { motivo } : {}),
+    });
+    if (respuesta.estado !== 'ok') avisos.push({ linea: enlace.linea, texto: enlace.url, motivo: `no se trajo (${respuesta.estado}${motivo ? `: ${motivo}` : ''})` });
+    else if (guardado?.estado === 'sin-cambios' && guardado.meta.consultado !== traedor.fecha) {
+      avisos.push({ linea: enlace.linea, texto: enlace.url, motivo: `ya estaba en la caché sin cambios desde el ${guardado.meta.consultado}: no es nuevo hoy` });
+    }
+  }
+  avisos.sort((a, b) => a.linea - b.linea);
+  return { enlaces, avisos };
 }

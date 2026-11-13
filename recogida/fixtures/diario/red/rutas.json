@@ -1,8 +1,13 @@
 {
-  "https://medio-a.example/2026/11/09/feijoo-iva-luz": {
+  "https://medio-a.example/2026/11/08/debate-vivienda": {
     "estado": 200,
     "tipo": "text/html; charset=utf-8",
-    "archivo": "medio-a-feijoo-iva-luz.html"
+    "archivo": "medio-a-debate-vivienda.html"
+  },
+  "https://medio-a.example/2026/11/09/persona-dos-iva-luz": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "medio-a-persona-dos-iva-luz.html"
   },
   "https://medio-a.example/feed.xml": {
     "estado": 200,
@@ -14,10 +19,15 @@
     "tipo": "text/plain",
     "archivo": "robots.txt"
   },
-  "https://medio-b.example/politica/2026/11/09/abascal-mitin": {
+  "https://medio-a.example/tags/elecciones": {
     "estado": 200,
     "tipo": "text/html; charset=utf-8",
-    "archivo": "medio-b-abascal-mitin.html"
+    "archivo": "medio-a-tag-elecciones.html"
+  },
+  "https://medio-b.example/politica/2026/11/09/persona-cuatro-mitin": {
+    "estado": 200,
+    "tipo": "text/html; charset=utf-8",
+    "archivo": "medio-b-persona-cuatro-mitin.html"
   },
   "https://medio-b.example/robots.txt": {
     "estado": 200,

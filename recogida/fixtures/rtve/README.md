@@ -1,0 +1,1 @@
+Forma de la respuesta de `https://api2.rtve.es/api/videos/<id>/subtitulos.json`, tomada de una petición real de solo lectura el 12 de noviembre de 2026 (vídeo 17306884) y recortada a tres pistas. Solo contiene URL de pistas de subtítulos e idiomas; ningún dato personal. La usan los tests de `src/transcripciones.test.ts`.

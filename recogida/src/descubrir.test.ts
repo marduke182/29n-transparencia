@@ -1,5 +1,8 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { LISTADOS_DEBATES, accesoDesdeRegistro, descubrir, fechaIso, leerFeed, leerSeccion, leerSitemap, restarDias, type Alias, type Emisor, type Listado } from './descubrir.ts';
+import { LISTADOS_DEBATES, LONGITUD_MAXIMA_CONSULTA, accesoDesdeRegistro, candidatoPrimero, consultasFuente, descubrir, leerCandidatos, mitadesDe, terminosQueCaben, textoConsulta, fechaIso, leerFeed, leerSeccion, leerSitemap, restarDias, type Alias, type Emisor, type Listado } from './descubrir.ts';
 import { Traedor } from './traer.ts';
 
 const RSS = `<?xml version="1.0"?><rss version="2.0"><channel><title>Medio</title>
@@ -50,9 +53,13 @@ const emisores: Emisor[] = [
   { id: 'cerrado', nombre: 'Cerrado', hosts: ['cerrado.es'], tipo: 'medio', recogida: { metodo: 'rss', url: 'https://cerrado.es/feed' } },
 ];
 const alias: Record<string, Alias> = {
-  pp: { nombres: ['PP'], marcas_regionales: [], miembros: [], personas: ['Persona Uno'], excluir: [] },
+  'frente-amplio': { nombres: ['Frente Amplio'], marcas_regionales: [], miembros: [], personas: ['Persona Uno'], excluir: [] },
+  pp: { nombres: ['PP'], marcas_regionales: [], miembros: [], personas: ['Persona Dos'], excluir: [] },
+  psoe: { nombres: ['PSOE'], marcas_regionales: [], miembros: [], personas: ['Persona Tres'], excluir: [] },
   vox: { nombres: ['Vox'], marcas_regionales: [], miembros: [], personas: [], excluir: ['Vox Populi'] },
 };
+// Vox's candidate is not among its alias terms: it still goes first in the query.
+const candidatos = { 'frente-amplio': 'Persona Uno', pp: 'Persona Dos', psoe: 'Persona Tres', vox: 'Persona Cuatro' };
 const listados: Listado[] = [
   { id: 'moncloa', emisor: 'la-moncloa-gobierno', metodo: 'seccion', url: 'https://www.lamoncloa.gob.es/presidente/intervenciones/Paginas/index.aspx', genero: 'transcripcion', enlaces: /\/Paginas\/\d{4}\/.+\.aspx$/ },
 ];
@@ -135,7 +142,7 @@ describe('LISTADOS_DEBATES link patterns (from the pages fetched on 2026-11-10)'
 describe('descubrir', () => {
   it('reads rss/sitemap/api/seccion, emits search tasks, skips omitir and inbox-only hosts', async () => {
     const { traedor: t, fetch } = traedor();
-    const resultado = await descubrir({ emisores, alias }, t, { fecha: '2026-11-10', dias: 2, listados });
+    const resultado = await descubrir({ emisores, alias, candidatos }, t, { fecha: '2026-11-10', dias: 2, listados });
 
     expect(resultado.candidatos.map((c) => [c.emisor, c.url_canonica, c.metodo, c.genero])).toEqual([
       ['boe', 'https://boe.es/diario_boe/txt.php?id=BOE-A-2026-1', 'api', 'documento'],
@@ -154,8 +161,16 @@ describe('descubrir', () => {
         nombre: 'Busca',
         hosts: ['busca.es'],
         consultas: [
-          { partido: 'pp', terminos: ['PP', 'Persona Uno'], excluir: [] },
-          { partido: 'vox', terminos: ['Vox'], excluir: ['Vox Populi'] },
+          { partido: 'frente-amplio', terminos: ['Persona Uno', 'Frente Amplio'], excluir: [] },
+          { partido: 'pp', terminos: ['Persona Dos', 'PP'], excluir: [] },
+          { partido: 'psoe', terminos: ['Persona Tres', 'PSOE'], excluir: [] },
+          { partido: 'vox', terminos: ['Persona Cuatro', 'Vox'], excluir: ['Vox Populi'] },
+        ],
+        busquedas: [
+          { partido: 'frente-amplio', texto: 'site:busca.es ("Persona Uno" OR "Frente Amplio")', terminos: ['Persona Uno', 'Frente Amplio'], terminos_omitidos: [], mitades: ['site:busca.es ("Persona Uno")', 'site:busca.es ("Frente Amplio")'] },
+          { partido: 'pp', texto: 'site:busca.es ("Persona Dos" OR "PP")', terminos: ['Persona Dos', 'PP'], terminos_omitidos: [], mitades: ['site:busca.es ("Persona Dos")', 'site:busca.es ("PP")'] },
+          { partido: 'psoe', texto: 'site:busca.es ("Persona Tres" OR "PSOE")', terminos: ['Persona Tres', 'PSOE'], terminos_omitidos: [], mitades: ['site:busca.es ("Persona Tres")', 'site:busca.es ("PSOE")'] },
+          { partido: 'vox', texto: 'site:busca.es ("Persona Cuatro" OR "Vox")', terminos: ['Persona Cuatro', 'Vox'], terminos_omitidos: [], mitades: ['site:busca.es ("Persona Cuatro")', 'site:busca.es ("Vox")'] },
         ],
         desde: '2026-11-08',
         hasta: '2026-11-10',
@@ -170,5 +185,86 @@ describe('descubrir', () => {
     expect(pedidas).not.toContain('https://diario.es/post-sitemap1.xml');
     expect(pedidas.filter((url) => url.includes('partido-ejemplo.es'))).toEqual(['https://partido-ejemplo.es/robots.txt', 'https://partido-ejemplo.es/feed/']);
     expect(pedidas.some((url) => url.includes('voxespana.es'))).toBe(false);
+  });
+});
+
+describe('consultasFuente', () => {
+  // Exactly one query per party and source: with one search per term, a party with 24 names got 12 times the searches of one with 2.
+  const partidos = (terminos: Record<string, string[]>) => Object.entries(terminos).map(([partido, t]) => ({ partido, terminos: t }));
+  const largos = Array.from({ length: 30 }, (_, n) => `Nombre largo número ${n}`);
+
+  it('gives every party exactly one query of the same form, however many terms it has', () => {
+    const consultas = consultasFuente(['medio.es'], partidos({ 'frente-amplio': largos, pp: ['PP', 'Feijóo'], psoe: ['PSOE', 'Pedro Sánchez'], vox: ['Vox'] }));
+    expect(consultas.map((c) => c.partido)).toEqual(['frente-amplio', 'pp', 'psoe', 'vox']);
+    expect(consultas.slice(1).map((c) => c.texto)).toEqual(['site:medio.es ("PP" OR "Feijóo")', 'site:medio.es ("PSOE" OR "Pedro Sánchez")', 'site:medio.es ("Vox")']);
+    for (const c of consultas) expect(c.texto.length).toBeLessThanOrEqual(LONGITUD_MAXIMA_CONSULTA);
+    expect(textoConsulta(['es.ara.cat', 'en.ara.cat'], ['PP', 'Te"rm'])).toBe('(site:es.ara.cat OR site:en.ara.cat) ("PP" OR "Term")');
+  });
+
+  it('keeps the terms in list order while they fit and records the rest as omitted', () => {
+    const { terminos, omitidos } = terminosQueCaben(['medio.es'], largos);
+    expect([...terminos, ...omitidos]).toEqual(largos);
+    expect(textoConsulta(['medio.es'], terminos).length).toBeLessThanOrEqual(LONGITUD_MAXIMA_CONSULTA);
+    expect(textoConsulta(['medio.es'], [...terminos, omitidos[0]!]).length).toBeGreaterThan(LONGITUD_MAXIMA_CONSULTA);
+    const [fa] = consultasFuente(['medio.es'], partidos({ 'frente-amplio': largos }));
+    expect(fa!.terminos).toEqual(terminos);
+    expect(fa!.terminos_omitidos).toEqual(omitidos);
+    // A short term after the first one that does not fit is left out too: the list order decides.
+    expect(terminosQueCaben(['medio.es'], ['a', 'b', 'c'], 'site:medio.es ("a")'.length)).toEqual({ terminos: ['a'], omitidos: ['b', 'c'] });
+    expect(terminosQueCaben(['medio.es'], ['x'.repeat(400), 'b'])).toEqual({ terminos: ['x'.repeat(400)], omitidos: ['b'] });
+  });
+
+  it('precomputes the saturation halves of the terms in the query: the first ceil(n/2) and the rest, none for a single term', () => {
+    expect(mitadesDe(['a', 'b', 'c'])).toEqual([['a', 'b'], ['c']]);
+    expect(mitadesDe(['a'])).toBeUndefined();
+    const [pp, vox] = consultasFuente(['medio.es'], partidos({ pp: ['PP', 'Feijóo', 'Tellado'], vox: ['Vox'] }));
+    expect(pp!.mitades).toEqual(['site:medio.es ("PP" OR "Feijóo")', 'site:medio.es ("Tellado")']);
+    expect(vox!.mitades).toBeUndefined();
+    const [fa] = consultasFuente(['medio.es'], partidos({ 'frente-amplio': largos }));
+    const [primera, segunda] = mitadesDe(fa!.terminos)!;
+    expect(fa!.mitades).toEqual([textoConsulta(['medio.es'], primera), textoConsulta(['medio.es'], segunda)]);
+    expect(fa!.mitades!.join(' ')).not.toContain(fa!.terminos_omitidos[0]!);
+  });
+});
+
+describe('candidate first', () => {
+  const largos = Array.from({ length: 30 }, (_, n) => `Nombre largo número ${n}`);
+
+  it('puts each party\'s main candidate first, then the rest in list order, without repeating it', () => {
+    expect(candidatoPrimero('Ada Colau', ['Frente Amplio', 'IU', 'Ada Colau', 'Mónica García'], 'frente-amplio')).toEqual(['Ada Colau', 'Frente Amplio', 'IU', 'Mónica García']);
+    expect(candidatoPrimero('Alberto Nuñez Feijoo', ['PP', 'Alberto Núñez Feijóo'], 'pp')).toEqual(['Alberto Nuñez Feijoo', 'PP']);
+    expect(candidatoPrimero('Santiago Abascal', ['Vox'], 'vox')).toEqual(['Santiago Abascal', 'Vox']);
+    expect(() => candidatoPrimero(undefined, ['PSOE'], 'psoe')).toThrow(/falta el candidato principal de psoe/);
+    expect(() => candidatoPrimero('  ', ['PSOE'], 'psoe')).toThrow(/tarjeta.candidato/);
+  });
+
+  it('keeps the candidate in every party\'s single query, by the same rule, however long its list is', () => {
+    const listas: Record<string, string[]> = { 'frente-amplio': [...largos, 'Ada Colau'], pp: ['PP', 'Alberto Núñez Feijóo'], psoe: [...largos.slice(0, 5), 'Pedro Sánchez'], vox: ['Vox'] };
+    const cand: Record<string, string> = { 'frente-amplio': 'Ada Colau', pp: 'Alberto Núñez Feijóo', psoe: 'Pedro Sánchez', vox: 'Santiago Abascal' };
+    const consultas = consultasFuente(['medio.es'], Object.entries(listas).map(([partido, t]) => ({ partido, terminos: candidatoPrimero(cand[partido], t, partido) })));
+    expect(consultas).toHaveLength(4);
+    for (const c of consultas) {
+      expect(c.terminos[0]).toBe(cand[c.partido]);
+      expect(c.texto).toContain(`("${cand[c.partido]}"`);
+      expect(c.terminos_omitidos).not.toContain(cand[c.partido]);
+    }
+  });
+
+  it('fails descubrir, not silently, when a party has no candidate in the site data', async () => {
+    const raiz = await mkdtemp(join(tmpdir(), 'n29-candidatos-'));
+    try {
+      const datos = join(raiz, 'apps', '29n', 'src', 'data', 'partidos');
+      await mkdir(datos, { recursive: true });
+      await writeFile(join(datos, 'pp.json'), JSON.stringify({ tarjeta: { candidato: ' Alberto Núñez Feijóo ' } }));
+      await writeFile(join(datos, 'vox.json'), JSON.stringify({ tarjeta: { lema: 'x' } }));
+      expect(await leerCandidatos(raiz, ['pp'])).toEqual({ pp: 'Alberto Núñez Feijóo' });
+      await expect(leerCandidatos(raiz, ['pp', 'vox'])).rejects.toThrow('partidos/vox.json: falta tarjeta.candidato');
+      const t = new Traedor({ fecha: '2026-11-10', fetch: (async () => new Response('', { status: 404 })) as unknown as typeof fetch, reloj: () => 0, esperar: async () => {}, resolver: async () => ['93.184.215.14'] });
+      await expect(descubrir({ emisores: [], alias, candidatos: { ...candidatos, vox: '' } }, t, { fecha: '2026-11-10' })).rejects.toThrow(/falta el candidato principal de vox/);
+      const { psoe: _, ...sinPsoe } = alias;
+      await expect(descubrir({ emisores: [], alias: sinPsoe, candidatos }, t, { fecha: '2026-11-10' })).rejects.toThrow('descubrir: falta la entrada de psoe en partidos-alias.json');
+    } finally {
+      await rm(raiz, { recursive: true, force: true });
+    }
   });
 });

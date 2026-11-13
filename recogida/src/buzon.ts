@@ -11,7 +11,7 @@
  */
 import { readFile, readdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
-import { PARTY_IDS, guardar, textoDePdf, urlCanonica, type Guardado } from './cache.ts';
+import { PARTY_IDS, guardar, textoDePdf, urlCanonica, type Guardado, type PartyId } from './cache.ts';
 
 const ENTIDADES: Record<string, string> = {
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', laquo: '«', raquo: '»', ldquo: '“', rdquo: '”', lsquo: '‘', rsquo: '’',
@@ -176,4 +176,59 @@ async function listar(carpeta: string): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+// ---------------------------------------------------------------- links list
+
+/** Origin mark of the documents fetched from the inbox links list, in their meta.json and in the run summary. */
+export const ORIGEN_ENLACES = 'buzon-enlaces';
+
+export interface Enlace {
+  linea: number;
+  url: string;
+  /** The owner's note of the party, if any. Classification still uses the alias rule, the same for every document. */
+  partido?: PartyId;
+}
+
+export interface AvisoEnlace {
+  linea: number;
+  texto: string;
+  motivo: string;
+}
+
+/**
+ * Parses $N29_BUZON/enlaces/<fecha>.txt: one https URL per line, optionally
+ * followed by a space and a party id; `#` starts a comment (at the start of a
+ * line or after a space); blank lines are ignored. Any other line, a
+ * non-https or invalid URL, an unknown party or a repeated URL becomes an
+ * aviso, never an error.
+ */
+export function leerListaEnlaces(texto: string): { enlaces: Enlace[]; avisos: AvisoEnlace[] } {
+  const enlaces: Enlace[] = [];
+  const avisos: AvisoEnlace[] = [];
+  const vistas = new Map<string, number>();
+  texto.split('\n').forEach((bruta, indice) => {
+    const linea = indice + 1;
+    const limpia = bruta.replace(/(^|\s)#.*$/, '').trim();
+    if (!limpia) return;
+    const aviso = (motivo: string) => avisos.push({ linea, texto: limpia, motivo });
+    const campos = limpia.split(/\s+/);
+    if (campos.length > 2) return aviso('más de dos campos: se espera «URL [partido]»');
+    const [url, partido] = campos as [string, string | undefined];
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return aviso('URL no válida');
+    }
+    if (parsed.protocol !== 'https:') return aviso('solo se admiten URL https');
+    if (parsed.username || parsed.password) return aviso('la URL lleva usuario o contraseña');
+    if (partido !== undefined && !(PARTY_IDS as readonly string[]).includes(partido)) return aviso('partido desconocido: se espera frente-amplio, pp, psoe o vox');
+    const canonica = urlCanonica(url);
+    const anterior = vistas.get(canonica);
+    if (anterior !== undefined) return aviso(`repetida (ya en la línea ${anterior})`);
+    vistas.set(canonica, linea);
+    enlaces.push({ linea, url, ...(partido ? { partido: partido as PartyId } : {}) });
+  });
+  return { enlaces, avisos };
 }

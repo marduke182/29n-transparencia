@@ -21,6 +21,14 @@
  *   not match its section (preguntas.ts), or is null, is refused. `pregunta` is
  *   never written to the party file, and an item that carries it is refused.
  * - An item may be a context note (`contexto: true`), never with a veredicto.
+ * - Rules the site checks on every item, refused here so the day's data passes
+ *   them: a bulo is VERIFICADO (the fact-checker's page is the primary record of
+ *   its own verdict), and no quote (`cita` or «…» in a text field) has 15 words
+ *   or more.
+ * - Every quote of a new item appears literally in the cached text of the URL it
+ *   cites (citas.ts, the same check the run makes after the merge); one that
+ *   does not, or whose document is not cached, leaves the item out. Only with a
+ *   cache reader (`leer`; the CLI always passes the run's cache).
  *
  * Perfil files ({partido, periodo, limites, documentos, propuestas, mensajes}):
  * - A proposal adds one documento, propuesta or mensaje (`tipo`). Propuestas and
@@ -37,6 +45,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { PARTY_IDS, sha256, urlCanonica } from './cache.ts';
+import { comprobarCitas, extraerCitas, type LectorCache } from './citas.ts';
 import { motivoContexto, motivoPregunta, type Pregunta } from './preguntas.ts';
 
 /** First day of the ban on publishing polls (five days before the 29 Nov 2026 election). */
@@ -118,7 +127,7 @@ export function maxRef(refs: string[]): number {
 }
 
 /** Why a proposal cannot be merged, or undefined. */
-export function motivoRechazo(propuesta: Propuesta, fecha: string): string | undefined {
+export function motivoRechazo(propuesta: Propuesta, fecha: string, leer?: LectorCache): string | undefined {
   if (!(PARTY_IDS as readonly string[]).includes(propuesta.partido)) return `partido desconocido "${propuesta.partido}"`;
   if (propuesta.destino !== undefined && propuesta.destino !== 'partido') return `destino desconocido "${String(propuesta.destino)}"`;
   if (!(SECCIONES as readonly string[]).includes(propuesta.seccion)) return `sección desconocida "${propuesta.seccion}"`;
@@ -134,6 +143,14 @@ export function motivoRechazo(propuesta: Propuesta, fecha: string): string | und
   if (typeof item.texto !== 'string' || !item.texto.trim()) return 'item sin texto';
   if (!ESTADOS.includes(item.estado as string)) return `estado "${String(item.estado)}" no publicable`;
   if (item.estado === 'PARCIAL' && (typeof item.matiz !== 'string' || !item.matiz.trim())) return 'PARCIAL sin matiz';
+  if (item.bulo === true && item.estado !== 'VERIFICADO') return `bulo con estado ${String(item.estado)}: los elementos de bulos son VERIFICADO`;
+  // The quotes citas.ts finds in a party file, for this item alone; without a cache reader, only their length.
+  const citas = extraerCitas({ secciones: [{ id: propuesta.seccion, items: [{ ...item, ref: 'nuevo' }] }] });
+  const problema = comprobarCitas(citas, leer ?? (() => undefined)).find((p) => leer !== undefined || p.tipo === 'larga');
+  if (problema) {
+    const campo = problema.donde.replace(/^[^.]*\./, '');
+    return problema.tipo === 'larga' ? `${campo}: cita de ${problema.detalle}` : `${campo}: cita «${problema.texto}» ${problema.detalle}`;
+  }
   const fuentes = Array.isArray(item.fuentes) ? item.fuentes : [];
   if (!fuentes.length || !fuentes.every((fuente) => isObjeto(fuente) && typeof fuente.url === 'string' && /^https:\/\/\S+$/.test(fuente.url) && typeof fuente.medio === 'string')) {
     return 'fuentes: hace falta al menos una, cada una con url https y medio';
@@ -375,7 +392,7 @@ async function escribirJson(ruta: string, datos: unknown) {
  * Applies the proposals of `carpeta` to the site at `sitio`. With `escribir:
  * false` it only returns the plan. Files without additions are not touched.
  */
-export async function fusionar(opciones: { sitio: string; carpeta: string; fecha: string; escribir?: boolean }): Promise<Plan> {
+export async function fusionar(opciones: { sitio: string; carpeta: string; fecha: string; escribir?: boolean; leer?: LectorCache }): Promise<Plan> {
   if (!ISO.test(opciones.fecha)) throw new Error(`fecha no es ISO: ${opciones.fecha}`);
   const plan: Plan = { fecha: opciones.fecha, cambios: [], rechazados: [] };
   const dePartido: { archivo: string; indice: number; propuesta: Propuesta }[] = [];
@@ -386,7 +403,7 @@ export async function fusionar(opciones: { sitio: string; carpeta: string; fecha
       ? 'propuesta no es un objeto'
       : esPerfil
         ? motivoRechazoPerfil(entrada.propuesta as PropuestaPerfil)
-        : motivoRechazo(entrada.propuesta as unknown as Propuesta, opciones.fecha);
+        : motivoRechazo(entrada.propuesta as unknown as Propuesta, opciones.fecha, opciones.leer);
     if (motivo) plan.rechazados.push({ archivo: entrada.archivo, indice: entrada.indice, motivo });
     else if (esPerfil) dePerfil.push(entrada as (typeof dePerfil)[number]);
     else dePartido.push(entrada as (typeof dePartido)[number]);

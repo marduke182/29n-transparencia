@@ -90,9 +90,76 @@ export interface TareaBusqueda {
   hosts: string[];
   /** Per party, the names to search for, and the ones to exclude. */
   consultas: { partido: string; terminos: string[]; excluir: string[] }[];
+  /** The WebSearch queries the agent runs verbatim, built by consultasFuente. */
+  busquedas: ConsultaFuente[];
   desde: string;
   hasta: string;
   nota?: string;
+}
+
+/** The one source query of a party: its terms joined with OR, the terms left out for length, and the two halves to run if it saturates. */
+export interface ConsultaFuente {
+  partido: string;
+  texto: string;
+  terminos: string[];
+  /** Terms that did not fit under LONGITUD_MAXIMA_CONSULTA: left out of the web search only; the alias rule still uses them on every fetched page. */
+  terminos_omitidos: string[];
+  mitades?: [string, string];
+}
+
+/** Longest query string. */
+export const LONGITUD_MAXIMA_CONSULTA = 300;
+
+/**
+ * The text of one query: `site:host ("t1" OR "t2" …)`, or
+ * `(site:a OR site:b) (…)` for a source with several hosts. Double quotes in
+ * a term are dropped, so a term cannot break the phrase.
+ */
+export function textoConsulta(hosts: string[], terminos: string[]): string {
+  const sitio = hosts.length === 1 ? `site:${hosts[0]}` : `(${hosts.map((h) => `site:${h}`).join(' OR ')})`;
+  return `${sitio} (${terminos.map((t) => `"${t.replace(/"/g, '').trim()}"`).join(' OR ')})`;
+}
+
+/**
+ * The terms of one party's single query: in list order, each added while the
+ * query stays within the limit; the first term always goes in, even if too
+ * long alone. The rest are left out of the web search.
+ */
+export function terminosQueCaben(hosts: string[], terminos: string[], maximo = LONGITUD_MAXIMA_CONSULTA): { terminos: string[]; omitidos: string[] } {
+  const dentro: string[] = [];
+  const omitidos: string[] = [];
+  for (const termino of terminos) {
+    if (dentro.length && (omitidos.length || textoConsulta(hosts, [...dentro, termino]).length > maximo)) omitidos.push(termino);
+    else dentro.push(termino);
+  }
+  return { terminos: dentro, omitidos };
+}
+
+/** The two halves of a query's terms: the first ceil(n/2) terms and the rest. None for a single term. */
+export function mitadesDe(terminos: string[]): [string[], string[]] | undefined {
+  if (terminos.length < 2) return undefined;
+  const corte = Math.ceil(terminos.length / 2);
+  return [terminos.slice(0, corte), terminos.slice(corte)];
+}
+
+/**
+ * The queries of one source: exactly one per party, in party order, by the
+ * same rule for all four (terminosQueCaben). `excluir` is not in the query:
+ * it is applied to the text of each fetched page (partidosEn), as for every
+ * other document, and so are the omitted terms.
+ */
+export function consultasFuente(hosts: string[], consultas: { partido: string; terminos: string[] }[]): ConsultaFuente[] {
+  return consultas.map(({ partido, terminos }) => {
+    const elegidos = terminosQueCaben(hosts, terminos.filter((t) => t.replace(/"/g, '').trim()));
+    const mitades = mitadesDe(elegidos.terminos);
+    return {
+      partido,
+      texto: textoConsulta(hosts, elegidos.terminos),
+      terminos: elegidos.terminos,
+      terminos_omitidos: elegidos.omitidos,
+      ...(mitades ? { mitades: [textoConsulta(hosts, mitades[0]), textoConsulta(hosts, mitades[1])] as [string, string] } : {}),
+    };
+  });
 }
 
 export interface Descubrimiento {
@@ -267,6 +334,35 @@ export async function leerRegistro(sitio: string): Promise<{ emisores: Emisor[];
   return { emisores: fuentes.emisores, alias };
 }
 
+/**
+ * The main candidate of each party, from tarjeta.candidato in the site's
+ * partidos/<id>.json. A party without one is an error: its search query must
+ * start with its candidate, like the others'.
+ */
+export async function leerCandidatos(sitio: string, partidos: readonly string[] = PARTY_IDS): Promise<Record<string, string>> {
+  const datos = join(sitio, 'apps', '29n', 'src', 'data', 'partidos');
+  const candidatos: Record<string, string> = {};
+  for (const partido of partidos) {
+    const ficha = JSON.parse(await readFile(join(datos, `${partido}.json`), 'utf8')) as { tarjeta?: { candidato?: unknown } };
+    const candidato = ficha.tarjeta?.candidato;
+    if (typeof candidato !== 'string' || !candidato.trim()) throw new Error(`partidos/${partido}.json: falta tarjeta.candidato (el candidato principal va primero en la consulta de búsqueda de cada partido)`);
+    candidatos[partido] = candidato.trim();
+  }
+  return candidatos;
+}
+
+/**
+ * A party's search terms with its main candidate first and the rest in list
+ * order (the candidate is not repeated). The same rule for the four parties.
+ * The candidate goes first even when it is not one of the alias terms; the
+ * alias rule for classification stays as it is.
+ */
+export function candidatoPrimero(candidato: string | undefined, terminos: string[], partido: string): string[] {
+  if (!candidato?.trim()) throw new Error(`descubrir: falta el candidato principal de ${partido} (tarjeta.candidato en partidos/${partido}.json)`);
+  const clave = (t: string) => t.normalize('NFKD').replace(/\p{M}/gu, '').trim().toLowerCase();
+  return [candidato.trim(), ...terminos.filter((t) => clave(t) !== clave(candidato))];
+}
+
 /** Reads one listing and turns it into candidates within the date window. */
 async function leerListado(
   traedor: Traedor,
@@ -332,7 +428,7 @@ async function leerListado(
  * (default 2 days back, inclusive). Output is sorted for stable diffs.
  */
 export async function descubrir(
-  registro: { emisores: Emisor[]; alias: Record<string, Alias> },
+  registro: { emisores: Emisor[]; alias: Record<string, Alias>; candidatos: Record<string, string> },
   traedor: Traedor,
   opciones: { fecha: string; dias?: number; listados?: Listado[] },
 ): Promise<Descubrimiento> {
@@ -340,9 +436,12 @@ export async function descubrir(
   const ventana = { desde, hasta: opciones.fecha };
   const acceso = accesoDesdeRegistro(registro.emisores);
   const salida: Descubrimiento = { fecha: opciones.fecha, desde, candidatos: [], tareas_busqueda: [], omitidos: [], solo_buzon: [], fallos: [], bloqueados: {} };
-  const consultas = PARTY_IDS.filter((id) => registro.alias[id]).map((partido) => ({
+  for (const partido of PARTY_IDS) {
+    if (!registro.alias[partido]) throw new Error(`descubrir: falta la entrada de ${partido} en partidos-alias.json (cada partido necesita sus términos de búsqueda)`);
+  }
+  const consultas = PARTY_IDS.map((partido) => ({
     partido,
-    terminos: terminosDe(registro.alias[partido]!),
+    terminos: candidatoPrimero(registro.candidatos[partido], terminosDe(registro.alias[partido]!), partido),
     excluir: registro.alias[partido]!.excluir,
   }));
 
@@ -357,7 +456,7 @@ export async function descubrir(
       continue;
     }
     if (metodo === 'busqueda' || !emisor.recogida?.url) {
-      const tarea: TareaBusqueda = { emisor: emisor.id, nombre: emisor.nombre, hosts: emisor.hosts, consultas, desde, hasta: opciones.fecha };
+      const tarea: TareaBusqueda = { emisor: emisor.id, nombre: emisor.nombre, hosts: emisor.hosts, consultas, busquedas: consultasFuente(emisor.hosts, consultas), desde, hasta: opciones.fecha };
       if (emisor.recogida?.nota) tarea.nota = emisor.recogida.nota;
       salida.tareas_busqueda.push(tarea);
       continue;

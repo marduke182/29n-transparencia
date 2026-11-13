@@ -6,6 +6,12 @@
 #   diario.sh                          today's run (the date is read once, here)
 #   diario.sh --fecha 2026-11-12       a missed day, by argument, never by clock
 #   diario.sh --fecha D --sin-git      every stage, Claude included, but no commit, push or PR
+#   diario.sh --fecha D --reanudar SHA a day that failed at the search check, at classification or
+#                                      adjudication, or at the merge or the site checks: resumes there
+#                                      (the merge from the kept adjudication, on the worktree moved to
+#                                      the current base branch), after checking the seal SHA it printed
+#   diario.sh --fecha D --sellar       writes that seal for a failed day that has none (older runs)
+#                                      (see "Reanudar un día" in recogida/README.md)
 #   diario.sh --fecha D --seco [--salida DIR]
 #                                      dry run: the CLI stages against the fixture
 #                                      in fixtures/diario, offline, without Claude,
@@ -31,7 +37,7 @@
 set -euo pipefail
 
 uso() {
-  sed -n '6,12p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '6,13p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 die() {
@@ -43,6 +49,9 @@ valor() { [ $# -ge 2 ] && [ -n "$2" ] || die "falta el valor de $1"; }
 FECHA=""
 SECO=0
 SIN_GIT=0
+REANUDAR=0
+SELLO_ESPERADO=""
+SELLAR=0
 SALIDA=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -50,6 +59,8 @@ while [ $# -gt 0 ]; do
     --salida) valor "$@"; SALIDA="$2"; shift 2 ;;
     --seco) SECO=1; shift ;;
     --sin-git) SIN_GIT=1; shift ;;
+    --reanudar) valor "$@"; REANUDAR=1; SELLO_ESPERADO="$2"; shift 2 ;;
+    --sellar) SELLAR=1; shift ;;
     -h | --help) uso ;;
     *) die "opción desconocida: $1" ;;
   esac
@@ -65,6 +76,10 @@ esac
 [ "$(date -j -f %F "$FECHA" +%F 2>/dev/null || date -d "$FECHA" +%F 2>/dev/null)" = "$FECHA" ] || die "--fecha $FECHA no es una fecha"
 [ "$SECO" = 1 ] || [ ! "$FECHA" \> "$HOY" ] || die "--fecha $FECHA es posterior a hoy ($HOY)"
 [ -z "$SALIDA" ] || [ "$SECO" = 1 ] || die "--salida solo vale con --seco"
+[ "$REANUDAR" = 0 ] && [ "$SELLAR" = 0 ] || [ "$SECO" = 0 ] || die "--reanudar y --sellar no valen con --seco"
+[ "$REANUDAR" = 0 ] && [ "$SELLAR" = 0 ] || [ -n "$FECHA" ] || die "--reanudar y --sellar necesitan --fecha"
+[ "$REANUDAR" = 0 ] || [ "$SELLAR" = 0 ] || die "--reanudar y --sellar no van juntos"
+case "$SELLO_ESPERADO" in '' | [0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;; *) die "--reanudar necesita el sha256 del sello" ;; esac
 
 RECOGIDA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 T="$(cd "$RECOGIDA/.." && pwd -P)"
@@ -198,37 +213,176 @@ limpiar() {
 }
 trap limpiar EXIT
 
-# A previous attempt of the same day is kept, renamed, never mixed with this one.
-if [ -e "$EJ" ]; then
-  n=1
-  while [ -e "$EJ.intento-$n" ]; do n=$((n + 1)); done
-  mv "$EJ" "$EJ.intento-$n"
+# Stages a failed day can be resumed from, and where it resumes:
+# busqueda-completa → busqueda-completa; tareas-clasificar, clasificacion →
+# tareas-clasificar; hechos, adjudicacion, adjudicacion-completa → hechos
+# (the checked classifications are kept); preparar, fusionar, ajustar and the
+# site checks (comprobaciones) → preparar: the kept adjudication is merged
+# again on the worktree moved to the current base branch (reponer_para_fusion). The allowlist
+# and git stages are not resumed.
+punto_de_reanudacion() {
+  case "$1" in
+    busqueda-completa) echo busqueda-completa ;;
+    tareas-clasificar | clasificacion) echo tareas-clasificar ;;
+    hechos | adjudicacion | adjudicacion-completa) echo hechos ;;
+    preparar | fusionar | ajustar | comprobaciones) echo preparar ;;
+    *) return 1 ;;
+  esac
+}
+# sello_ejecucion: sha256 of every file of the run folder (but the log, the
+# stage table, the summaries and the seal itself), every cached document and
+# bloqueados.json. Written when a resumable stage fails; checked on --reanudar.
+sello_ejecucion() {
+  (cd "$EJ" && find . -type f ! -name diario.log ! -name etapas.tsv ! -name 'resumen*.md' ! -name reanudar.sello -print) |
+    LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$EJ/$f"; done
+  if [ -d "$N29_CACHE/docs" ]; then
+    (cd "$N29_CACHE" && find docs -type f -print) | LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$N29_CACHE/$f"; done
+  fi
+  if [ -f "$N29_CACHE/bloqueados.json" ]; then shasum -a 256 "$N29_CACHE/bloqueados.json"; fi
+}
+sellar_para_reanudar() {
+  sello_ejecucion >"$EJ/reanudar.sello" && shasum -a 256 "$EJ/reanudar.sello" | cut -d' ' -f1
+}
+ultima_etapa_fallida() {
+  local linea
+  linea="$(tail -n 1 "$EJ/etapas.tsv" 2>/dev/null)"
+  [ "$(printf '%s' "$linea" | cut -f2)" = fallo ] && printf '%s' "$linea" | cut -f1
+}
+# --reanudar: only a day stopped at a resumable stage, sealed, with its worktree
+# on its branch at its base: clean, or (from preparar) with only the merge's own
+# changes, which reponer_para_fusion undoes.
+comprobar_reanudar() {
+  local etapa base codigo=0 ahora
+  [ -d "$EJ" ] || die "--reanudar: no existe $EJ"
+  etapa="$(ultima_etapa_fallida)" && DESDE="$(punto_de_reanudacion "$etapa")" ||
+    die "--reanudar: la ejecución del $FECHA no se detuvo en una etapa que se pueda reanudar (ver $EJ/etapas.tsv)"
+  [ -f "$EJ/reanudar.sello" ] || die "--reanudar: no hay sello (reanudar.sello); créalo con --sellar tras revisar la carpeta"
+  [ "$(shasum -a 256 "$EJ/reanudar.sello" | cut -d' ' -f1)" = "$SELLO_ESPERADO" ] || die "--reanudar: el sha256 del sello no es el que se dio"
+  ahora="$(mktemp "${TMPDIR:-/tmp}/29n-sello.XXXXXX")"
+  sello_ejecucion >"$ahora"
+  if ! cmp -s "$EJ/reanudar.sello" "$ahora"; then
+    diff "$EJ/reanudar.sello" "$ahora" | head -n 20 >&2 || true
+    rm -f "$ahora"
+    die "--reanudar: la carpeta de la ejecución, la caché o bloqueados.json cambiaron desde el sello"
+  fi
+  rm -f "$ahora"
+  if [ "$DESDE" = busqueda-completa ]; then
+    # One retry session per day: once started, the day is not resumed.
+    [ ! -e "$EJ/busqueda-reintento.iniciado" ] || die "--reanudar: ese día ya empezó su sesión de reintento de la búsqueda"
+    [ ! -e "$EJ/busqueda-definitivas.txt" ] || die "--reanudar: la búsqueda tiene faltas que otra sesión no puede arreglar"
+    [ -z "$(cd "$EJ" && find . -maxdepth 1 \( -name clasificacion -o -name adjudicado -o -name 'hechos.json*' -o -name 'descubrir.listados.json' \) -print)" ] ||
+      die "--reanudar: la carpeta de la ejecución ya tiene archivos de etapas posteriores"
+  elif [ "$DESDE" = preparar ]; then
+    # From the merge on, nothing before it is redone: the last adjudication check must have passed.
+    [ "$(grep -E "$(printf '^adjudicacion-completa\t')" "$EJ/etapas.tsv" | tail -n 1 | cut -f1,2)" = "$(printf 'adjudicacion-completa\tok')" ] ||
+      die "--reanudar: la adjudicación de ese día no terminó"
+  else
+    grep -q "$(printf '^traer-busqueda\tok')" "$EJ/etapas.tsv" || die "--reanudar: la búsqueda de ese día no terminó"
+    # From the shared facts on, the classification is not redone: its last run must have passed.
+    if [ "$DESDE" = hechos ]; then
+      [ "$(grep -E "$(printf '^(tareas-clasificar|clasificacion)\t')" "$EJ/etapas.tsv" | tail -n 1 | cut -f1,2)" = "$(printf 'clasificacion\tok')" ] ||
+        die "--reanudar: la clasificación de ese día no terminó"
+    fi
+    [ -z "$(cd "$EJ" && find . -maxdepth 1 \( -name fusion -o -name preparar.json -o -name fusionar.json \) -print)" ] ||
+      die "--reanudar: la carpeta de la ejecución ya tiene archivos de la preparación o la fusión"
+  fi
+  [ -d "$WT" ] || die "--reanudar: no existe el worktree $WT"
+  [ "$(real "$(git -C "$WT" rev-parse --path-format=absolute --git-common-dir)")" = "$(real "$(git -C "$N29_REPO" rev-parse --path-format=absolute --git-common-dir)")" ] ||
+    die "--reanudar: el worktree no pertenece a N29_REPO"
+  [ "$(git -C "$WT" rev-parse --abbrev-ref HEAD)" = "$RAMA" ] || die "--reanudar: el worktree no está en $RAMA"
+  # From preparar the worktree holds the earlier merge: reponer_para_fusion checks it and resets it.
+  [ "$DESDE" = preparar ] || [ -z "$(git -C "$WT" status --porcelain --ignored)" ] || die "--reanudar: el worktree tiene cambios o archivos sin seguir"
+  if [ -f "$EJ/base.sha" ]; then
+    base="$(cat "$EJ/base.sha")"
+  else
+    # Runs before this change did not record the base: nothing was committed, so it is HEAD (checked below against the remote).
+    base="$(git -C "$WT" rev-parse HEAD)"
+    echo "diario.sh: base.sha no existe (ejecución anterior a este cambio): la base es el HEAD del worktree, $base" >&2
+  fi
+  [ "$(git -C "$WT" rev-parse HEAD)" = "$base" ] || die "--reanudar: el HEAD del worktree no es la base del día"
+  [ "$(git -C "$N29_REPO" rev-parse --verify "refs/heads/$RAMA")" = "$base" ] || die "--reanudar: la rama $RAMA no apunta a la base del día"
+  git -C "$N29_REPO" fetch --quiet "$REMOTO" "$BASE" || die "--reanudar: git fetch falló"
+  git -C "$N29_REPO" merge-base --is-ancestor "$base" "refs/remotes/$REMOTO/$BASE" || die "--reanudar: la base del día no está en $REMOTO/$BASE"
+  git -C "$N29_REPO" ls-remote --exit-code --heads "$REMOTO" "refs/heads/$RAMA" >/dev/null || codigo=$?
+  case "$codigo" in
+    0) die "--reanudar: la rama $RAMA ya existe en $REMOTO" ;;
+    2) ;;
+    *) die "--reanudar: git ls-remote falló (código $codigo)" ;;
+  esac
+  printf '%s\n' "$base" >"$PRIV/base.sha"
+}
+DESDE=""
+if [ "$SELLAR" = 1 ]; then
+  [ -d "$EJ" ] || die "--sellar: no existe $EJ"
+  etapa="$(ultima_etapa_fallida)" && punto_de_reanudacion "$etapa" >/dev/null || die "--sellar: la ejecución del $FECHA no se detuvo en una etapa que se pueda reanudar"
+  [ ! -e "$EJ/reanudar.sello" ] || die "--sellar: ya hay un sello ($EJ/reanudar.sello)"
+  sello="$(sellar_para_reanudar)"
+  printf 'Sello de %s: %s\nPara reanudar: bin/diario.sh --fecha %s --reanudar %s\n' "$EJ" "$sello" "$FECHA" "$sello"
+  exit 0
 fi
-mkdir -p "$EJ"
-LOG="$EJ/diario.log"
-: >"$EJ/etapas.tsv"
+if [ "$REANUDAR" = 1 ]; then
+  comprobar_reanudar
+  LOG="$EJ/diario.log"
+  printf 'reanudar\tok\tdesde %s, sello %s\n' "$DESDE" "$SELLO_ESPERADO" >>"$EJ/etapas.tsv"
+  if [ "$DESDE" = tareas-clasificar ]; then
+    # A failed adjudication's answers are kept aside, never mixed with the new ones.
+    n=1
+    while [ -e "$EJ/anterior/adjudicacion-$n" ]; do n=$((n + 1)); done
+    for f in adjudicado hechos.json hechos.json.error.txt; do
+      if [ -e "$EJ/$f" ]; then mkdir -p "$EJ/anterior/adjudicacion-$n" && mv "$EJ/$f" "$EJ/anterior/adjudicacion-$n/"; fi
+    done
+  fi
+else
+  # A previous attempt of the same day is kept, renamed, never mixed with this one.
+  if [ -e "$EJ" ]; then
+    n=1
+    while [ -e "$EJ.intento-$n" ]; do n=$((n + 1)); done
+    mv "$EJ" "$EJ.intento-$n"
+  fi
+  mkdir -p "$EJ"
+  LOG="$EJ/diario.log"
+  : >"$EJ/etapas.tsv"
+fi
 COMPROBACIONES_OK=1
 say() { printf '%s\n' "$*" | tee -a "$LOG"; }
 
 # Writes the failure to resumen.md (with the partial summary, if any) and stops. No commit happens.
 fallo() {
+  local sello=""
   trap - ERR
+  # A resumable failure is sealed, unless a search retry already started or its gaps are definitive.
+  if [ "$SECO" = 0 ] && punto_de_reanudacion "$1" >/dev/null &&
+    { [ "$1" != busqueda-completa ] || { [ ! -e "$EJ/busqueda-reintento.iniciado" ] && [ ! -e "$EJ/busqueda-definitivas.txt" ]; }; }; then
+    sello="$(sellar_para_reanudar)" || sello=""
+  fi
   {
     printf '# Recogida del %s: fallo\n\n' "$FECHA"
     printf -- '- Etapa: %s\n- Motivo: %s\n' "$1" "$2"
     if [ "$SECO" = 0 ]; then
       printf -- '- Sin commit, push ni PR. El worktree, si se creó, queda en `%s` (rama `%s`) para revisarlo.\n' "$WT" "$RAMA"
       printf -- '- Para repetir el día, ver «Recuperar un día» en recogida/README.md.\n'
+      if [ -n "$sello" ]; then
+        printf -- '- Sello de la carpeta de la ejecución, la caché y bloqueados.json: `%s`. Para reanudar desde aquí tras revisarla: `bin/diario.sh --fecha %s --reanudar %s` (ver «Reanudar un día» en recogida/README.md).\n' "$sello" "$FECHA" "$sello"
+      fi
     fi
     printf '\n## Últimas líneas del registro\n\n```text\n'
     tail -n 60 "$LOG" 2>/dev/null || true
     printf '```\n'
+    if [ "$1" = busqueda-completa ] && [ -s "$EJ/busqueda-reintentadas.txt" ]; then
+      printf '\n## Reintentado en una sesión más (busqueda-reintento)\n\n'
+      cat "$EJ/busqueda-reintentadas.txt"
+    fi
+    if [ "$1" = busqueda-completa ] && [ -s "$EJ/busqueda-faltan.txt" ]; then
+      printf '\n## Lo que falta de la búsqueda\n\nNo se adjudica nada: la búsqueda no fue la misma para los cuatro partidos.\n\n'
+      cat "$EJ/busqueda-faltan.txt"
+    fi
     if [ -f "$EJ/resumen.parcial.md" ]; then
       printf '\n'
       cat "$EJ/resumen.parcial.md"
     fi
   } >"$EJ/resumen.md"
   say "FALLO en $1: $2 (detalle en $EJ/resumen.md)"
+  [ -z "$sello" ] || say "Sello para reanudar: $sello"
   exit 1
 }
 trap 'fallo "diario.sh, línea $LINENO" "error inesperado"' ERR
@@ -264,16 +418,38 @@ omitida() { printf '%s\tomitida\t%s\n' "$1" "$2" >>"$EJ/etapas.tsv"; }
 # run folder except Claude's answers and the script's own log, the cache
 # documents and bloqueados.json.
 # Before pass 2, busqueda/ and equidad/ (pass 1's answers) are sealed too.
+# Before a retry, classification batch, facts or party session, everything but
+# that session's own answer files (rutas_sesion).
+# rutas_sesion <nombre>: the file listing the only files a retry, batch, facts or
+# party session may create, as `find` prints them (an absolute path).
+rutas_sesion() {
+  local partido
+  case "$1" in
+    busqueda-reintento) echo "$EJ/reintento-rutas.txt" ;;
+    clasificacion-*) echo "$EJ/lotes/clasificar-${1#clasificacion-}.rutas.txt" ;;
+    hechos) printf './hechos.json\n./hechos.json.error.txt\n' >"$PRIV/rutas.$1.txt" && echo "$PRIV/rutas.$1.txt" ;;
+    adjudicacion-*)
+      partido="${1#adjudicacion-}"
+      case " $PARTIDOS " in *" $partido "*) ;; *) return 1 ;; esac
+      printf './adjudicado/%s.json\n./adjudicado/%s.json.error.txt\n' "$partido" "$partido" >"$PRIV/rutas.$1.txt" && echo "$PRIV/rutas.$1.txt"
+      ;;
+    *) return 1 ;;
+  esac
+}
 huellas_protegidas() {
-  local pasada="$1"
+  local pasada="$1" rutas
   (
     cd "$EJ" || exit 1
-    if [ "$pasada" = busqueda ]; then
+    if rutas="$(rutas_sesion "$pasada")"; then
+      # Only this session's own answers may appear or change; every other file, earlier answers
+      # (another party's adjudication, the shared facts) included, is sealed.
+      find . -type f ! -path './claude/*' ! -name diario.log ! -name etapas.tsv -print | { grep -v -x -F -f "$rutas" || true; }
+    elif [ "$pasada" = busqueda ]; then
       find . -type f ! -path './busqueda/*' ! -path './equidad/*' ! -path './clasificacion/*' ! -path './adjudicado/*' \
         ! -name 'hechos.json*' ! -path './claude/*' ! -name diario.log ! -name etapas.tsv -print
     else
-      find . -type f ! -path './clasificacion/*' ! -path './adjudicado/*' \
-        ! -name 'hechos.json*' ! -path './claude/*' ! -name diario.log ! -name etapas.tsv -print
+      echo "sesión desconocida: $pasada" >&2
+      exit 1
     fi
   ) | LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$EJ/$f"; done
   if [ -d "$N29_CACHE/docs" ]; then
@@ -307,6 +483,8 @@ crear_worktree() {
   BASE_SHA="$(git -C "$N29_REPO" rev-parse --verify "refs/remotes/$REMOTO/$BASE^{commit}")" || return $?
   git -C "$N29_REPO" worktree add --quiet --no-track -b "$RAMA" "$WT" "$BASE_SHA" || return $?
   printf '%s\n' "$BASE_SHA" >"$PRIV/base.sha"
+  # Also in the run folder (sealed with it), so a resumed day can check its base.
+  printf '%s\n' "$BASE_SHA" >"$EJ/base.sha"
 }
 
 # Read-only inputs for the agents and the baseline of the day: the site data before anything changes.
@@ -352,14 +530,20 @@ copiar_juicio() {
 
 # Builds settings, agents and prompts from this repository into a fresh
 # folder outside every writable one, read-only, with an empty start folder.
+# preparar_conf <nombre>: a session name is a pass, clasificacion-<lote> for one classification batch,
+# or adjudicacion-<partido> for one party's adjudication.
 preparar_conf() {
-  local pasada="$1"
+  local nombre="$1"
   CONF="$(real "$(mktemp -d "${TMPDIR:-/tmp}/29n-claude.XXXXXX")")" || return $?
   comprobar_separadas "$CONF" "$N29_CACHE" "$N29_BUZON" "$N29_WORKTREES" "$T" "$PRIV" || return 1
-  glue claude --dir "$CONF" --pasada "$pasada" || return $?
+  case "$nombre" in
+    clasificacion-*) glue claude --dir "$CONF" --pasada clasificacion --lote "${nombre#clasificacion-}" || return $? ;;
+    adjudicacion-*) glue claude --dir "$CONF" --pasada adjudicacion --partido "${nombre#adjudicacion-}" || return $? ;;
+    *) glue claude --dir "$CONF" --pasada "$nombre" || return $? ;;
+  esac
   mkdir "$CONF/vacio" || return $?
   chmod 444 "$CONF"/*.json "$CONF"/*.txt && chmod 555 "$CONF/vacio" "$CONF" || return $?
-  (cd "$CONF" && shasum -a 256 settings.json agentes.json prompt.txt) >"$PRIV/conf.sha"
+  (cd "$CONF" && shasum -a 256 settings.json agentes.json prompt.txt busquedas-web.txt) >"$PRIV/conf.sha"
 }
 borrar_conf() {
   [ -n "${CONF:-}" ] || return 0
@@ -367,15 +551,40 @@ borrar_conf() {
   CONF=""
 }
 
+# Copies the pass's configuration to the run folder for the audit, one file
+# name per pass: the copies keep the read-only mode of the originals, so a
+# shared name would make the second pass fail to copy over the first. A pass
+# that runs again in the same run folder (a resumed day) keeps the files of its
+# earlier attempt, renamed to <pasada>.intento-<n>.*, never overwritten.
+auditar_conf() {
+  local pasada="$1" n=1 f previo=0
+  mkdir -p "$EJ/claude" || return $?
+  for f in "$EJ/claude/$pasada".*; do
+    case "${f##*/}" in "$pasada".intento-*) ;; *) [ ! -e "$f" ] || previo=1 ;; esac
+  done
+  if [ "$previo" = 1 ]; then
+    while compgen -G "$EJ/claude/$pasada.intento-$n.*" >/dev/null; do n=$((n + 1)); done
+    for f in "$EJ/claude/$pasada".*; do
+      case "${f##*/}" in "$pasada".intento-*) continue ;; esac
+      mv "$f" "$EJ/claude/$pasada.intento-$n.${f##*/"$pasada".}" || return $?
+    done
+  fi
+  cp "$CONF/settings.json" "$EJ/claude/$pasada.settings.json" && cp "$CONF/agentes.json" "$EJ/claude/$pasada.agentes.json" &&
+    cp "$CONF/prompt.txt" "$EJ/claude/$pasada.prompt.txt" && cp "$CONF/busquedas-web.txt" "$EJ/claude/$pasada.busquedas-web.txt"
+}
+
 claude_pasada() {
-  local pasada="$1" codigo=0 resto
+  local pasada="$1" codigo=0 resto busquedas
   preparar_conf "$pasada" || return $?
   (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || { echo "la configuración de Claude cambió antes de usarla"; return 1; }
+  # One WebSearch cap shared by every subagent of the pass, sized for all of it (diario.ts, limiteBusquedasWeb).
+  busquedas="$(cat "$CONF/busquedas-web.txt")" || return 1
+  case "$busquedas" in '' | *[!0-9]* | 0*) echo "límite de búsquedas no válido: $busquedas"; return 1 ;; esac
   sellar "$pasada" || return $?
   # --restricted ignores user, project and local settings files: only --settings applies.
   (
     cd "$CONF/vacio" &&
-      con_limite "$LIMITE_CLAUDE" "$N29_CLAUDE" -p \
+      con_limite "$LIMITE_CLAUDE" env CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION="$busquedas" "$N29_CLAUDE" -p \
         --model opus \
         --restricted \
         --settings "$CONF/settings.json" \
@@ -393,26 +602,142 @@ claude_pasada() {
         <"$CONF/prompt.txt" >"$PRIV/$pasada.salida.json"
   ) || codigo=$?
   verificar_sello "$pasada" || codigo=1
-  # Pass 1 may write only busqueda/ and equidad/: pass 2's answers must not exist yet.
-  if [ "$pasada" = busqueda ]; then
-    resto="$(cd "$EJ" && find . -maxdepth 1 \( -name clasificacion -o -name adjudicado -o -name 'hechos.json*' \) -print)"
-    [ -z "$resto" ] || { printf 'la pasada busqueda dejó archivos de la pasada adjudicacion:\n%s\n' "$resto"; codigo=1; }
+  # Search and classification sessions run before the adjudication: its answers must not exist yet.
+  # (A facts or party session may create only its own files: the seal checks every other.)
+  if [ "$pasada" = busqueda ] || [ "$pasada" = busqueda-reintento ] || [ "${pasada#clasificacion-}" != "$pasada" ]; then
+    resto="$(cd "$EJ" && find . -maxdepth 1 \( -name adjudicado -o -name 'hechos.json*' \) -print)"
+    [ -z "$resto" ] || { printf 'la sesión %s dejó archivos de la adjudicación:\n%s\n' "$pasada" "$resto"; codigo=1; }
+  fi
+  # Before the classification, no session may leave classifications.
+  if [ "$pasada" = busqueda ] || [ "$pasada" = busqueda-reintento ]; then
+    [ ! -e "$EJ/clasificacion" ] || { echo "la sesión $pasada dejó clasificacion/"; codigo=1; }
   fi
   # Audit copy of what ran, made after the check so the pass cannot have touched it.
-  mkdir -p "$EJ/claude" && cp "$CONF/settings.json" "$EJ/claude/$pasada.settings.json" && cp "$CONF/agentes.json" "$EJ/claude/agentes.json" &&
-    cp "$CONF/prompt.txt" "$EJ/claude/$pasada.prompt.txt" && cp "$PRIV/$pasada.salida.json" "$EJ/claude/" 2>/dev/null || true
+  auditar_conf "$pasada" || codigo=1
+  [ ! -f "$PRIV/$pasada.salida.json" ] || cp "$PRIV/$pasada.salida.json" "$EJ/claude/" || codigo=1
   borrar_conf
   [ "$codigo" = 0 ] || return $codigo
   node -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); if (r.is_error) { console.error(r.result ?? r.subtype); process.exit(1); } console.log(r.result);' "$EJ/claude/$pasada.salida.json"
 }
 
-# --seco builds and checks the Claude configuration too, without running Claude.
+# The search gate. Exit 3 from the first check means it prepared a retry: one
+# more session ("busqueda-reintento") for just the missing tasks, with the same
+# task definitions, prompts and subagents, then the check again, final.
+paso_busqueda_completa() {
+  local codigo=0
+  glue busqueda-completa --preparar-reintento || codigo=$?
+  [ "$codigo" = 3 ] || return $codigo
+  echo "== busqueda-reintento"
+  # Marked before it starts: a day whose retry started is never resumed into another one.
+  : >"$EJ/busqueda-reintento.iniciado"
+  if [ "$SECO" = 1 ]; then
+    ensayar_sesion busqueda-reintento "$FIJOS/juicio-reintento" || return $?
+  else
+    claude_pasada busqueda-reintento || return $?
+  fi
+  glue busqueda-completa
+}
+
+# ensayar_sesion <nombre> <carpeta>: in --seco, a retry or batch session. The
+# configuration is built and checked as for Claude; the fixture answers in
+# <carpeta> that this session may create stand in for it, under the same seal.
+ensayar_sesion() {
+  local nombre="$1" fijos="$2" rutas
+  rutas="$(rutas_sesion "$nombre")" || return 1
+  preparar_conf "$nombre" || return $?
+  (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || return 1
+  auditar_conf "$nombre" || return $?
+  CONF="$CONF" perl -pi -e 's{\Q$ENV{CONF}\E}{<CONF>}g' "$EJ/claude/$nombre".* || return $?
+  borrar_conf
+  sellar "$nombre" || return $?
+  (cd "$fijos" && find . -type f -print) | LC_ALL=C sort | while IFS= read -r f; do
+    grep -q -x -F "$f" "$rutas" || continue
+    mkdir -p "$(dirname "$EJ/$f")" && cp "$fijos/$f" "$EJ/$f" || exit 1
+  done || return 1
+  verificar_sello "$nombre" || return 1
+}
+
+# The classification: one Claude session per batch (lotes/clasificar-<nn>.json),
+# then the check; missing or invalid answers get one more session
+# (clasificacion-reintento), and the check again, final.
+paso_clasificacion() {
+  local lote nombre codigo=0
+  for lote in "$EJ"/lotes/clasificar-[0-9][0-9].json; do
+    [ -e "$lote" ] || continue
+    nombre="clasificacion-$(basename "$lote" .json | sed 's/^clasificar-//')"
+    # A resumed day does not redo a batch whose answers are all there and valid.
+    if glue clasificacion-completa --lote "${nombre#clasificacion-}" >/dev/null; then echo "== $nombre: completo"; continue; fi
+    echo "== $nombre"
+    if [ "$SECO" = 1 ]; then ensayar_sesion "$nombre" "$FIJOS/juicio" || return $?; else claude_pasada "$nombre" || return $?; fi
+  done
+  # One retry session per day, even across a resume.
+  if [ -e "$EJ/clasificacion-reintento.iniciado" ]; then glue clasificacion-completa; return $?; fi
+  glue clasificacion-completa --preparar-reintento || codigo=$?
+  [ "$codigo" = 3 ] || return $codigo
+  echo "== clasificacion-reintento"
+  : >"$EJ/clasificacion-reintento.iniciado"
+  if [ "$SECO" = 1 ]; then ensayar_sesion clasificacion-reintento "$FIJOS/juicio-reintento" || return $?; else claude_pasada clasificacion-reintento || return $?; fi
+  glue clasificacion-completa
+}
+
+# --seco builds and checks the Claude configuration too, without running Claude
+# (the facts and party sessions are rehearsed by ensayar_sesion).
 ensayar_conf() {
   local pasada
-  for pasada in busqueda adjudicacion; do
+  for pasada in busqueda; do
     preparar_conf "$pasada" || return $?
     (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || return 1
+    auditar_conf "$pasada" || return $?
+    # The folder's name is random: <CONF> in the copies keeps the digest stable.
+    CONF="$CONF" perl -pi -e 's{\Q$ENV{CONF}\E}{<CONF>}g' "$EJ/claude/$pasada".* || return $?
     borrar_conf
+  done
+}
+
+# One Claude session, or in --seco its rehearsal with the fixture's answers.
+sesion_juicio() {
+  if [ "$SECO" = 1 ]; then ensayar_sesion "$1" "$FIJOS/juicio"; else claude_pasada "$1"; fi
+}
+# apartar_adjudicacion <ruta…>: earlier answers of the adjudication, moved to
+# anterior/adjudicacion-<n>/ (the smallest free n), never mixed with new ones.
+apartar_adjudicacion() {
+  local n=1 f hay=0
+  for f in "$@"; do [ ! -e "$EJ/$f" ] || hay=1; done
+  [ "$hay" = 1 ] || return 0
+  while [ -e "$EJ/anterior/adjudicacion-$n" ]; do n=$((n + 1)); done
+  for f in "$@"; do
+    [ -e "$EJ/$f" ] || continue
+    mkdir -p "$(dirname "$EJ/anterior/adjudicacion-$n/$f")" && mv "$EJ/$f" "$EJ/anterior/adjudicacion-$n/$f" || return $?
+  done
+}
+# The shared facts: one session (hechos), skipped when hechos.json is already valid.
+paso_hechos() {
+  if glue hechos-completo; then return 0; fi
+  # New facts: no adjudication made on other facts is kept, so the four parties read the same hechos.json.
+  apartar_adjudicacion hechos.json hechos.json.error.txt adjudicado || return $?
+  echo "== hechos"
+  sesion_juicio hechos || return $?
+  glue hechos-completo
+}
+# The adjudication: one session per party (adjudicacion-<partido>), in
+# alphabetical order, each with the same prompt and its own budget. A party
+# whose answer is complete is not redone; one still missing after its session
+# gets one more. adjudicacion-completa, the next stage, is the final check.
+paso_adjudicacion() {
+  local p ronda faltan
+  for ronda in 1 2; do
+    faltan=0
+    for p in $PARTIDOS; do
+      if glue adjudicacion-completa --partido "$p" >/dev/null; then
+        [ "$ronda" = 2 ] || echo "== adjudicacion-$p: completo"
+        continue
+      fi
+      faltan=1
+      if [ "$ronda" = 1 ]; then echo "== adjudicacion-$p"; else echo "== adjudicacion-$p (reintento)"; fi
+      apartar_adjudicacion "adjudicado/$p.json" "adjudicado/$p.json.error.txt" || return $?
+      sesion_juicio "adjudicacion-$p" || return $?
+    done
+    [ "$faltan" = 1 ] || break
   done
 }
 
@@ -496,6 +821,52 @@ paso_alcance() {
 
 datos_tocados() { cambios_sitio | sed 's/^...//'; }
 
+# Site data the run read before the adjudication (the snapshot in antes/ and the
+# alias rules): a new base may not change it, or the kept adjudication no longer fits.
+DATOS_LEIDOS="apps/29n/src/data/partidos apps/29n/src/data/perfiles apps/29n/src/data/busquedas.json apps/29n/src/data/fuentes.json apps/29n/src/data/partidos-alias.json"
+
+# --reanudar from preparar: the worktree moved to the current $REMOTO/$BASE (the
+# new base of the day, so site fixes merged since are in), and the earlier
+# merge's files of the run folder set aside to anterior/fusion-<n>/. Only on the
+# day's own branch (data/29n-diario-<fecha>, created by this script) at its base
+# with no commit, only when every change in it is one the merge may make (the
+# allowlist), and only when the new base descends from the old one and leaves
+# the data the run read unchanged ($DATOS_LEIDOS); its ignored files
+# (node_modules, build output) go too, so the allowlist with ignored files
+# passes again. A moved base is written to base.sha (the old one to
+# bases-anteriores.txt) and to the stage table.
+reponer_para_fusion() {
+  local base nueva n=1 f
+  base="$(cat "$PRIV/base.sha")" || return 1
+  case "$RAMA" in
+    data/29n-diario-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) echo "rama inesperada: $RAMA"; return 1 ;;
+  esac
+  [ "$(git -C "$WT" rev-parse --abbrev-ref HEAD)" = "$RAMA" ] || { echo "el worktree no está en $RAMA"; return 1; }
+  [ "$(git -C "$WT" rev-parse HEAD)" = "$base" ] && [ "$(git -C "$N29_REPO" rev-parse --verify "refs/heads/$RAMA")" = "$base" ] ||
+    { echo "el worktree o la rama $RAMA no están en la base del día"; return 1; }
+  paso_alcance || { echo "el worktree tiene cambios que la fusión no hace: no se borra nada, revísalo a mano"; return 1; }
+  # comprobar_reanudar fetched $REMOTO/$BASE.
+  nueva="$(git -C "$N29_REPO" rev-parse --verify "refs/remotes/$REMOTO/$BASE^{commit}")" || return 1
+  git -C "$N29_REPO" merge-base --is-ancestor "$base" "$nueva" || { echo "$REMOTO/$BASE no desciende de la base del día"; return 1; }
+  # shellcheck disable=SC2086 # fixed paths without spaces
+  git -C "$N29_REPO" diff --quiet "$base" "$nueva" -- $DATOS_LEIDOS ||
+    { echo "$REMOTO/$BASE cambió datos que la ejecución leyó ($DATOS_LEIDOS): la adjudicación guardada no vale, repite el día entero"; return 1; }
+  git -C "$WT" reset --quiet --hard "$nueva" && git -C "$WT" clean -q -ffdx || return 1
+  [ "$(git -C "$WT" rev-parse HEAD)" = "$nueva" ] && [ "$(git -C "$N29_REPO" rev-parse --verify "refs/heads/$RAMA")" = "$nueva" ] || { echo "la rama $RAMA no quedó en $nueva"; return 1; }
+  [ -z "$(git -C "$WT" status --porcelain --ignored)" ] || { echo "el worktree no quedó limpio"; return 1; }
+  if [ "$nueva" != "$base" ]; then
+    printf '%s\n' "$base" >>"$EJ/bases-anteriores.txt" && printf '%s\n' "$nueva" >"$EJ/base.sha" && printf '%s\n' "$nueva" >"$PRIV/base.sha" || return 1
+    printf 'base\tok\t%s → %s (%s/%s)\n' "$base" "$nueva" "$REMOTO" "$BASE" >>"$EJ/etapas.tsv"
+    echo "base del día: $base → $nueva ($REMOTO/$BASE)"
+  fi
+  while [ -e "$EJ/anterior/fusion-$n" ]; do n=$((n + 1)); done
+  for f in fusion preparar.json fusionar.json ajustar.json citas.antes.md citas.despues.md citas-nuevas.txt; do
+    [ -e "$EJ/$f" ] || continue
+    mkdir -p "$EJ/anterior/fusion-$n" && mv "$EJ/$f" "$EJ/anterior/fusion-$n/" || return 1
+  done
+}
+
 paso_prettier() {
   local archivos
   archivos="$(datos_tocados)"
@@ -546,7 +917,8 @@ sin_cambios() {
 
 # ------------------------------------------------------------------ run
 
-say "Recogida del $FECHA$([ "$SECO" = 1 ] && echo ' (seco)')"
+say "Recogida del $FECHA$([ "$SECO" = 1 ] && echo ' (seco)')$([ "$REANUDAR" = 1 ] && echo ": se reanuda en $DESDE")"
+if [ "$REANUDAR" = 0 ]; then
 if [ "$SECO" = 0 ]; then etapa worktree fatal crear_worktree; else omitida worktree seco; fi
 etapa instantanea fatal instantanea
 
@@ -554,6 +926,8 @@ etapa instantanea fatal instantanea
 etapa descubrir fatal cli descubrir --fecha "$FECHA"
 etapa traer fatal cli traer --fecha "$FECHA"
 etapa buzon aviso cli buzon --fecha "$FECHA"
+# The owner's links list ($N29_BUZON/enlaces/<fecha>.txt), fetched like any article; bad lines are avisos.
+etapa enlaces aviso cli enlaces --fecha "$FECHA"
 etapa transcribir aviso paso_transcribir
 etapa tareas-equidad fatal glue tareas-equidad
 # The script, not the agents, probes each equal-search domain once and marks blocked queries for all four.
@@ -566,15 +940,26 @@ if [ "$SECO" = 1 ]; then
 else
   etapa busqueda fatal claude_pasada busqueda
 fi
+fi # REANUDAR
+if [ "$DESDE" != tareas-clasificar ] && [ "$DESDE" != hechos ] && [ "$DESDE" != preparar ]; then
+# Every planned query and every unblocked equal search must have run, or nothing is adjudicated (busqueda-faltan.txt).
+# Retryable gaps get one more session for just those tasks, then the same check again.
+etapa busqueda-completa fatal paso_busqueda_completa
 etapa traer-busqueda fatal paso_traer_busqueda
+fi # DESDE
+if [ "$DESDE" != hechos ] && [ "$DESDE" != preparar ]; then
 etapa tareas-clasificar fatal glue tareas-clasificar
+# 2b. Classification: one session per batch of 100 tasks; every answer must exist and be valid.
+etapa clasificacion fatal paso_clasificacion
+fi # DESDE
 
-# 2b + 3. Classification and adjudication (Claude)
-if [ "$SECO" = 1 ]; then
-  etapa adjudicacion fatal copiar_juicio hechos.json adjudicado
+# 3. Shared facts (one session), then one adjudication session per party, on the checked classifications
+if [ "$DESDE" != preparar ]; then
+etapa hechos fatal paso_hechos
+etapa adjudicacion fatal paso_adjudicacion
 else
-  etapa adjudicacion fatal claude_pasada adjudicacion
-fi
+etapa reponer fatal reponer_para_fusion
+fi # DESDE
 etapa adjudicacion-completa fatal glue adjudicacion-completa
 etapa preparar fatal glue preparar
 
@@ -598,7 +983,11 @@ fi
 
 # 6. Summary
 etapa resumen fatal paso_resumen
-[ "$COMPROBACIONES_OK" = 1 ] || fallo comprobaciones "alguna comprobación falló (ver la tabla de etapas)"
+if [ "$COMPROBACIONES_OK" = 0 ]; then
+  # In the stage table too, so the day can be resumed from the merge (punto_de_reanudacion).
+  printf 'comprobaciones\tfallo\talguna comprobación falló\n' >>"$EJ/etapas.tsv"
+  fallo comprobaciones "alguna comprobación falló (ver la tabla de etapas)"
+fi
 cp "$EJ/resumen.parcial.md" "$EJ/resumen.md"
 
 # 7. Git

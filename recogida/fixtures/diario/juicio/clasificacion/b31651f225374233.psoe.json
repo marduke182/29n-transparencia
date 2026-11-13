@@ -1,0 +1,23 @@
+{
+  "doc_id": "b31651f225374233",
+  "partido": "psoe",
+  "url": "https://medio-a.example/2026/11/08/debate-vivienda",
+  "relevante": true,
+  "motivo": "Ejemplo.",
+  "fecha_publicacion": null,
+  "titular": "Ejemplo",
+  "medio": "medio-a.example",
+  "firma": null,
+  "genero": "noticia",
+  "fuente_primaria": false,
+  "pregunta": null,
+  "contexto": false,
+  "seccion": null,
+  "habla": null,
+  "tema": "POL",
+  "afirmaciones": [],
+  "otros_partidos": [],
+  "hecho_compartido": false,
+  "estado_sugerido": "PARCIAL",
+  "matiz_sugerido": null
+}

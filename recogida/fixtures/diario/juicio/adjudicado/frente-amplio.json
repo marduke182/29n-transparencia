@@ -32,6 +32,11 @@
       "url": "https://medio-c.example/2026/11/09/critica-frente-amplio",
       "decision": "propuesto",
       "motivo": "Ejemplo."
+    },
+    {
+      "url": "https://medio-a.example/2026/11/08/debate-vivienda",
+      "decision": "descartado",
+      "motivo": "Ejemplo."
     }
   ],
   "objeciones_hechos": [],

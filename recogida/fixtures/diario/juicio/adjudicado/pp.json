@@ -5,12 +5,12 @@
       "partido": "pp",
       "seccion": "temas",
       "item": {
-        "texto": "Alberto Núñez Feijóo propuso el 9 de noviembre de 2026 en un mitin bajar el IVA de la luz: «Bajaremos el IVA de la luz».",
+        "texto": "Persona Dos propuso el 9 de noviembre de 2026 en un mitin bajar el IVA de la luz: «Bajaremos el IVA de la luz».",
         "estado": "PARCIAL",
         "matiz": "Según el relato de Medio A; no se ha consultado la transcripción original.",
         "fuentes": [
           {
-            "url": "https://medio-a.example/2026/11/09/feijoo-iva-luz",
+            "url": "https://medio-a.example/2026/11/09/persona-dos-iva-luz",
             "medio": "Medio A",
             "consultado": "2026-11-10",
             "via": "rss"
@@ -18,7 +18,7 @@
         ],
         "cita": {
           "texto": "Bajaremos el IVA de la luz",
-          "url": "https://medio-a.example/2026/11/09/feijoo-iva-luz"
+          "url": "https://medio-a.example/2026/11/09/persona-dos-iva-luz"
         },
         "atribucion": "Medio A"
       }
@@ -82,7 +82,7 @@
         "matiz": "m",
         "fuentes": [
           {
-            "url": "https://medio-b.example/politica/2026/11/09/abascal-mitin",
+            "url": "https://medio-b.example/politica/2026/11/09/persona-cuatro-mitin",
             "medio": "Medio B"
           }
         ]
@@ -106,7 +106,7 @@
   ],
   "decisiones": [
     {
-      "url": "https://medio-a.example/2026/11/09/feijoo-iva-luz",
+      "url": "https://medio-a.example/2026/11/09/persona-dos-iva-luz",
       "decision": "propuesto",
       "motivo": "Ejemplo."
     },
@@ -121,12 +121,17 @@
       "motivo": "Ejemplo."
     },
     {
-      "url": "https://medio-b.example/politica/2026/11/09/abascal-mitin",
+      "url": "https://medio-b.example/politica/2026/11/09/persona-cuatro-mitin",
       "decision": "descartado",
       "motivo": "Ejemplo."
     },
     {
       "url": "https://oficial.example/transcripciones/debate-2026-11-09",
+      "decision": "descartado",
+      "motivo": "Ejemplo."
+    },
+    {
+      "url": "https://medio-a.example/2026/11/08/debate-vivienda",
       "decision": "descartado",
       "motivo": "Ejemplo."
     }

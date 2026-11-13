@@ -1,0 +1,5 @@
+# Enlaces elegidos a mano para el 10 de noviembre de 2026: una URL por línea, partido opcional.
+https://medio-a.example/2026/11/08/debate-vivienda
+https://psoe.es/nota-de-prensa psoe
+http://medio-a.example/sin-https
+https://medio-a.example/tags/elecciones

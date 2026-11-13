@@ -3,13 +3,28 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { idDocumento, urlCanonica, type PartyId } from './cache.ts';
 import { Traedor } from './traer.ts';
-import type { Alias, Descubrimiento } from './descubrir.ts';
+import { consultasFuente, type Alias, type Descubrimiento, type TareaBusqueda } from './descubrir.ts';
 import {
   ajustesClaude,
   bloque,
+  BUSQUEDAS_WEB_POR_DEFECTO,
+  busquedasWebPrevistas,
   ESCRITURA_POR_PASADA,
+  limiteBusquedasWeb,
   dominiosDistintos,
   estadoSalida,
+  faltasBusqueda,
+  enPeriodo,
+  lotesClasificar,
+  motivoNoArticulo,
+  nombreLote,
+  prefiltrarTareas,
+  problemaClasificacion,
+  TAMANO_LOTE_CLASIFICAR,
+  respuestaAceptable,
+  revisarBusqueda,
+  busquedasRegistradas,
+  RESULTADOS_SATURACION,
   marcarBloqueadas,
   sondear,
   urlsPermitidas,
@@ -34,6 +49,8 @@ import {
   tareasEquidad,
   videosDelDia,
   type Busqueda,
+  type Respuesta,
+  type TareaEquidad,
 } from './diario.ts';
 
 const PARTIDOS: PartyId[] = ['frente-amplio', 'pp', 'psoe', 'vox'];
@@ -85,7 +102,68 @@ describe('equal searches', () => {
     });
     expect(entrada!.consultas).toEqual(registro[1]!.consultas);
     expect(entrada!.nota).toMatch(/Sin salida completa para: psoe, vox/);
+    // Every finding has one disposition, as the site requires of every current run (busquedas.ts validateHallazgos).
+    expect(entrada!.hallazgos).toEqual({
+      'frente-amplio': [{ url: 'https://a.es/1', descartado: 'No se propuso ningún elemento con esta URL.' }],
+      pp: [
+        { url: 'https://a.es/2', descartado: 'No se propuso ningún elemento con esta URL.' },
+        { url: 'https://a.es/3', descartado: 'No se propuso ningún elemento con esta URL.' },
+      ],
+      psoe: [],
+      vox: [],
+    });
     expect(entradasDelDia({ fecha: FECHA, desde: FECHA, registro: [...registro, entrada!], equidad: { urls: {}, estados: {}, notas: {}, bloqueadas: {} } })).toEqual([]);
+  });
+});
+
+describe('entradasDelDia: hallazgos', () => {
+  const registro = [run('equidad-2026-11-09-bulos', 'bulos', '2026-11-09'), run('equidad-2026-11-09-criticos', 'criticos', '2026-11-09')];
+  const fuente = (url: string) => ({ url, medio: 'Medio' });
+  const vacia = () => ({ corte: FECHA, secciones: [{ id: 'verificacion', items: [] as object[] }, { id: 'criticos-defensores', items: [] as object[] }] });
+  const fichas = Object.fromEntries(PARTIDOS.map((p) => [p, vacia()])) as Record<PartyId, ReturnType<typeof vacia> & { en_espera?: object[] }>;
+  fichas.vox.secciones[0]!.items.push({ ref: '59', bulo: true, busqueda: idDiario(FECHA, 'bulos'), fuentes: [fuente('https://maldita.es/desinfo/x')] });
+  fichas.vox.secciones[0]!.items.push({ ref: '12', bulo: true, busqueda: 'equidad-2026-11-09-bulos', fuentes: [fuente('https://maldita.es/desinfo/vieja')] });
+  fichas.pp.secciones[1]!.items.push({ ref: '70', postura: 'critico', busqueda: idDiario(FECHA, 'criticos'), fuentes: [fuente('https://medio.es/c1')] });
+  fichas.pp.en_espera = [{ ref: '71', seccion: 'criticos-defensores', postura: 'critico', busqueda: idDiario(FECHA, 'criticos'), fuentes: [fuente('https://medio.es/c2')] }];
+  const equidad: EquidadDia = {
+    urls: {
+      bulos: { 'frente-amplio': [], pp: [], psoe: ['https://newtral.es/x'], vox: ['https://maldita.es/desinfo/vieja', 'https://maldita.es/desinfo/x', 'https://newtral.es/y'] },
+      criticos: { 'frente-amplio': [], pp: ['https://medio.es/c1', 'https://medio.es/c2'], psoe: [], vox: [] },
+    },
+    estados: {
+      bulos: Object.fromEntries(PARTIDOS.map((p) => [p, 'completa'])) as never,
+      criticos: Object.fromEntries(PARTIDOS.map((p) => [p, 'completa'])) as never,
+    },
+    notas: {},
+    bloqueadas: {},
+  };
+  const motivos = { psoe: { 'https://newtral.es/x': 'adjudicación: el host no está en fuentes.json.' } } as never;
+
+  it('publishes, holds or discards every finding, with the reason the run knows', () => {
+    const entradas = entradasDelDia({ fecha: FECHA, desde: '2026-11-09', registro, equidad, fichas: fichas as never, motivos });
+    const [bulos, criticos] = (['bulos', 'criticos'] as const).map((tipo) => entradas.find((e) => e.tipo === tipo));
+    expect(bulos!.hallazgos).toEqual({
+      'frente-amplio': [],
+      pp: [],
+      psoe: [{ url: 'https://newtral.es/x', descartado: 'adjudicación: el host no está en fuentes.json.' }],
+      vox: [
+        { url: 'https://maldita.es/desinfo/vieja', descartado: 'Ya está en la ficha (12), de otra búsqueda.' },
+        { url: 'https://maldita.es/desinfo/x', publicado: ['59'] },
+        { url: 'https://newtral.es/y', descartado: 'No se propuso ningún elemento con esta URL.' },
+      ],
+    });
+    expect(criticos!.hallazgos!.pp).toEqual([
+      { url: 'https://medio.es/c1', publicado: ['70'] },
+      { url: 'https://medio.es/c2', en_espera: '71' },
+    ]);
+    for (const entrada of [bulos!, criticos!]) for (const p of PARTIDOS) expect(entrada.hallazgos![p]).toHaveLength(entrada.resultados[p]!);
+  });
+
+  it('names the finding by the URL the published item cites, so the site can match it', () => {
+    const conWww = structuredClone(fichas);
+    (conWww.vox.secciones[0]!.items[0] as { fuentes: object[] }).fuentes = [fuente('https://www.maldita.es/desinfo/x/')];
+    const bulos = entradasDelDia({ fecha: FECHA, desde: '2026-11-09', registro, equidad, fichas: conWww as never, motivos }).find((e) => e.tipo === 'bulos');
+    expect(bulos!.hallazgos!.vox[1]).toEqual({ url: 'https://www.maldita.es/desinfo/x/', publicado: ['59'] });
   });
 });
 
@@ -170,6 +248,81 @@ describe('classification tasks', () => {
       ['b', 'vox', ['alias']],
     ].sort((x, y) => String(x[0]).localeCompare(String(y[0]))));
     expect(tareas.find((t) => t.doc_id === 'b')).toMatchObject({ texto: '/cache/docs/b/texto.txt', salida: 'clasificacion/b.pp.json' });
+  });
+});
+
+describe('terms left out of the web search', () => {
+  it('still count for classification: the alias rule uses every term of the party', () => {
+    const muchos = Array.from({ length: 30 }, (_, n) => `Nombre largo número ${n}`);
+    const fa: Alias = { nombres: ['Frente Amplio'], marcas_regionales: [], miembros: muchos, personas: ['Ernest Urtasun'], excluir: [] };
+    const terminos = [...fa.nombres, ...fa.marcas_regionales, ...fa.miembros, ...fa.personas];
+    const [consulta] = consultasFuente(['medio.es'], [{ partido: 'frente-amplio', terminos }]);
+    expect(consulta!.terminos_omitidos).toContain('Ernest Urtasun');
+    expect(consulta!.texto).not.toContain('Ernest Urtasun');
+    expect(partidosEn('Entrevista a Ernest Urtasun', { 'frente-amplio': fa })).toEqual(['frente-amplio']);
+    const documentos = [{ id: 'u', meta: { url: 'https://medio.es/u', url_canonica: 'https://medio.es/u', consultado: FECHA, via: 'web' as const, sha256_contenido: '', estado_http: 200 }, texto: 'Entrevista a Ernest Urtasun.' }];
+    expect(tareasClasificar({ fecha: FECHA, raizCache: '/cache', documentos, alias: { 'frente-amplio': fa }, porEquidad: [] }).map((t) => t.partido)).toEqual(['frente-amplio']);
+  });
+});
+
+describe('clasificación por lotes', () => {
+  const tarea = (doc_id: string, partido: PartyId, url = `https://medio.es/${doc_id}`) => ({
+    doc_id,
+    partido,
+    url,
+    url_canonica: url,
+    via: 'web',
+    consultado: FECHA,
+    origen: ['alias'],
+    texto: `/cache/docs/${doc_id}/texto.txt`,
+    meta: `/cache/docs/${doc_id}/meta.json`,
+    salida: `clasificacion/${doc_id}.${partido}.json`,
+  });
+  const listado = `<html><body>${'<article><h2><a href="/x">Titular</a></h2></article>'.repeat(30)}</body></html>`;
+  const articulo = `<html><head><script type="application/ld+json">{"@type": "NewsArticle"}</script></head><body>${'<article>x</article>'.repeat(8)}</body></html>`;
+
+  it('drops pages that are not single articles, by URL and by structure, the same for every party', () => {
+    expect(motivoNoArticulo({ url_canonica: 'https://medio.es/' })).toBe('portada');
+    expect(motivoNoArticulo({ url_canonica: 'https://medio.es/rss.xml' })).toBe('feed');
+    expect(motivoNoArticulo({ url_canonica: 'https://medio.es/noticias', ext: 'xml' })).toBe('feed');
+    for (const url of ['https://lamarea.com/tags/elecciones', 'https://medio.es/autor/ana-lopez', 'https://medio.es/category/politica', 'https://medio.es/secciones/politica', 'https://medio.es/politica/page/2', 'https://medio.es/buscar']) {
+      expect(motivoNoArticulo({ url_canonica: url }), url).toMatch(/página de índice/);
+    }
+    expect(motivoNoArticulo({ url_canonica: 'https://medio.es/noticias?s=psoe' })).toBe('búsqueda o paginación');
+    // An article that lives under a section path is not an index.
+    expect(motivoNoArticulo({ url_canonica: 'https://medio.es/secciones/politica/el-congreso-aprueba-la-ley-de-vivienda' })).toBeUndefined();
+    expect(motivoNoArticulo({ url_canonica: 'https://cis.es/es/sala-prensa/noticias', html: listado })).toMatch(/^listado \(30 elementos <article>/);
+    // Many <article> elements but a headline slug, or an article in JSON-LD: kept.
+    expect(motivoNoArticulo({ url_canonica: 'https://ondavasca.com/frente-amplio-situa-la-vivienda-en-el-centro', html: listado })).toBeUndefined();
+    expect(motivoNoArticulo({ url_canonica: 'https://medio.es/politica', html: articulo })).toBeUndefined();
+    expect(motivoNoArticulo({ url_canonica: 'https://medio.es/2026/11/10/pp-presenta-programa', html: '<p>Texto</p>' })).toBeUndefined();
+    const tareas = PARTIDOS.flatMap((p) => [tarea('aa', p, 'https://lamarea.com/tags/elecciones'), tarea('bb', p)]);
+    const { tareas: quedan, descartados_previos } = prefiltrarTareas(tareas, () => ({ ext: 'html', html: '<p>x</p>' }));
+    expect(quedan.map((t) => t.doc_id)).toEqual(['bb', 'bb', 'bb', 'bb']);
+    expect(descartados_previos.map((d) => d.partido)).toEqual(PARTIDOS);
+    expect(new Set(descartados_previos.map((d) => d.motivo)).size).toBe(1);
+  });
+
+  it('cuts fixed batches sorted by task id, blind to the party', () => {
+    const tareas = ['c3', 'a1', 'b2'].flatMap((id) => [...PARTIDOS].reverse().map((p) => tarea(id, p)));
+    const lotes = lotesClasificar(tareas, 5);
+    expect(lotes.map((l) => l.length)).toEqual([5, 5, 2]);
+    expect(lotes.flat().map((t) => t.salida)).toEqual([...tareas.map((t) => t.salida)].sort());
+    expect(lotes[0]!.map((t) => `${t.doc_id}.${t.partido}`)).toEqual(['a1.frente-amplio', 'a1.pp', 'a1.psoe', 'a1.vox', 'b2.frente-amplio']);
+    expect(lotesClasificar(tareas, 5)).toEqual(lotesClasificar([...tareas].reverse(), 5));
+    expect(TAMANO_LOTE_CLASIFICAR).toBe(100);
+    expect(lotesClasificar(Array.from({ length: 617 }, (_, n) => tarea(`d${String(n).padStart(3, '0')}`, 'pp'))).length).toBe(7);
+    expect(nombreLote(3)).toBe('03');
+  });
+
+  it('accepts a saved classification only as a JSON object for the task\'s doc_id and party', () => {
+    const t = tarea('aa', 'pp');
+    expect(problemaClasificacion(t, JSON.stringify({ doc_id: 'aa', partido: 'pp', relevante: false }))).toBeUndefined();
+    expect(problemaClasificacion(t, ` ${JSON.stringify({ doc_id: 'aa', partido: 'pp' })}\n`)).toBeUndefined();
+    expect(problemaClasificacion(t, undefined)).toBe('clasificacion/aa.pp.json: falta');
+    expect(problemaClasificacion(t, '{"doc_id": "aa"}]}')).toBe('clasificacion/aa.pp.json: no es JSON');
+    expect(problemaClasificacion(t, '[]')).toBe('clasificacion/aa.pp.json: no es un objeto JSON');
+    expect(problemaClasificacion(t, JSON.stringify({ doc_id: 'aa', partido: 'vox' }))).toBe('clasificacion/aa.pp.json: doc_id o partido no son los de la tarea');
   });
 });
 
@@ -317,6 +470,61 @@ describe('ajustar', () => {
     expect(igualarCorte(fichas, antes, FECHA)).toBe(true);
     expect(PARTIDOS.map((p) => (fichas as Record<string, { corte: string }>)[p]!.corte)).toEqual(PARTIDOS.map(() => FECHA));
   });
+
+  // The site requires every perfil's periodo.hasta to equal its party sheet's corte (perfiles.ts validatePeriodoCorte),
+  // and a document en_espera to be dated after it.
+  it('runs the four perfiles to the new corte and publishes the held documents it reaches', () => {
+    const perfil = (p: string) => ({
+      partido: p,
+      periodo: { desde: '2026-10-05', hasta: '2026-11-09' },
+      limites: [],
+      documentos: [{ id: `${p}-d1`, fecha: '2026-11-01' }],
+      propuestas: [],
+      mensajes: [],
+      ...(p === 'pp'
+        ? {
+            en_espera: {
+              documentos: [
+                { id: 'pp-d2', fecha: '2026-11-10' },
+                { id: 'pp-d3', fecha: '2026-11-12' },
+              ],
+              propuestas: [
+                { id: 'pp-p1', documentos: ['pp-d2'], cita: { texto: 'x', documento: 'pp-d2' } },
+                { id: 'pp-p2', documentos: ['pp-d1', 'pp-d3'], cita: { texto: 'y', documento: 'pp-d3' } },
+              ],
+              mensajes: [{ id: 'pp-m1', documentos: ['pp-d1', 'pp-d2'] }],
+            },
+          }
+        : {}),
+    });
+    const fichas = Object.fromEntries(PARTIDOS.map((p) => [p, ficha([])])) as never;
+    const antes = Object.fromEntries(PARTIDOS.map((p) => [p, JSON.stringify(ficha([]))])) as never;
+    const perfiles = Object.fromEntries(PARTIDOS.map((p) => [p, perfil(p)])) as never;
+    const perfilesAntes = Object.fromEntries(PARTIDOS.map((p) => [p, JSON.stringify(perfil(p))])) as never;
+    expect(igualarCorte(fichas, antes, '2026-11-11', perfiles, perfilesAntes)).toBe(false);
+    (fichas as Record<string, ReturnType<typeof ficha>>).vox!.secciones[0]!.items.push({ ref: 'N9', postura: 'critico' });
+    expect(igualarCorte(fichas, antes, '2026-11-11', perfiles, perfilesAntes)).toBe(true);
+    const todos = perfiles as Record<string, ReturnType<typeof perfil> & { en_espera?: Record<string, { id: string }[]> }>;
+    expect(PARTIDOS.map((p) => todos[p]!.periodo)).toEqual(PARTIDOS.map(() => ({ desde: '2026-10-05', hasta: '2026-11-11' })));
+    const pp = todos.pp!;
+    expect(pp.documentos.map((d) => d.id)).toEqual(['pp-d1', 'pp-d2']);
+    expect((pp.propuestas as { id: string }[]).map((d) => d.id)).toEqual(['pp-p1']);
+    expect((pp.mensajes as { id: string }[]).map((d) => d.id)).toEqual(['pp-m1']);
+    expect(pp.en_espera).toEqual({ documentos: [{ id: 'pp-d3', fecha: '2026-11-12' }], propuestas: [expect.objectContaining({ id: 'pp-p2' })], mensajes: [] });
+    expect('en_espera' in todos.vox!).toBe(false);
+  });
+
+  it('moves corte and the perfiles together when only a perfil changed', () => {
+    const fichas = Object.fromEntries(PARTIDOS.map((p) => [p, ficha([])])) as never;
+    const antes = Object.fromEntries(PARTIDOS.map((p) => [p, JSON.stringify(ficha([]))])) as never;
+    const perfil = () => ({ periodo: { desde: '2026-10-05', hasta: '2026-11-09' }, documentos: [] as object[], propuestas: [], mensajes: [] });
+    const perfiles = Object.fromEntries(PARTIDOS.map((p) => [p, perfil()])) as Record<string, ReturnType<typeof perfil>>;
+    const perfilesAntes = Object.fromEntries(PARTIDOS.map((p) => [p, JSON.stringify(perfil())])) as never;
+    perfiles.psoe!.documentos.push({ id: 'psoe-d9', fecha: '2026-11-11' });
+    expect(igualarCorte(fichas, antes, '2026-11-11', perfiles as never, perfilesAntes)).toBe(true);
+    expect(PARTIDOS.map((p) => (fichas as Record<string, { corte: string }>)[p]!.corte)).toEqual(PARTIDOS.map(() => '2026-11-11'));
+    expect(PARTIDOS.map((p) => perfiles[p]!.periodo.hasta)).toEqual(PARTIDOS.map(() => '2026-11-11'));
+  });
 });
 
 describe('informe', () => {
@@ -330,23 +538,63 @@ describe('informe', () => {
 
 describe('prompts of agentes/08-diario.md', () => {
   const md = readFileSync(join(import.meta.dirname, '..', '..', 'agentes', '08-diario.md'), 'utf8');
-  const valores = { FECHA, EJECUCION: '/c/ejecuciones/2026-11-10', CACHE: '/c', DATOS: '/w/apps/29n/src/data', CRITERIOS: '/t/criterios', ENCUESTAS: reglaEncuestas(FECHA) };
+  const valores = { FECHA, EJECUCION: '/c/ejecuciones/2026-11-10', CACHE: '/c', DATOS: '/w/apps/29n/src/data', CRITERIOS: '/t/criterios', ENCUESTAS: reglaEncuestas(FECHA), SATURACION: '10' };
 
   it('extracts both session prompts and the five subagents with every placeholder filled', () => {
     const salida = prompts(md, valores);
-    const textos = [salida.busqueda, salida.adjudicacion, ...Object.values(salida.agentes).map((a) => a.prompt)];
+    const textos = [salida.busqueda, salida.hechos, salida.adjudicacion, ...Object.values(salida.agentes).map((a) => a.prompt)];
     expect(Object.keys(salida.agentes)).toEqual(['buscador-fuente', 'buscador-equidad', 'clasificador', 'redactor-hechos', 'adjudicador']);
     expect(textos.every((t) => t.length > 200 && !t.includes('{{'))).toBe(true);
     expect(salida.adjudicacion).toContain('/c/ejecuciones/2026-11-10/adjudicado/<partido>.json');
     expect(salida.agentes.adjudicador!.prompt).toContain('diario-2026-11-10-<tipo>');
+    expect(salida.agentes['buscador-fuente']!.prompt).toContain('returns 10 or more results');
+    // The retry session: the same prompt, on the subset files.
+    expect(salida.busqueda).toContain('Read /c/ejecuciones/2026-11-10/equidad-tareas.json.');
+    expect(salida['busqueda-reintento']).toBe(salida.busqueda.replace('/equidad-tareas.json', '/reintento-equidad.json').replace('/descubrir.json', '/reintento-fuentes.json'));
   });
 
-  it('pins every subagent to haiku or opus, and none that reads the web has Bash or Write', () => {
+  it('pins every subagent to haiku or opus; none has Bash or Edit; the searchers, which read the open web, never Write', () => {
     const { agentes } = prompts(md, valores);
-    for (const def of Object.values(agentes)) {
+    for (const [nombre, def] of Object.entries(agentes)) {
       expect(['haiku', 'opus']).toContain(def.model);
-      expect(def.tools.some((t) => ['Bash', 'Write', 'Edit'].includes(t))).toBe(false);
+      expect(def.tools.some((t) => ['Bash', 'Edit', 'NotebookEdit'].includes(t))).toBe(false);
+      if (nombre.startsWith('buscador-')) expect(def.tools).not.toContain('Write');
     }
+    // The fact writer and the adjudicator write their own answer: a large one comes back to the session cut off.
+    expect(agentes['redactor-hechos']!.tools).toEqual(['Read', 'Glob', 'Grep', 'WebFetch', 'Write']);
+    expect(agentes.adjudicador!.tools).toEqual(['Read', 'Glob', 'Grep', 'WebFetch', 'Write']);
+    expect(agentes['redactor-hechos']!.prompt).toContain('Write exactly one file: your answer, with the Write tool, at <path>/hechos.json');
+    expect(agentes.adjudicador!.prompt).toContain('Write exactly one file: your answer, with the Write tool, at /c/ejecuciones/2026-11-10/adjudicado/<id>.json.');
+    for (const nombre of ['redactor-hechos', 'adjudicador']) expect(agentes[nombre as 'adjudicador']!.prompt).toContain('then reply with only the file path:');
+    expect(agentes.clasificador!.tools).toEqual(['Read', 'Write']);
+    expect(agentes.clasificador!.prompt).toContain('Write exactly one file: your answer, with the Write tool, at /c/ejecuciones/2026-11-10/<salida>');
+  });
+
+  it('runs the classification sessions on their batch file only, and the adjudication without classifiers', () => {
+    const salida = prompts(md, { ...valores, TAREAS_CLASIFICAR: '/c/ejecuciones/2026-11-10/lotes/clasificar-03.json' });
+    expect(salida.clasificacion).toContain('Read /c/ejecuciones/2026-11-10/lotes/clasificar-03.json.');
+    expect(salida.clasificacion).toContain('Never write, edit, fix or complete any file.');
+    expect(salida.adjudicacion).not.toContain('"clasificador"');
+    expect(salida.adjudicacion).toContain('Do not launch any classifier.');
+  });
+
+  it('runs the shared facts in their own session, then one session per party with one adjudicator, waited for in the foreground', () => {
+    const salida = prompts(md, valores);
+    expect(salida.hechos).toContain('subagent_type "redactor-hechos"');
+    expect(salida.hechos).not.toContain('subagent_type "adjudicador"');
+    expect(salida.hechos).toContain('It writes its answer to /c/ejecuciones/2026-11-10/hechos.json and replies with that path.');
+    const porPartido = ['frente-amplio', 'pp', 'psoe', 'vox'].map((p) => prompts(md, { ...valores, PARTIDO: p }).adjudicacion);
+    expect(porPartido[1]).toContain('as prompt exactly `PARTIDO=pp` and nothing else. It writes its answer to /c/ejecuciones/2026-11-10/adjudicado/pp.json and replies with that path.');
+    // The session never writes: it checks that the subagent's file exists.
+    for (const texto of [salida.hechos, porPartido[1]!]) {
+      expect(texto).toContain('Never write, edit, fix or complete any file.');
+      expect(texto).toMatch(/check with Glob that \S+ exists\. Do not read it\./);
+    }
+    expect(porPartido[1]).not.toContain('redactor-hechos"');
+    // The same prompt for the four, but for the party id.
+    const sinPartido = porPartido.map((t, i) => t.split(`one party, ${['frente-amplio', 'pp', 'psoe', 'vox'][i]},`).join('one party, X,').replace(/PARTIDO=[a-z-]+|Adjudicar [a-z-]+|adjudicado\/[a-z-]+\.json|"partido": "[a-z-]+"/g, 'X'));
+    expect(new Set(sinPartido).size).toBe(1);
+    for (const texto of [salida.hechos, ...porPartido]) expect(texto).toContain('Run the subagent in the foreground: never set run_in_background.');
   });
 
   it('switches the polls rule on the ban date and refuses unknown placeholders', () => {
@@ -497,14 +745,41 @@ describe('ajustesClaude', () => {
     ajustes.permissions[lista].filter((r) => /^(Write|Edit)\(\/\/c\/ejecuciones/.test(r)).sort();
   const reglas = (rutas: readonly string[]) => rutas.flatMap((ruta) => [`Edit(//c/ejecuciones/2026-11-10/${ruta})`, `Write(//c/ejecuciones/2026-11-10/${ruta})`]).sort();
 
-  it('pass busqueda writes only busqueda/ and equidad/; pass adjudicacion only clasificacion/, adjudicado/ and hechos.json', () => {
+  it('pass busqueda writes only busqueda/ and equidad/; a classification batch only its own files; hechos only hechos.json; a party session only its answer', () => {
     const uno = JSON.parse(ajustesClaude(plantilla, valores, 'busqueda'));
-    const dos = JSON.parse(ajustesClaude(plantilla, valores, 'adjudicacion'));
+    const pp = ['adjudicado/pp.json', 'adjudicado/pp.json.error.txt'];
+    const dos = JSON.parse(ajustesClaude(plantilla, valores, 'adjudicacion', pp));
+    const hechos = JSON.parse(ajustesClaude(plantilla, valores, 'hechos', ['hechos.json', 'hechos.json.error.txt']));
     expect(escrituras(uno, 'allow')).toEqual(reglas(['busqueda/**', 'equidad/**']));
-    expect(escrituras(dos, 'allow')).toEqual(reglas(['clasificacion/**', 'adjudicado/**', 'hechos.json*']));
+    expect(escrituras(dos, 'allow')).toEqual(reglas(pp));
+    expect(escrituras(hechos, 'allow')).toEqual(reglas(['hechos.json', 'hechos.json.error.txt']));
+    expect(() => ajustesClaude(plantilla, valores, 'hechos')).toThrow(/sesión de hechos necesita sus rutas/);
+    expect(() => ajustesClaude(plantilla, valores, 'hechos', ['hechos.json*'])).toThrow(/ruta de hechos no admitida/);
     expect(uno.permissions.deny).toEqual(expect.arrayContaining(reglas(['clasificacion/**', 'adjudicado/**', 'hechos.json*'])));
-    expect(dos.permissions.deny).toEqual(expect.arrayContaining(reglas(['busqueda/**', 'equidad/**'])));
-    expect(ESCRITURA_POR_PASADA).toEqual({ busqueda: ['busqueda/**', 'equidad/**'], adjudicacion: ['clasificacion/**', 'adjudicado/**', 'hechos.json*'] });
+    expect(dos.permissions.deny).toEqual(expect.arrayContaining(reglas(['busqueda/**', 'equidad/**', 'clasificacion/**', 'hechos.json*'])));
+    expect(hechos.permissions.deny).toEqual(expect.arrayContaining(reglas(['busqueda/**', 'equidad/**', 'clasificacion/**', 'adjudicado/**'])));
+    expect(() => ajustesClaude(plantilla, valores, 'adjudicacion')).toThrow(/rutas de su partido/);
+    for (const mala of ['adjudicado/*.json', 'adjudicado/podemos.json', 'adjudicado/../hechos.json', 'hechos.json']) {
+      expect(() => ajustesClaude(plantilla, valores, 'adjudicacion', [mala]), mala).toThrow(/ruta de partido no admitida/);
+    }
+    expect(ESCRITURA_POR_PASADA).toEqual({ busqueda: ['busqueda/**', 'equidad/**'], 'busqueda-reintento': ['busqueda/**', 'equidad/**'], clasificacion: ['clasificacion/**'], hechos: ['hechos.json*'], adjudicacion: ['adjudicado/**'] });
+    const lote = ['clasificacion/aa11.pp.json', 'clasificacion/bb22.frente-amplio.json'];
+    const tres = JSON.parse(ajustesClaude(plantilla, valores, 'clasificacion', lote));
+    expect(escrituras(tres, 'allow')).toEqual(reglas(lote));
+    expect(tres.permissions.allow.some((r: string) => r.includes('clasificacion/**'))).toBe(false);
+    expect(tres.permissions.deny).toEqual(expect.arrayContaining(reglas(['busqueda/**', 'equidad/**', 'adjudicado/**', 'hechos.json*'])));
+    expect(() => ajustesClaude(plantilla, valores, 'clasificacion')).toThrow(/rutas de su lote/);
+    expect(() => ajustesClaude(plantilla, valores, 'adjudicacion', lote)).toThrow(/ruta de partido no admitida/);
+    expect(() => ajustesClaude(plantilla, valores, 'hechos', lote)).toThrow(/ruta de hechos no admitida/);
+    expect(() => ajustesClaude(plantilla, valores, 'busqueda', lote)).toThrow(/solo una sesión de clasificación, de hechos o de adjudicación/);
+    for (const mala of ['clasificacion/*.pp.json', 'clasificacion/../x.json', 'adjudicado/pp.json', 'clasificacion/aa.podemos.json']) {
+      expect(() => ajustesClaude(plantilla, valores, 'clasificacion', [mala]), mala).toThrow(/ruta de lote no admitida/);
+    }
+    // The retry session writes what pass 1 writes, and is denied only the adjudication's answers.
+    const reintento = JSON.parse(ajustesClaude(plantilla, valores, 'busqueda-reintento'));
+    expect(escrituras(reintento, 'allow')).toEqual(reglas(['busqueda/**', 'equidad/**']));
+    expect(reintento.permissions.deny).toEqual(expect.arrayContaining(reglas(['clasificacion/**', 'adjudicado/**', 'hechos.json*'])));
+    for (const regla of reglas(['busqueda/**', 'equidad/**'])) expect(reintento.permissions.deny).not.toContain(regla);
   });
 
   it('fills every placeholder, allows no Bash, and denies the sensitive paths', () => {
@@ -522,6 +797,239 @@ describe('ajustesClaude', () => {
     expect(() => ajustesClaude(plantilla.replace('"Agent",', '"Agent", "Write(/__EJ__/busqueda/**)",'), valores, 'busqueda')).toThrow(/no puede permitir/);
     expect(() => ajustesClaude(plantilla, valores, 'otra' as never)).toThrow(/pasada desconocida/);
     expect(() => ajustesClaude(plantilla, { EJ: '/c' }, 'busqueda')).toThrow(/marcador desconocido/);
+  });
+});
+
+describe('limiteBusquedasWeb', () => {
+  // Every WebSearch of a session or `claude -p` turn shares one cap (default 200). The first live run
+  // ran out after 10 of 36 sources: the cap must cover the whole pass, or some sources and parties go unsearched.
+  const fuente = (emisor: string, terminos: number): TareaBusqueda => {
+    const hosts = [`${emisor}.es`, `www.${emisor}.es`];
+    const consultas = PARTIDOS.map((partido) => ({ partido, terminos: Array.from({ length: terminos }, (_, n) => `t${n}`), excluir: [] }));
+    return { emisor, nombre: emisor, hosts, consultas, busquedas: consultasFuente(hosts, consultas), desde: '2026-11-08', hasta: FECHA };
+  };
+  const igual = (partido: PartyId, consultas: TareaEquidad['consultas']): TareaEquidad => ({
+    busqueda: idDiario(FECHA, 'criticos'),
+    tipo: 'criticos',
+    partido,
+    nombre: partido,
+    periodo: { desde: '2026-11-08', hasta: FECHA },
+    plantilla: 'p',
+    consultas,
+    salida: `equidad/criticos-${partido}.json`,
+  });
+  const bloqueada = { host: 'b.es', estado_http: 403, fecha: FECHA, motivo: 'HTTP 403' };
+  const consultas = [
+    { texto: 'a', motor: 'WebSearch', dominios: [] },
+    { texto: 'b', motor: 'WebSearch', dominios: ['b.es', 'c.es'], bloqueada },
+    { texto: 'c', motor: 'WebFetch', dominios: ['d.es'] },
+  ];
+
+  it('counts the worst case: each source query with its two halves, and each unblocked WebSearch query of each equal search', () => {
+    expect(busquedasWebPrevistas([fuente('a', 10), fuente('b', 3)], PARTIDOS.map((p) => igual(p, consultas)))).toBe(4 * 3 + 4 * 3 + 4);
+    expect(busquedasWebPrevistas([fuente('c', 1)], [])).toBe(4);
+    expect(busquedasWebPrevistas([], [])).toBe(0);
+  });
+
+  it('covers the whole pass of the first live run, with one retry of every subagent', () => {
+    const fuentes = Array.from({ length: 36 }, (_, n) => fuente(`f${n}`, 10));
+    const iguales = PARTIDOS.flatMap((p) => [igual(p, consultas), igual(p, consultas)]);
+    const previstas = busquedasWebPrevistas(fuentes, iguales);
+    expect(previstas).toBe(36 * 4 * 3 + 8);
+    expect(limiteBusquedasWeb('busqueda', previstas)).toBe(2 * previstas);
+    expect(limiteBusquedasWeb('busqueda', previstas)).toBeGreaterThan(BUSQUEDAS_WEB_POR_DEFECTO);
+  });
+
+  it('never goes below the default, and leaves the adjudication pass at the default', () => {
+    expect(BUSQUEDAS_WEB_POR_DEFECTO).toBe(200);
+    expect(limiteBusquedasWeb('busqueda', 0)).toBe(200);
+    expect(limiteBusquedasWeb('busqueda', 30)).toBe(200);
+    expect(limiteBusquedasWeb('adjudicacion', 5000)).toBe(200);
+    expect(limiteBusquedasWeb('hechos', 5000)).toBe(200);
+  });
+});
+
+describe('faltasBusqueda', () => {
+  const fuente = (emisor: string): TareaBusqueda => {
+    const consultas = [
+      { partido: 'frente-amplio', terminos: ['Frente Amplio', 'IU', 'Ada Colau'], excluir: [] },
+      { partido: 'pp', terminos: ['PP', 'Feijóo'], excluir: [] },
+      { partido: 'psoe', terminos: ['PSOE'], excluir: [] },
+      { partido: 'vox', terminos: ['Vox'], excluir: [] },
+    ];
+    return { emisor, nombre: emisor, hosts: [`${emisor}.es`], consultas, busquedas: consultasFuente([`${emisor}.es`], consultas), desde: '2026-11-08', hasta: FECHA };
+  };
+  type Hecha = { partido: string; texto: string; estado: string; resultados?: number; subconsultas?: unknown[] };
+  const respuestaFuente = (tarea: TareaBusqueda, cambiar = (c: Hecha): Hecha => c): Respuesta => ({
+    contenido: { emisor: tarea.emisor, candidatos: [], consultas: tarea.busquedas.map((b) => cambiar({ partido: b.partido, texto: b.texto, estado: 'ok', resultados: 0 })), nota: '' },
+  });
+  const bloqueada = { host: 'b.es', estado_http: 403, fecha: FECHA, motivo: 'HTTP 403' };
+  const tipos = ['criticos', 'defensores', 'bulos', 'causas'] as const;
+  const iguales: TareaEquidad[] = tipos.flatMap((tipo) =>
+    PARTIDOS.map((partido) => ({
+      busqueda: idDiario(FECHA, tipo),
+      tipo,
+      partido,
+      nombre: partido,
+      periodo: { desde: '2026-11-08', hasta: FECHA },
+      plantilla: 'p',
+      consultas: [
+        { texto: `${partido} ${tipo}`, motor: 'WebSearch', dominios: [] },
+        { texto: `${partido} ${tipo} b`, motor: 'WebSearch', dominios: ['b.es'], ...(tipo === 'bulos' ? { bloqueada } : {}) },
+      ],
+      salida: `equidad/${tipo}.${partido}.json`,
+    })),
+  );
+  const respuestaIgual = (tarea: TareaEquidad): Respuesta => ({
+    contenido: { resultados: [], consultas: tarea.consultas.map((c) => ({ texto: c.texto, estado: c.bloqueada ? 'bloqueada' : 'ok', resultados: 0 })) },
+  });
+  const [fuenteA, fuenteB] = [fuente('a'), fuente('b')];
+  const fuentes = [fuenteA, fuenteB];
+  const base = {
+    fuentes,
+    porFuente: (emisor: string) => respuestaFuente(fuentes.find((f) => f.emisor === emisor)!),
+    iguales,
+    porIgual: respuestaIgual,
+  };
+
+  it('is empty when every source term and every unblocked equal query ran', () => {
+    expect(faltasBusqueda(base)).toEqual([]);
+  });
+
+  it('lists a missing source answer, one that is not JSON, and one without the consultas list', () => {
+    const porFuente = (emisor: string): Respuesta => (emisor === 'a' ? undefined : { error: true });
+    expect(faltasBusqueda({ ...base, porFuente })).toEqual(['busqueda/a.json: falta', 'busqueda/b.json: la respuesta no es JSON (busqueda/b.json.error.txt)']);
+    expect(faltasBusqueda({ ...base, porFuente: () => ({ contenido: { emisor: 'a', candidatos: [], nota: 'ok' } }) })).toEqual([
+      'busqueda/a.json: sin las listas candidatos y consultas',
+      'busqueda/b.json: sin las listas candidatos y consultas',
+    ]);
+  });
+
+  it('lists every planned query not searched, as in the first live run, whatever the nota says', () => {
+    const parcial = respuestaFuente(fuenteB, (c) => (c.partido === 'frente-amplio' ? c : { ...c, estado: 'no_buscado' }));
+    const sinUno = respuestaFuente(fuenteA, (c) => (c.partido === 'pp' ? { ...c, partido: 'vox' } : c));
+    const sinNumero = respuestaFuente(fuenteA, (c) => (c.partido === 'psoe' ? { partido: c.partido, texto: `  ${c.texto} `, estado: 'ok' } : c));
+    expect(faltasBusqueda({ ...base, porFuente: (emisor) => (emisor === 'a' ? sinUno : parcial) })).toEqual([
+      'busqueda/a.json: pp «site:a.es ("PP" OR "Feijóo")» sin buscar',
+      'busqueda/b.json: pp «site:b.es ("PP" OR "Feijóo")» sin buscar (no_buscado)',
+      'busqueda/b.json: psoe «site:b.es ("PSOE")» sin buscar (no_buscado)',
+      'busqueda/b.json: vox «site:b.es ("Vox")» sin buscar (no_buscado)',
+    ]);
+    expect(faltasBusqueda({ ...base, fuentes: [fuenteA], porFuente: () => sinNumero })).toEqual(['busqueda/a.json: psoe «site:a.es ("PSOE")» sin número de resultados (entero mayor o igual que 0)']);
+    for (const resultados of [-1, 2.5, '3']) {
+      const raro = respuestaFuente(fuenteA, (c) => (c.partido === 'vox' ? ({ ...c, resultados } as unknown as Hecha) : c));
+      expect(faltasBusqueda({ ...base, fuentes: [fuenteA], porFuente: () => raro }), String(resultados)).toEqual(['busqueda/a.json: vox «site:a.es ("Vox")» sin número de resultados (entero mayor o igual que 0)']);
+    }
+    expect(faltasBusqueda({ ...base, fuentes: [{ ...fuenteA, busquedas: [] }] })).toEqual(['descubrir.json: la tarea de a no tiene búsquedas']);
+  });
+
+  it('marks the tasks another session may redo, whatever their party, and the gaps it cannot fix', () => {
+    const porIgual = (tarea: TareaEquidad): Respuesta => (tarea.tipo === 'causas' && tarea.partido === 'psoe' ? { error: true } : respuestaIgual(tarea));
+    const porFuente = (emisor: string): Respuesta => (emisor === 'b' ? undefined : respuestaFuente(fuenteA));
+    const revision = revisarBusqueda({ ...base, porFuente, porIgual });
+    expect(revision.reintentables.fuentes.map((t) => t.emisor)).toEqual(['b']);
+    // One party's equal search failed: the four parties of that kind are redone together.
+    expect(revision.reintentables.iguales.map((t) => t.salida)).toEqual(PARTIDOS.map((p) => `equidad/causas.${p}.json`));
+    expect(revision.reintentables.iguales[1]).toBe(iguales.find((t) => t.salida === 'equidad/causas.pp.json'));
+    expect(revision.definitivas).toEqual([]);
+    expect(revision.faltas).toEqual(['busqueda/b.json: falta', 'equidad/causas.psoe.json: la respuesta no es JSON (equidad/causas.psoe.json.error.txt)']);
+    const sinVox = iguales.filter((t) => !(t.tipo === 'defensores' && t.partido === 'vox'));
+    expect(revisarBusqueda({ ...base, iguales: sinVox, busquedasReales: 1 }).definitivas).toEqual([
+      'equidad: defensores sin tarea para vox',
+      'claude/busqueda.salida.json: las respuestas de la pasada declaran 34 búsquedas web hechas, pero Claude Code registró 1',
+    ]);
+  });
+
+  it('fails, without retry, when the four parties of a kind do not have the same blocked queries', () => {
+    const distinto = iguales.map((t) => (t.tipo === 'criticos' && t.partido === 'vox' ? { ...t, consultas: t.consultas.map((c, i) => (i === 1 ? { ...c, bloqueada } : c)) } : t));
+    const revision = revisarBusqueda({ ...base, iguales: distinto, porIgual: (t) => respuestaIgual(t) });
+    expect(revision.definitivas).toEqual(['equidad: criticos no tiene las mismas consultas bloqueadas para los cuatro partidos']);
+  });
+
+  it('keeps only equal-search results dated on or before the run date', () => {
+    expect(enPeriodo('2026-11-10', '2026-11-10')).toBe(true);
+    expect(enPeriodo('2026-11-08', '2026-11-10')).toBe(true);
+    expect(enPeriodo('2026-11-11', '2026-11-10')).toBe(false);
+    for (const raro of [undefined, null, '', '10/11/2026', '2026-11-10T09:00', 20261110]) expect(enPeriodo(raro, '2026-11-10')).toBe(false);
+  });
+
+  it('accepts a saved answer only if it is valid JSON with nothing but whitespace around it', () => {
+    expect(respuestaAceptable('{"a": 1}')).toBe(true);
+    expect(respuestaAceptable('  {"a": 1}\n\n\t ')).toBe(true);
+    // The 11 Nov case: valid JSON followed by "]}".
+    expect(respuestaAceptable('{"a": [1]}]}\n')).toBe(false);
+    expect(respuestaAceptable('```json\n{"a": 1}\n```')).toBe(false);
+    expect(respuestaAceptable('{"a": 1} texto')).toBe(false);
+    expect(respuestaAceptable('')).toBe(false);
+  });
+
+  it('needs exactly one planned query per party in every source task', () => {
+    const sinVox = { ...fuenteA, busquedas: fuenteA.busquedas.filter((b) => b.partido !== 'vox') };
+    const ppDoble = { ...fuenteA, busquedas: [...fuenteA.busquedas, fuenteA.busquedas[1]!] };
+    expect(faltasBusqueda({ ...base, fuentes: [sinVox, ppDoble] })).toEqual([
+      'descubrir.json: la tarea de a no tiene exactamente una búsqueda por partido (frente-amplio 1, pp 1, psoe 1, vox 0)',
+      'descubrir.json: la tarea de a no tiene exactamente una búsqueda por partido (frente-amplio 1, pp 2, psoe 1, vox 1)',
+    ]);
+  });
+
+  it('fails when the answers declare more web searches than Claude Code counted, and skips the check without a count', () => {
+    // Declared: 4 queries × 2 sources, plus 4 parties × (2 + 2 + 2 + 1 unblocked queries: one bulos query is blocked) = 8 + 28 = 36.
+    expect(faltasBusqueda({ ...base, busquedasReales: 36 })).toEqual([]);
+    expect(faltasBusqueda({ ...base, busquedasReales: 203 })).toEqual([]);
+    expect(faltasBusqueda({ ...base, busquedasReales: 35 })).toEqual(['claude/busqueda.salida.json: las respuestas de la pasada declaran 36 búsquedas web hechas, pero Claude Code registró 35']);
+    // After a retry, each session's answers are checked against that session's own count.
+    const reintento = { fuentes: ['b'], iguales: PARTIDOS.map((p) => `equidad/causas.${p}.json`) };
+    // Retried: source b (4) + causas × 4 parties × 2 queries (8) = 12; pass 1: the other 24.
+    expect(faltasBusqueda({ ...base, busquedasReales: 24, reintento: { ...reintento, busquedasReales: 12 } })).toEqual([]);
+    expect(faltasBusqueda({ ...base, busquedasReales: 24, reintento: { ...reintento, busquedasReales: 11 } })).toEqual([
+      'claude/busqueda-reintento.salida.json: las respuestas reintentadas declaran 12 búsquedas web hechas, pero Claude Code registró 11',
+    ]);
+    // A large retry count does not cover answers that came from pass 1.
+    expect(faltasBusqueda({ ...base, busquedasReales: 23, reintento: { ...reintento, busquedasReales: 500 } })).toHaveLength(1);
+    expect(faltasBusqueda({ ...base, busquedasReales: undefined })).toEqual([]);
+    const salida = { usage: { server_tool_use: { web_search_requests: 0 } }, modelUsage: { 'claude-opus-5-5': { webSearchRequests: 0 }, 'claude-haiku-5-5': { webSearchRequests: 203 } } };
+    expect(busquedasRegistradas(salida)).toBe(203);
+    expect(busquedasRegistradas({ modelUsage: { x: { costUSD: 1 } } })).toBeUndefined();
+    expect(busquedasRegistradas({ result: 'sin uso' })).toBeUndefined();
+  });
+
+  it('needs both halves of a saturated query, and nothing more from a single-term query', () => {
+    const saturada = (c: Hecha): Hecha => ({ ...c, resultados: RESULTADOS_SATURACION });
+    expect(faltasBusqueda({ ...base, fuentes: [fuenteA], porFuente: () => respuestaFuente(fuenteA, (c) => (c.partido === 'pp' || c.partido === 'vox' ? saturada(c) : c)) })).toEqual([
+      'busqueda/a.json: pp «site:a.es ("PP")» sin buscar (mitad de una consulta saturada)',
+      'busqueda/a.json: pp «site:a.es ("Feijóo")» sin buscar (mitad de una consulta saturada)',
+    ]);
+    const conMitades = (c: Hecha): Hecha => {
+      const plan = fuenteA.busquedas.find((b) => b.partido === c.partido)!;
+      return plan.mitades ? { ...saturada(c), subconsultas: plan.mitades.map((texto) => ({ texto, estado: 'ok', resultados: 3 })) } : saturada(c);
+    };
+    expect(faltasBusqueda({ ...base, fuentes: [fuenteA], porFuente: () => respuestaFuente(fuenteA, conMitades) })).toEqual([]);
+    // The halves count as searches done: 4 queries + 2 halves for frente-amplio and pp, plus 28 equal queries = 36.
+    expect(faltasBusqueda({ ...base, fuentes: [fuenteA], porFuente: () => respuestaFuente(fuenteA, conMitades), busquedasReales: 36 })).toEqual([]);
+    expect(faltasBusqueda({ ...base, fuentes: [fuenteA], porFuente: () => respuestaFuente(fuenteA, conMitades), busquedasReales: 35 })).toHaveLength(1);
+    expect(fuenteA.busquedas.find((b) => b.partido === 'frente-amplio')!.mitades).toEqual(['site:a.es ("Frente Amplio" OR "IU")', 'site:a.es ("Ada Colau")']);
+    expect(faltasBusqueda({ ...base, fuentes: [fuenteA], porFuente: () => respuestaFuente(fuenteA, (c) => ({ ...c, resultados: RESULTADOS_SATURACION - 1 })) })).toEqual([]);
+  });
+
+  it('lists a missing or incomplete equal search, and a kind without its four parties', () => {
+    const porIgual = (tarea: TareaEquidad): Respuesta => {
+      if (tarea.tipo === 'causas' && tarea.partido === 'vox') return undefined;
+      if (tarea.tipo === 'criticos' && tarea.partido === 'pp') {
+        return { contenido: { resultados: [], consultas: [{ texto: tarea.consultas[0]!.texto, estado: 'ok' }, { texto: tarea.consultas[1]!.texto, estado: 'error' }] } };
+      }
+      return respuestaIgual(tarea);
+    };
+    const sinVox = iguales.filter((t) => !(t.tipo === 'defensores' && t.partido === 'vox'));
+    expect(faltasBusqueda({ ...base, iguales: sinVox, porIgual })).toEqual([
+      'equidad: defensores sin tarea para vox',
+      'equidad/criticos.pp.json: incompleta (consulta 2 «pp criticos b»: error)',
+      'equidad/causas.vox.json: falta',
+    ]);
+  });
+
+  it('needs no answer for an equal search with every query blocked', () => {
+    const todasBloqueadas = iguales.map((t) => (t.tipo === 'bulos' ? { ...t, consultas: t.consultas.map((c) => ({ ...c, bloqueada })) } : t));
+    expect(faltasBusqueda({ ...base, iguales: todasBloqueadas, porIgual: (t) => (t.tipo === 'bulos' ? undefined : respuestaIgual(t)) })).toEqual([]);
   });
 });
 

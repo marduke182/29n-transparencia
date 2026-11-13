@@ -30,12 +30,48 @@
       "partido": "vox",
       "seccion": "temas",
       "item": {
-        "texto": "Santiago Abascal cerró el 9 de noviembre de 2026 un mitin en Toledo: «Vamos a ganar en Toledo».",
+        "texto": "Persona Cuatro cerró el 9 de noviembre de 2026 un mitin en Toledo: «Vamos a ganar en Toledo».",
         "estado": "PARCIAL",
         "matiz": "Según el relato de Medio B; no se ha consultado la grabación original.",
         "fuentes": [
           {
-            "url": "https://medio-b.example/politica/2026/11/09/abascal-mitin",
+            "url": "https://medio-b.example/politica/2026/11/09/persona-cuatro-mitin",
+            "medio": "Medio B",
+            "consultado": "2026-11-10",
+            "via": "web"
+          }
+        ],
+        "atribucion": "Medio B"
+      }
+    },
+    {
+      "partido": "vox",
+      "seccion": "temas",
+      "item": {
+        "texto": "Persona Cuatro dijo el 9 de noviembre de 2026 en Toledo que «vamos a ganar en Toledo y en toda la provincia el día veintinueve de noviembre».",
+        "estado": "PARCIAL",
+        "matiz": "Según el relato de Medio B; no se ha consultado la grabación original. La cita tiene 15 palabras: fusionar la rechaza, como el sitio.",
+        "fuentes": [
+          {
+            "url": "https://medio-b.example/politica/2026/11/09/persona-cuatro-mitin",
+            "medio": "Medio B",
+            "consultado": "2026-11-10",
+            "via": "web"
+          }
+        ],
+        "atribucion": "Medio B"
+      }
+    },
+    {
+      "partido": "vox",
+      "seccion": "temas",
+      "item": {
+        "texto": "Persona Cuatro dijo el 9 de noviembre de 2026 en Toledo: «Ganaremos en toda Castilla-La Mancha».",
+        "estado": "PARCIAL",
+        "matiz": "Según el relato de Medio B; no se ha consultado la grabación original. La cita no está en el texto de Medio B: fusionar la rechaza.",
+        "fuentes": [
+          {
+            "url": "https://medio-b.example/politica/2026/11/09/persona-cuatro-mitin",
             "medio": "Medio B",
             "consultado": "2026-11-10",
             "via": "web"
@@ -52,8 +88,13 @@
       "motivo": "Ejemplo."
     },
     {
-      "url": "https://medio-b.example/politica/2026/11/09/abascal-mitin",
+      "url": "https://medio-b.example/politica/2026/11/09/persona-cuatro-mitin",
       "decision": "propuesto",
+      "motivo": "Ejemplo."
+    },
+    {
+      "url": "https://medio-a.example/2026/11/08/debate-vivienda",
+      "decision": "descartado",
       "motivo": "Ejemplo."
     }
   ],

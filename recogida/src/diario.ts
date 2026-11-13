@@ -10,22 +10,27 @@
  *   node src/diario.ts preparar            --fecha D   fusion/<partido>.json + preparar.json: what fusionar may merge
  *   node src/diario.ts ajustar             --fecha D   en_espera promotion, common corte, the day's busquedas.json runs
  *   node src/diario.ts informe             --fecha D   Markdown appendix of the run for resumen.md
- *   node src/diario.ts claude --dir DIR --pasada P --fecha D   DIR: settings.json, agentes.json and prompt.txt of pass P
+ *   node src/diario.ts claude --dir DIR --pasada P --fecha D   DIR: settings.json, agentes.json, prompt.txt and busquedas-web.txt (WebSearch cap) of pass P
+ *     (--lote NN with --pasada clasificacion; --partido ID with --pasada adjudicacion)
  *   node src/diario.ts sondear             --fecha D   probes each equal-search domain; marks blocked queries in equidad-tareas.json
- *   node src/diario.ts adjudicacion-completa --fecha D  exit 1, listing why, unless all four adjudications are complete
+ *   node src/diario.ts busqueda-completa   --fecha D   exit 1 and busqueda-faltan.txt unless every source term and equal search ran
+ *   node src/diario.ts hechos-completo     --fecha D   exit 1 unless hechos.json is a JSON object with a list hechos
+ *   node src/diario.ts adjudicacion-completa --fecha D [--partido ID]  exit 1, listing why, unless all four adjudications (or that party's) are complete
  *
  * Paths: $N29_SITIO (the run worktree), $N29_CACHE, $N29_BUZON. The run folder
  * is $N29_CACHE/ejecuciones/<fecha>.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PARTY_IDS, idDocumento, raizCache, rutaDeEntorno, urlCanonica, type Meta, type PartyId } from './cache.ts';
-import { accesoDesdeRegistro, leerRegistro, terminosDe, type Alias, type Candidato, type Descubrimiento, type Emisor } from './descubrir.ts';
+import { accesoDesdeRegistro, leerRegistro, terminosDe, type Alias, type Candidato, type Descubrimiento, type Emisor, type TareaBusqueda } from './descubrir.ts';
 import { clavesDe, VEDA_ENCUESTAS } from './fusionar.ts';
 import { motivoContexto, motivoPregunta, type Pregunta } from './preguntas.ts';
 import { PARTY_SHORT } from './resumen.ts';
-import { Traedor, bloqueosDelDia, escribirBloqueados, hostDe, hostEn, leerBloqueados } from './traer.ts';
+import { esVideo } from './transcripciones.ts';
+import { Traedor, bloqueosDelDia, escribirBloqueados, hostDe, hostEn, leerBloqueados, type ResultadoEnlace } from './traer.ts';
+import { ORIGEN_ENLACES, type AvisoEnlace } from './buzon.ts';
 
 type Objeto = Record<string, unknown>;
 const esObjeto = (v: unknown): v is Objeto => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -63,9 +68,14 @@ export interface Busqueda {
   periodo: { desde: string; hasta: string };
   consultas: ConsultaRegistro[];
   resultados: Record<string, number>;
+  /** One disposition per finding (the site's busquedas.ts `Hallazgo`): required on every current run. */
+  hallazgos?: Record<PartyId, Hallazgo[]>;
   nota?: string;
   notas?: Partial<Record<PartyId, string>>;
 }
+
+/** What happened to one finding: published under refs of the party file, held in its `en_espera`, or discarded with a reason. */
+export type Hallazgo = { url: string; publicado: string[] } | { url: string; en_espera: string } | { url: string; descartado: string };
 
 /** The query a run used for one party: the site's `consultaPara`, so only the party (and its {termino}) changes. */
 export function consultaPara(consulta: ConsultaRegistro, partido: PartyId): string {
@@ -261,6 +271,193 @@ export function estadoSalida(tarea: Pick<TareaEquidad, 'consultas'>, salida: unk
 
 export const salidaCompleta = (tarea: Pick<TareaEquidad, 'consultas'>, salida: unknown) => estadoSalida(tarea, salida) === 'completa';
 
+/**
+ * Results at or above which a grouped source query counts as saturated: the
+ * agent then runs its two precomputed halves. Claude Code documents no fixed
+ * number of results per WebSearch call (one call may run up to eight backend
+ * searches), so this is a fixed choice, the same for every party.
+ */
+export const RESULTADOS_SATURACION = 10;
+
+/** A search answer as the pass saved it: the parsed JSON, or the .error.txt it left instead. */
+export type Respuesta = { contenido: unknown } | { error: true } | undefined;
+
+/**
+ * What the search pass left undone, one line each, in task order. Every source
+ * task needs its answer with `candidatos` and, for each planned query in
+ * `busquedas`, a `consultas` entry with the same party and text, estado "ok"
+ * and a number of `resultados`; a saturated query (RESULTADOS_SATURACION or
+ * more) also needs both halves in `subconsultas` with estado "ok". Every equal
+ * search with an unblocked query needs a complete answer (estadoSalida), and
+ * each kind needs its four parties. Empty: the search was the same for all.
+ */
+export interface RevisionBusqueda {
+  /** Every gap, one line each, in task order. */
+  faltas: string[];
+  /** Tasks whose answer is missing, not JSON or incomplete: one more session may redo them, with the same definitions. */
+  reintentables: { fuentes: TareaBusqueda[]; iguales: TareaEquidad[] };
+  /** Gaps another session cannot fix: a task without its four queries, a kind without its four parties, more searches declared than counted. */
+  definitivas: string[];
+}
+
+const buscadaEn = (lista: unknown[], texto: string) => lista.find((e) => esObjeto(e) && colapsar(e.texto) === colapsar(texto)) as Record<string, unknown> | undefined;
+const sinRespuesta = (ruta: string, respuesta: Respuesta) =>
+  respuesta === undefined ? `${ruta}: falta` : 'error' in respuesta ? `${ruta}: la respuesta no es JSON (${ruta}.error.txt)` : undefined;
+
+/** Gaps of one source answer, and the web searches it declares done. */
+function revisarFuente(tarea: TareaBusqueda, respuesta: Respuesta): { faltas: string[]; declaradas: number } {
+  const ruta = `busqueda/${tarea.emisor}.json`;
+  const falta = sinRespuesta(ruta, respuesta);
+  if (falta) return { faltas: [falta], declaradas: 0 };
+  const contenido = (respuesta as { contenido: unknown }).contenido;
+  if (!esObjeto(contenido) || !Array.isArray(contenido.candidatos) || !Array.isArray(contenido.consultas)) return { faltas: [`${ruta}: sin las listas candidatos y consultas`], declaradas: 0 };
+  const faltas: string[] = [];
+  let declaradas = 0;
+  const hechas = contenido.consultas.filter(esObjeto);
+  for (const consulta of tarea.busquedas) {
+    const hecha = buscadaEn(hechas.filter((e) => e.partido === consulta.partido), consulta.texto);
+    if (hecha?.estado !== 'ok') {
+      faltas.push(`${ruta}: ${consulta.partido} «${consulta.texto}» sin buscar${typeof hecha?.estado === 'string' ? ` (${hecha.estado})` : ''}`);
+      continue;
+    }
+    if (!Number.isInteger(hecha.resultados) || (hecha.resultados as number) < 0) {
+      faltas.push(`${ruta}: ${consulta.partido} «${consulta.texto}» sin número de resultados (entero mayor o igual que 0)`);
+      continue;
+    }
+    declaradas += 1;
+    if ((hecha.resultados as number) < RESULTADOS_SATURACION || !consulta.mitades) continue;
+    const subconsultas = Array.isArray(hecha.subconsultas) ? hecha.subconsultas : [];
+    for (const mitad of consulta.mitades) {
+      if (buscadaEn(subconsultas, mitad)?.estado !== 'ok') faltas.push(`${ruta}: ${consulta.partido} «${mitad}» sin buscar (mitad de una consulta saturada)`);
+      else declaradas += 1;
+    }
+  }
+  return { faltas, declaradas };
+}
+
+/** Gaps of one equal-search answer, and the web searches it declares done. */
+function revisarIgual(tarea: TareaEquidad, respuesta: Respuesta): { faltas: string[]; declaradas: number } {
+  const ruta = tarea.salida;
+  const contenido = respuesta && 'contenido' in respuesta ? respuesta.contenido : undefined;
+  const hechas = esObjeto(contenido) && Array.isArray(contenido.consultas) ? contenido.consultas : [];
+  const declaradas = tarea.consultas.filter((c, i) => c.motor === 'WebSearch' && !c.bloqueada && esObjeto(hechas[i]) && hechas[i].estado === 'ok').length;
+  const estado = estadoSalida(tarea, contenido);
+  if (estado === 'completa' || estado === 'no-ejecutada') return { faltas: [], declaradas };
+  const falta = sinRespuesta(ruta, respuesta);
+  if (falta) return { faltas: [falta], declaradas };
+  const detalle = tarea.consultas.flatMap((consulta, i) => {
+    if (consulta.bloqueada) return [];
+    const hecha = hechas[i];
+    if (esObjeto(hecha) && colapsar(hecha.texto) === colapsar(consulta.texto) && hecha.estado === 'ok') return [];
+    return [`consulta ${i + 1} «${consulta.texto}»: ${esObjeto(hecha) && typeof hecha.estado === 'string' ? hecha.estado : 'sin informar'}`];
+  });
+  return { faltas: [`${ruta}: incompleta${detalle.length ? ` (${detalle.join('; ')})` : ' (resultados o consultas no son listas)'}`], declaradas };
+}
+
+/**
+ * What the search pass left undone, in task order. Every source task needs
+ * exactly one planned query per party and its answer with `candidatos` and,
+ * for each planned query, a `consultas` entry with the same party and text,
+ * estado "ok" and a whole number of `resultados` (0 or more); a saturated
+ * query (RESULTADOS_SATURACION or more) also needs both halves in
+ * `subconsultas` with estado "ok". Every equal search with an unblocked query
+ * needs a complete answer (estadoSalida), and each kind needs its four
+ * parties. The answers may not declare more web searches than Claude Code
+ * counted. Each gap is either retryable (the task's answer) or not.
+ */
+export function revisarBusqueda(entrada: {
+  fuentes: TareaBusqueda[];
+  porFuente: (emisor: string) => Respuesta;
+  iguales: TareaEquidad[];
+  porIgual: (tarea: TareaEquidad) => Respuesta;
+  /** WebSearch calls Claude Code counted for pass 1 (busquedasRegistradas), when its output reports them. */
+  busquedasReales?: number;
+  /** The retry session, if it ran: the tasks it redid (emisores, salidas) and the WebSearch calls it counted. Their answers are checked against its count; the rest against pass 1's. */
+  reintento?: { fuentes: readonly string[]; iguales: readonly string[]; busquedasReales?: number };
+}): RevisionBusqueda {
+  const revision: RevisionBusqueda = { faltas: [], reintentables: { fuentes: [], iguales: [] }, definitivas: [] };
+  const definitiva = (falta: string) => {
+    revision.faltas.push(falta);
+    revision.definitivas.push(falta);
+  };
+  const declaradas = { pasada: 0, reintento: 0 };
+  const sesion = (reintentada: boolean) => (reintentada ? 'reintento' : 'pasada');
+  for (const tarea of entrada.fuentes) {
+    if (!Array.isArray(tarea.busquedas) || !tarea.busquedas.length) {
+      definitiva(`descubrir.json: la tarea de ${tarea.emisor} no tiene búsquedas`);
+      continue;
+    }
+    const porPartido = PARTY_IDS.map((p) => tarea.busquedas.filter((b) => b.partido === p).length);
+    if (porPartido.some((n) => n !== 1) || tarea.busquedas.length !== PARTY_IDS.length) {
+      definitiva(`descubrir.json: la tarea de ${tarea.emisor} no tiene exactamente una búsqueda por partido (${PARTY_IDS.map((p, i) => `${p} ${porPartido[i]}`).join(', ')})`);
+      continue;
+    }
+    const { faltas, declaradas: hechas } = revisarFuente(tarea, entrada.porFuente(tarea.emisor));
+    declaradas[sesion(entrada.reintento?.fuentes.includes(tarea.emisor) ?? false)] += hechas;
+    if (faltas.length) {
+      revision.faltas.push(...faltas);
+      revision.reintentables.fuentes.push(tarea);
+    }
+  }
+  const tipos = [...new Set(entrada.iguales.map((t) => t.tipo))];
+  for (const tipo of tipos) {
+    const delTipo = entrada.iguales.filter((t) => t.tipo === tipo);
+    const partidos = new Set(delTipo.map((t) => t.partido));
+    for (const partido of PARTY_IDS) if (!partidos.has(partido)) definitiva(`equidad: ${tipo} sin tarea para ${partido}`);
+    // The same queries blocked for the four parties, query by query.
+    const bloqueos = delTipo.map((t) => JSON.stringify(t.consultas.map((c) => c.bloqueada ?? null)));
+    if (new Set(bloqueos).size > 1) definitiva(`equidad: ${tipo} no tiene las mismas consultas bloqueadas para los cuatro partidos`);
+  }
+  const tiposConFaltas = new Set<string>();
+  for (const tarea of entrada.iguales) {
+    const { faltas, declaradas: hechas } = revisarIgual(tarea, entrada.porIgual(tarea));
+    declaradas[sesion(entrada.reintento?.iguales.includes(tarea.salida) ?? false)] += hechas;
+    if (faltas.length) {
+      revision.faltas.push(...faltas);
+      tiposConFaltas.add(tarea.tipo);
+    }
+  }
+  // An equal search is redone for the four parties of its kind together, never for one alone.
+  revision.reintentables.iguales = entrada.iguales.filter((t) => tiposConFaltas.has(t.tipo));
+  if (entrada.busquedasReales !== undefined && declaradas.pasada > entrada.busquedasReales) {
+    definitiva(`claude/busqueda.salida.json: las respuestas de la pasada declaran ${declaradas.pasada} búsquedas web hechas, pero Claude Code registró ${entrada.busquedasReales}`);
+  }
+  const reales = entrada.reintento?.busquedasReales;
+  if (reales !== undefined && declaradas.reintento > reales) {
+    definitiva(`claude/busqueda-reintento.salida.json: las respuestas reintentadas declaran ${declaradas.reintento} búsquedas web hechas, pero Claude Code registró ${reales}`);
+  }
+  return revision;
+}
+
+export const faltasBusqueda = (entrada: Parameters<typeof revisarBusqueda>[0]): string[] => revisarBusqueda(entrada).faltas;
+
+/**
+ * A saved answer the session marked as not JSON: accepted only if it is
+ * valid JSON with nothing but whitespace around it (JSON.parse allows exactly
+ * that). Anything else, extra characters included, stays an error.
+ */
+export function respuestaAceptable(texto: string): boolean {
+  try {
+    JSON.parse(texto);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * WebSearch requests Claude Code reports for a pass: the sum of
+ * `modelUsage.<model>.webSearchRequests` in its --output-format json result,
+ * which includes the subagents' models (on 11 Nov 2026: 203 under the Haiku
+ * model, 0 in the main session's `usage.server_tool_use`). Undefined when the
+ * output has no such numbers, so the check is skipped rather than guessed.
+ */
+export function busquedasRegistradas(salida: unknown): number | undefined {
+  if (!esObjeto(salida) || !esObjeto(salida.modelUsage)) return undefined;
+  const cuentas = Object.values(salida.modelUsage).flatMap((uso) => (esObjeto(uso) && Number.isInteger(uso.webSearchRequests) ? [uso.webSearchRequests as number] : []));
+  return cuentas.length ? cuentas.reduce((a, b) => a + b, 0) : undefined;
+}
+
 /** Canonical URLs of results, without those on hosts blocked for this kind. */
 export function urlsPermitidas(resultados: unknown, bloqueados: string[]): string[] {
   return urlsDeResultados(resultados).filter((url) => !hostEn(hostDe(url), bloqueados));
@@ -268,30 +465,14 @@ export function urlsPermitidas(resultados: unknown, bloqueados: string[]): strin
 
 // ---------------------------------------------------------------- videos
 
-/** Video hosts yt-dlp may be pointed at, exact (after dropping www.). */
-export const HOSTS_VIDEO = ['rtve.es', 'youtube.com', 'youtu.be'] as const;
-
-/** Whether a URL is an https video page on an allowed host. */
-export function esVideo(url: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port) return false;
-  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
-  if (host === 'rtve.es') return parsed.pathname.startsWith('/play/videos/');
-  if (host === 'youtube.com') return parsed.pathname === '/watch' && /^[\w-]{6,}$/.test(parsed.searchParams.get('v') ?? '');
-  if (host === 'youtu.be') return /^\/[\w-]{6,}$/.test(parsed.pathname);
-  return false;
-}
+/** Video pages yt-dlp may be pointed at: the hosts and URL shapes of FUENTES_VIDEO (transcripciones.ts). */
+export { esVideo };
 
 /**
  * Videos to transcribe: debate and interview candidates that are video pages
  * (RTVE Play, YouTube), and the lines of the inbox list
  * $N29_BUZON/videos/<fecha>.txt ("VIDEO_URL [OFICIAL_URL]", # comments).
- * Only https URLs on HOSTS_VIDEO; the official transcript must be https too.
+ * Only https URLs on FUENTES_VIDEO; the official transcript must be https too.
  */
 export function videosDelDia(descubierto: Pick<Descubrimiento, 'candidatos'> | undefined, listaBuzon: string | undefined): { video: string; oficial?: string }[] {
   const salida = new Map<string, { video: string; oficial?: string }>();
@@ -413,6 +594,88 @@ export interface TareaClasificar {
   texto: string;
   meta: string;
   salida: string;
+}
+
+/** An index path: a tag, category, section, author, search, pagination, feed or archive segment, last or followed by one more segment only (`/tags/elecciones`, not `/secciones/politica/<titular>`). */
+const RUTA_INDICE = /(?:^|\/)(?:tags?|etiquetas?|temas|topics?|category|categories|categoria|categorias|secciones|seccion|author|authors|autor|autores|autora|search|buscar|busqueda|buscador|page|pagina|feed|feeds|rss|archivo|archive|hemeroteca)(?:\/[^/]+)?$/i;
+/** JSON-LD types of a single article or document. */
+const TIPO_ARTICULO = /"@type"\s*:\s*"(?:NewsArticle|Article|ReportageNewsArticle|OpinionNewsArticle|AnalysisNewsArticle|BackgroundNewsArticle|ReviewNewsArticle|BlogPosting|LiveBlogPosting|Report|ScholarlyArticle|VideoObject|AudioObject|PodcastEpisode)"/;
+
+/**
+ * Why a cached page is not a single article or document, or undefined. The
+ * same rule for every party and every origin:
+ * - its URL: a home page, a feed, or a path segment of an index (tag,
+ *   category, section, author, search, pagination, feed, archive) at the
+ *   end of the path or followed by one segment, or a search or page query;
+ * - its structure: an HTML page that declares no article in JSON-LD, lists
+ *   five or more `<article>` elements, and whose last path segment has no
+ *   digit and fewer than four words (a section name, not a headline).
+ */
+export function motivoNoArticulo(doc: { url_canonica: string; ext?: string; html?: string }): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(doc.url_canonica);
+  } catch {
+    return 'URL no válida';
+  }
+  const ruta = url.pathname.replace(/\/+$/, '');
+  if (!ruta) return 'portada';
+  if (doc.ext === 'xml' || doc.ext === 'rss' || /\.(?:xml|rss|atom)$/i.test(ruta)) return 'feed';
+  if (RUTA_INDICE.test(ruta)) return 'página de índice (etiqueta, sección, autor, búsqueda o archivo)';
+  if (/[?&](?:s|q|query|page|paged|pagina)=/i.test(url.search)) return 'búsqueda o paginación';
+  if (doc.html !== undefined) {
+    const ultimo = ruta.split('/').at(-1) ?? '';
+    const titular = /\d/.test(ultimo) || ultimo.split(/[-_]/).filter(Boolean).length >= 4;
+    const articulos = (doc.html.match(/<article\b/gi) ?? []).length;
+    if (!TIPO_ARTICULO.test(doc.html) && articulos >= 5 && !titular) return `listado (${articulos} elementos <article>, sin artículo en JSON-LD)`;
+  }
+  return undefined;
+}
+
+export interface DescartePrevio {
+  doc_id: string;
+  partido: PartyId;
+  url_canonica: string;
+  motivo: string;
+}
+
+/** Drops the tasks of documents that are not single articles (motivoNoArticulo), recording each one with its reason. */
+export function prefiltrarTareas(tareas: TareaClasificar[], pagina: (doc_id: string) => { ext?: string; html?: string }): { tareas: TareaClasificar[]; descartados_previos: DescartePrevio[] } {
+  const motivos = new Map<string, string | undefined>();
+  const quedan: TareaClasificar[] = [];
+  const descartados_previos: DescartePrevio[] = [];
+  for (const tarea of tareas) {
+    if (!motivos.has(tarea.doc_id)) motivos.set(tarea.doc_id, motivoNoArticulo({ url_canonica: tarea.url_canonica, ...pagina(tarea.doc_id) }));
+    const motivo = motivos.get(tarea.doc_id);
+    if (motivo) descartados_previos.push({ doc_id: tarea.doc_id, partido: tarea.partido, url_canonica: tarea.url_canonica, motivo });
+    else quedan.push(tarea);
+  }
+  return { tareas: quedan, descartados_previos };
+}
+
+/** Classification tasks per Claude session. */
+export const TAMANO_LOTE_CLASIFICAR = 100;
+
+/** Batches of classification tasks: sorted by task id (doc_id, then party), then cut in fixed sizes. Deterministic and blind to the party. */
+export function lotesClasificar(tareas: TareaClasificar[], tamano = TAMANO_LOTE_CLASIFICAR): TareaClasificar[][] {
+  const ordenadas = [...tareas].sort((a, b) => comparar(a.salida, b.salida));
+  const lotes: TareaClasificar[][] = [];
+  for (let i = 0; i < ordenadas.length; i += tamano) lotes.push(ordenadas.slice(i, i + tamano));
+  return lotes;
+}
+
+/** Why a saved classification is not usable, or undefined: it must be a JSON object for the task's doc_id and party. */
+export function problemaClasificacion(tarea: Pick<TareaClasificar, 'doc_id' | 'partido' | 'salida'>, texto: string | undefined): string | undefined {
+  if (texto === undefined) return `${tarea.salida}: falta`;
+  let contenido: unknown;
+  try {
+    contenido = JSON.parse(texto);
+  } catch {
+    return `${tarea.salida}: no es JSON`;
+  }
+  if (!esObjeto(contenido)) return `${tarea.salida}: no es un objeto JSON`;
+  if (contenido.doc_id !== tarea.doc_id || contenido.partido !== tarea.partido) return `${tarea.salida}: doc_id o partido no son los de la tarea`;
+  return undefined;
 }
 
 /**
@@ -648,12 +911,55 @@ const NOTA_ESTADO: Record<Exclude<EstadoSalida, 'completa'>, string> = {
   'no-ejecutada': 'No se ejecutó: todas las consultas estaban bloqueadas.',
 };
 
+const SIN_PROPUESTA = 'No se propuso ningún elemento con esta URL.';
+
+/**
+ * The disposition of each finding of one run for one party, after the merge
+ * and the promotion: published (the refs of the items that carry the run's id
+ * and cite the URL; the finding is named by the URL those items cite), held
+ * (the first such item in `en_espera`), or discarded with the reason the run
+ * knows (`motivos`, by canonical URL), the item that already had it from
+ * another search, or that nothing was proposed.
+ */
+export function hallazgosDe(entrada: { id: string; urls: string[]; ficha: Ficha | undefined; motivos?: Record<string, string> }): Hallazgo[] {
+  // The URL as the item cites it among its fuentes (the site matches it exactly), found by its canonical form.
+  const citada = (item: Objeto, url: string) =>
+    lista(item.fuentes)
+      .map((f) => (esObjeto(f) && typeof f.url === 'string' ? f.url : undefined))
+      .find((u) => u !== undefined && (canonicaSegura(u) ?? u) === url);
+  const conUrl = (items: Objeto[], url: string) => items.filter((item) => citada(item, url) !== undefined).sort((a, b) => compararRefs(String(a.ref), String(b.ref)));
+  const publicados = entrada.ficha?.secciones.flatMap((s) => s.items) ?? [];
+  const retenidos = entrada.ficha?.en_espera ?? [];
+  return entrada.urls.map((url): Hallazgo => {
+    const propios = (items: Objeto[]) => conUrl(items, url).filter((item) => item.busqueda === entrada.id);
+    const [primero, ...resto] = propios(publicados);
+    if (primero) return { url: citada(primero, url)!, publicado: [primero, ...resto].map((item) => String(item.ref)) };
+    const [espera] = propios(retenidos);
+    if (espera) return { url: citada(espera, url)!, en_espera: String(espera.ref) };
+    const motivo = entrada.motivos?.[url];
+    if (motivo) return { url, descartado: motivo };
+    const [otro] = conUrl([...publicados, ...retenidos], url);
+    if (otro) return { url, descartado: `Ya está en la ficha (${String(otro.ref)}), de otra búsqueda.` };
+    return { url, descartado: SIN_PROPUESTA };
+  });
+}
+
 /**
  * The day's run entries for busquedas.json: the template's queries, the count
  * per party, the queries blocked for all four (host and HTTP status, the same
- * text for the four), and which parties' searches did not complete.
+ * text for the four), which parties' searches did not complete, and one
+ * disposition per finding (`hallazgos`, from the merged `fichas`).
  */
-export function entradasDelDia(entrada: { fecha: string; desde: string; registro: Busqueda[]; equidad: EquidadDia }): Busqueda[] {
+export function entradasDelDia(entrada: {
+  fecha: string;
+  desde: string;
+  registro: Busqueda[];
+  equidad: EquidadDia;
+  /** The party files after the merge and the promotion. */
+  fichas?: Partial<Record<PartyId, Ficha>>;
+  /** Why a finding was not merged, per party and canonical URL (preparar, fusionar, the adjudication). */
+  motivos?: Partial<Record<PartyId, Record<string, string>>>;
+}): Busqueda[] {
   const salida: Busqueda[] = [];
   for (const tipo of TIPOS_BUSQUEDA) {
     const id = idDiario(entrada.fecha, tipo);
@@ -686,6 +992,9 @@ export function entradasDelDia(entrada: { fecha: string; desde: string; registro
       periodo: { desde: entrada.desde, hasta: entrada.fecha },
       consultas: structuredClone(plantilla.consultas),
       resultados: Object.fromEntries(PARTY_IDS.map((p) => [p, entrada.equidad.urls[tipo]?.[p]?.length ?? 0])),
+      hallazgos: Object.fromEntries(
+        PARTY_IDS.map((p) => [p, hallazgosDe({ id, urls: entrada.equidad.urls[tipo]?.[p] ?? [], ficha: entrada.fichas?.[p], motivos: entrada.motivos?.[p] })]),
+      ) as Record<PartyId, Hallazgo[]>,
       nota: partes.join(' '),
     };
     if (Object.keys(notas).length) run.notas = notas;
@@ -694,11 +1003,61 @@ export function entradasDelDia(entrada: { fecha: string; desde: string; registro
   return salida;
 }
 
-/** corte moves to the run date in all four when any party file changed (the site requires the same corte). */
-export function igualarCorte(fichas: Record<PartyId, Ficha>, antes: Record<PartyId, string>, fecha: string): boolean {
-  const cambio = PARTY_IDS.some((p) => JSON.stringify(fichas[p]) !== antes[p]);
+interface Perfil extends Objeto {
+  periodo: { desde: string; hasta: string };
+  documentos: Objeto[];
+  propuestas: Objeto[];
+  mensajes: Objeto[];
+  en_espera?: { documentos: Objeto[]; propuestas: Objeto[]; mensajes: Objeto[] };
+}
+
+/**
+ * A perfil's held documents dated on or before periodo.hasta are published,
+ * with the held propuestas and mensajes whose documents are all published now
+ * (the site: a document en_espera is dated after the period; published items
+ * never cite a held document). Mutates `perfil`.
+ */
+export function publicarAlcanzados(perfil: Perfil): void {
+  const espera = perfil.en_espera;
+  if (!esObjeto(espera)) return;
+  const alcanzado = (doc: Objeto) => typeof doc.fecha === 'string' && doc.fecha <= perfil.periodo.hasta;
+  perfil.documentos.push(...lista(espera.documentos).filter((d): d is Objeto => esObjeto(d) && alcanzado(d)));
+  espera.documentos = lista(espera.documentos).filter((d): d is Objeto => !(esObjeto(d) && alcanzado(d)));
+  const publicados = new Set(perfil.documentos.map((d) => d.id));
+  const listo = (item: Objeto) =>
+    lista(item.documentos).every((id) => publicados.has(id)) && (!esObjeto(item.cita) || item.cita.documento === undefined || publicados.has(item.cita.documento));
+  for (const campo of ['propuestas', 'mensajes'] as const) {
+    const items = lista(espera[campo]).filter(esObjeto);
+    perfil[campo].push(...items.filter(listo));
+    espera[campo] = items.filter((item) => !listo(item));
+  }
+  if (!espera.documentos.length && !espera.propuestas.length && !espera.mensajes.length) delete perfil.en_espera;
+}
+
+/**
+ * corte moves to the run date in all four party files when any party file or
+ * perfil changed (the site requires the same corte), and each perfil's
+ * periodo.hasta follows its party's corte (the site requires them equal), with
+ * the held documents the new corte reaches published.
+ */
+export function igualarCorte(
+  fichas: Record<PartyId, Ficha>,
+  antes: Record<PartyId, string>,
+  fecha: string,
+  perfiles: Partial<Record<PartyId, Perfil>> = {},
+  perfilesAntes: Partial<Record<PartyId, string>> = {},
+): boolean {
+  const cambio =
+    PARTY_IDS.some((p) => JSON.stringify(fichas[p]) !== antes[p]) ||
+    PARTY_IDS.some((p) => perfiles[p] !== undefined && JSON.stringify(perfiles[p]) !== perfilesAntes[p]);
   if (!cambio) return false;
   for (const p of PARTY_IDS) if (typeof fichas[p].corte !== 'string' || fichas[p].corte! < fecha) fichas[p].corte = fecha;
+  for (const p of PARTY_IDS) {
+    const perfil = perfiles[p];
+    if (!perfil) continue;
+    perfil.periodo.hasta = fichas[p].corte!;
+    publicarAlcanzados(perfil);
+  }
   return true;
 }
 
@@ -753,6 +1112,13 @@ export function informe(entrada: {
   citasNuevas?: string;
   /** Classification tasks without a valid output, per party. */
   sinClasificar?: Partial<Record<PartyId, string[]>>;
+  /** enlaces.json: the owner's links list, fetched like any article. */
+  enlaces?: { enlaces?: ResultadoEnlace[]; avisos?: AvisoEnlace[] };
+  /** busqueda-reintentadas.txt and busqueda-aceptadas.txt: the gaps redone in the retry session, and the answers accepted with whitespace around them. */
+  reintentadas?: string;
+  aceptadas?: string;
+  /** tareas-clasificar.json, to say which parties the alias rule found in each link. */
+  clasificar?: Pick<TareaClasificar, 'url_canonica' | 'partido'>[];
 }): string {
   const etapas = entrada.etapas
     .split('\n')
@@ -790,7 +1156,49 @@ export function informe(entrada: {
   );
   const citas = (entrada.citasNuevas ?? '').split('\n').filter(Boolean);
   lineas.push(...apartado('Problemas de citas nuevos', citas, '_Ninguno._'));
+  const lineasDe = (texto?: string) => (texto ?? '').split('\n').filter(Boolean);
+  lineas.push(...apartado('Reintentado en una sesión más (busqueda-reintento), la misma regla para todos los partidos', lineasDe(entrada.reintentadas), '_Nada._'));
+  lineas.push(...apartado('Respuestas aceptadas con espacios alrededor del JSON', lineasDe(entrada.aceptadas), '_Ninguna._'));
+  lineas.push(...apartadoEnlaces(entrada));
   return lineas.join('\n').replace(/\n+$/, '\n');
+}
+
+const canonicaOVacia = (url: unknown) => {
+  try {
+    return typeof url === 'string' ? urlCanonica(url) : '';
+  } catch {
+    return '';
+  }
+};
+
+/** A link as shown in the summary: scheme, host and path only, without query string or fragment. */
+const sinConsulta = (url: string) => {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname}`;
+  } catch {
+    return '(URL no válida)';
+  }
+};
+
+/** The links list in the summary: each link (origin buzon-enlaces), the parties the alias rule found, the items added from it, and the avisos. */
+function apartadoEnlaces(entrada: Parameters<typeof informe>[0]): string[] {
+  const enlaces = entrada.enlaces?.enlaces ?? [];
+  const avisos = entrada.enlaces?.avisos ?? [];
+  const lineas = enlaces.map((enlace) => {
+    const canonica = enlace.url_canonica ?? canonicaOVacia(enlace.url);
+    const partidos = PARTY_IDS.filter((p) => (entrada.clasificar ?? []).some((t) => t.partido === p && t.url_canonica === canonica));
+    const elementos = (entrada.fusionar?.cambios ?? []).flatMap((c) =>
+      c.añadidos.flatMap((a) => (esObjeto(a) && canonicaOVacia(a.url) === canonica ? [`${c.partido} ${String(a.ref ?? '')} (${String(a.seccion ?? c.destino)})`] : [])),
+    );
+    const estado = enlace.estado === 'ok' ? 'traído' : `no traído (${enlace.estado})`;
+    const detalle = enlace.estado !== 'ok' ? '' : `; partidos por la regla de alias: ${partidos.join(', ') || 'ninguno'}; elementos añadidos: ${elementos.join(', ') || 'ninguno'}`;
+    return `- línea ${enlace.linea}: <${sinConsulta(enlace.url)}>${enlace.partido ? ` (nota: ${enlace.partido})` : ''}: ${estado}${detalle}`;
+  });
+  return [
+    ...apartado(`Enlaces del buzón (origen ${ORIGEN_ENLACES})`, lineas, '_Ninguno._'),
+    ...apartado('Avisos de la lista de enlaces (detalle en enlaces.json)', avisos.map((a) => `- línea ${a.linea}: ${a.motivo}`), '_Ninguno._'),
+  ];
 }
 
 // ---------------------------------------------------------------- prompts
@@ -824,30 +1232,67 @@ export const reglaEncuestas = (fecha: string) =>
 export const SUBAGENTES = {
   'buscador-fuente': { model: 'haiku', tools: ['WebSearch', 'WebFetch'], description: 'Searches one news source for the day (Haiku). Returns JSON only.' },
   'buscador-equidad': { model: 'haiku', tools: ['WebSearch', 'WebFetch'], description: 'Runs one equal search for one party exactly as written (Haiku). Returns JSON only.' },
-  clasificador: { model: 'haiku', tools: ['Read'], description: 'Classifies one cached document for one party (Haiku). Returns JSON only.' },
-  'redactor-hechos': { model: 'opus', tools: ['Read', 'Glob', 'Grep', 'WebFetch'], description: 'Writes the shared facts of the day once for every party (Opus). Returns JSON only.' },
-  adjudicador: { model: 'opus', tools: ['Read', 'Glob', 'Grep', 'WebFetch'], description: 'Adjudicates the new material for one party (Opus). Returns JSON only.' },
+  // Writes its own answer file: the session allows only that batch's paths, and the subagent inherits the session's rules and dontAsk mode.
+  clasificador: { model: 'haiku', tools: ['Read', 'Write'], description: 'Classifies one cached document for one party (Haiku). Writes its own JSON answer file.' },
+  // Also write their own answer: a large answer comes back to the session cut off (adjudicador of pp, 11 Nov: 63 KB). The facts or party session allows only that file.
+  'redactor-hechos': { model: 'opus', tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'Write'], description: 'Writes the shared facts of the day once for every party (Opus). Writes its own JSON answer file.' },
+  adjudicador: { model: 'opus', tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'Write'], description: 'Adjudicates the new material for one party (Opus). Writes its own JSON answer file.' },
 } as const;
 
-/** The two session prompts and the --agents definition, with the day's values. */
+/** The session prompts and the --agents definition, with the day's values (PARTIDO: the party of an adjudication session). */
 export function prompts(markdown: string, valores: Record<string, string>) {
   const agentes = Object.fromEntries(
     Object.entries(SUBAGENTES).map(([nombre, def]) => [nombre, { ...def, tools: [...def.tools], prompt: sustituir(bloque(markdown, `agente:${nombre}`), valores) }]),
   );
   return {
-    busqueda: sustituir(bloque(markdown, 'prompt:busqueda'), valores),
-    adjudicacion: sustituir(bloque(markdown, 'prompt:adjudicacion'), valores),
+    // The retry session runs the same prompt on the subset of tasks the gate wrote.
+    busqueda: sustituir(bloque(markdown, 'prompt:busqueda'), { ...valores, TAREAS_FUENTES: `${valores.EJECUCION}/descubrir.json`, TAREAS_EQUIDAD: `${valores.EJECUCION}/equidad-tareas.json` }),
+    'busqueda-reintento': sustituir(bloque(markdown, 'prompt:busqueda'), { ...valores, TAREAS_FUENTES: `${valores.EJECUCION}/reintento-fuentes.json`, TAREAS_EQUIDAD: `${valores.EJECUCION}/reintento-equidad.json` }),
+    // One prompt for every classification batch: only the batch file changes.
+    clasificacion: sustituir(bloque(markdown, 'prompt:clasificacion'), { ...valores, TAREAS_CLASIFICAR: valores.TAREAS_CLASIFICAR ?? `${valores.EJECUCION}/tareas-clasificar.json` }),
+    hechos: sustituir(bloque(markdown, 'prompt:hechos'), valores),
+    // One prompt for every party's adjudication session: only the party id changes.
+    adjudicacion: sustituir(bloque(markdown, 'prompt:adjudicacion'), { ...valores, PARTIDO: valores.PARTIDO ?? '<partido>' }),
     agentes,
   };
 }
 
-/** The two Claude passes and what each may write in the run folder: only its own subagents' answers. */
+/** The Claude passes and what each may write in the run folder: only its own subagents' answers. */
 export const ESCRITURA_POR_PASADA = {
   busqueda: ['busqueda/**', 'equidad/**'],
-  adjudicacion: ['clasificacion/**', 'adjudicado/**', 'hechos.json*'],
+  'busqueda-reintento': ['busqueda/**', 'equidad/**'],
+  // Each classification session is allowed only its batch's files (ajustesClaude, `soloRutas`); this is what the others are denied.
+  clasificacion: ['clasificacion/**'],
+  hechos: ['hechos.json*'],
+  // The facts session and each adjudication session (one per party) are allowed only their own answer (ajustesClaude, `soloRutas`).
+  adjudicacion: ['adjudicado/**'],
 } as const;
 export type Pasada = keyof typeof ESCRITURA_POR_PASADA;
 export const esPasada = (valor: unknown): valor is Pasada => typeof valor === 'string' && Object.hasOwn(ESCRITURA_POR_PASADA, valor);
+
+/**
+ * Claude Code's default cap on WebSearch calls (CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION;
+ * code.claude.com/docs/en/tools-reference, "Session search limit"). With `claude -p` it applies
+ * to the whole turn, so every subagent of a pass shares it.
+ */
+export const BUSQUEDAS_WEB_POR_DEFECTO = 200;
+
+/** WebSearch calls the search pass may make at most, without retries: each source query plus its two halves if it has them (all may saturate), and each unblocked WebSearch query of each equal search. */
+export function busquedasWebPrevistas(fuentes: TareaBusqueda[], iguales: TareaEquidad[]): number {
+  const porFuentes = fuentes.reduce((total, tarea) => total + (tarea.busquedas ?? []).reduce((n, b) => n + 1 + (b.mitades ? 2 : 0), 0), 0);
+  const porIguales = iguales.reduce((total, tarea) => total + tarea.consultas.filter((c) => c.motor === 'WebSearch' && !c.bloqueada).length, 0);
+  return porFuentes + porIguales;
+}
+
+/**
+ * The WebSearch cap of a pass. A cap reached halfway leaves some sources or
+ * parties unsearched, which breaks equal treatment, so the search pass gets
+ * twice its worst case (busquedasWebPrevistas; every subagent may be retried
+ * once), never less than the default. The adjudication pass plans no WebSearch: the default.
+ */
+export function limiteBusquedasWeb(pasada: Pasada, previstas: number): number {
+  return pasada !== 'busqueda' && pasada !== 'busqueda-reintento' ? BUSQUEDAS_WEB_POR_DEFECTO : Math.max(BUSQUEDAS_WEB_POR_DEFECTO, 2 * previstas);
+}
 
 /**
  * The settings of one pass from claude-settings.diario.template.json: every
@@ -856,7 +1301,7 @@ export const esPasada = (valor: unknown): valor is Pasada => typeof valor === 's
  * only, and denies the other pass's. Paths with glob, parenthesis or control
  * characters are refused, so a path cannot widen a rule.
  */
-export function ajustesClaude(plantilla: string, valores: Record<string, string>, pasada: Pasada): string {
+export function ajustesClaude(plantilla: string, valores: Record<string, string>, pasada: Pasada, soloRutas?: readonly string[]): string {
   for (const [nombre, valor] of Object.entries(valores)) {
     if (!valor.startsWith('/') || /[*?()[\]{}\x00-\x1f]/.test(valor)) throw new Error(`ajustes: ruta no admitida en ${nombre}: ${valor}`);
   }
@@ -874,8 +1319,23 @@ export function ajustesClaude(plantilla: string, valores: Record<string, string>
     if (/^(Bash|NotebookEdit|Write|Edit|MultiEdit)\b/.test(regla)) throw new Error(`ajustes: la plantilla no puede permitir escritura ni ejecución: ${regla}`);
   }
   const reglas = (rutas: readonly string[]) => rutas.flatMap((ruta) => ['Write', 'Edit'].map((tool) => `${tool}(/${ej}/${ruta})`));
-  const otra = (Object.keys(ESCRITURA_POR_PASADA) as Pasada[]).filter((p) => p !== pasada).flatMap((p) => ESCRITURA_POR_PASADA[p]);
-  ajustes.permissions.allow.push(...reglas(ESCRITURA_POR_PASADA[pasada]));
+  const propias: readonly string[] = ESCRITURA_POR_PASADA[pasada];
+  const otra = [...new Set((Object.keys(ESCRITURA_POR_PASADA) as Pasada[]).filter((p) => p !== pasada).flatMap((p) => ESCRITURA_POR_PASADA[p]))].filter((ruta) => !propias.includes(ruta));
+  // A classification session may create only the answer files of its batch, and an adjudication session only its party's answer, each by its exact path.
+  if (soloRutas !== undefined) {
+    if (pasada === 'adjudicacion') {
+      for (const ruta of soloRutas) if (!/^adjudicado\/(?:frente-amplio|pp|psoe|vox)\.json(?:\.error\.txt)?$/.test(ruta)) throw new Error(`ajustes: ruta de partido no admitida: ${ruta}`);
+    } else if (pasada === 'hechos') {
+      for (const ruta of soloRutas) if (!/^hechos\.json(?:\.error\.txt)?$/.test(ruta)) throw new Error(`ajustes: ruta de hechos no admitida: ${ruta}`);
+    } else {
+      for (const ruta of soloRutas) if (!/^clasificacion\/[a-z0-9]+\.(?:frente-amplio|pp|psoe|vox)\.json$/.test(ruta)) throw new Error(`ajustes: ruta de lote no admitida: ${ruta}`);
+      if (pasada !== 'clasificacion') throw new Error('ajustes: solo una sesión de clasificación, de hechos o de adjudicación tiene rutas propias');
+    }
+  }
+  if (pasada === 'clasificacion' && soloRutas === undefined) throw new Error('ajustes: una sesión de clasificación necesita las rutas de su lote');
+  if (pasada === 'adjudicacion' && soloRutas === undefined) throw new Error('ajustes: una sesión de adjudicación necesita las rutas de su partido');
+  if (pasada === 'hechos' && soloRutas === undefined) throw new Error('ajustes: una sesión de hechos necesita sus rutas');
+  ajustes.permissions.allow.push(...reglas(soloRutas ?? ESCRITURA_POR_PASADA[pasada]));
   ajustes.permissions.deny.push(...reglas(otra));
   return `${JSON.stringify(ajustes, null, 2)}\n`;
 }
@@ -900,6 +1360,9 @@ const jsonDeCarpeta = (carpeta: string) =>
       }
     });
 
+/** Whether an equal-search result's date is a real ISO date no later than the run date. */
+export const enPeriodo = (valor: unknown, fecha: string) => typeof valor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(valor) && valor <= fecha;
+
 /** The run's equal searches: tasks (with blocked queries), every output, and the EquidadDia that preparar and ajustar use. */
 function leerEquidad(ejecucion: string, fecha: string): EquidadDia & { salidas: { archivo: string; salida: SalidaEquidad }[] } {
   const dia: EquidadDia = { urls: {}, estados: {}, notas: {}, bloqueadas: {} };
@@ -918,7 +1381,10 @@ function leerEquidad(ejecucion: string, fecha: string): EquidadDia & { salidas: 
     (dia.estados[tipo] ??= {})[partido] = estado;
     if (!esObjeto(contenido)) continue;
     // The file name decides kind and party; the content cannot claim another. Nothing from a blocked host counts.
-    const resultados = lista(contenido.resultados).filter((r) => !(esObjeto(r) && typeof r.url === 'string' && urlsPermitidas([r], bloqueados).length === 0));
+    // Nothing from a blocked host, and nothing dated after the run date (or without a date), for any party.
+    const resultados = lista(contenido.resultados)
+      .filter((r) => !(esObjeto(r) && typeof r.url === 'string' && urlsPermitidas([r], bloqueados).length === 0))
+      .filter((r) => esObjeto(r) && enPeriodo(r.fecha, fecha));
     const salida: SalidaEquidad = { ...contenido, busqueda: idDiario(fecha, tipo), tipo, partido, resultados: resultados as SalidaEquidad['resultados'] };
     salidas.push({ archivo, salida });
     if (esTexto(contenido.nota)) (dia.notas[tipo] ??= {})[partido] = contenido.nota;
@@ -927,11 +1393,57 @@ function leerEquidad(ejecucion: string, fecha: string): EquidadDia & { salidas: 
   return { ...dia, salidas };
 }
 
+/**
+ * Why a URL of a party was not merged, from the run's own records, first reason
+ * first: refused by fusionar (fusionar.json, fusion/<partido>.json), dropped by
+ * preparar (preparar.json, adjudicado/<partido>.json), or discarded by the
+ * party's adjudicator (its `decisiones`). By party and canonical URL.
+ */
+function motivosDescarte(ejecucion: string): Partial<Record<PartyId, Record<string, string>>> {
+  const motivos: Partial<Record<PartyId, Record<string, string>>> = {};
+  const anotar = (partido: unknown, url: unknown, motivo: string) => {
+    if (!(PARTY_IDS as readonly unknown[]).includes(partido) || typeof url !== 'string') return;
+    const canonica = canonicaSegura(url) ?? url;
+    (motivos[partido as PartyId] ??= {})[canonica] ??= motivo;
+  };
+  const propuestasDe = (ruta: string) => {
+    const contenido = leerJsonSiExiste(ruta);
+    return Array.isArray(contenido) ? contenido : esObjeto(contenido) ? lista(contenido.propuestas) : [];
+  };
+  const urlsDe = (propuesta: unknown) => (esObjeto(propuesta) && esObjeto(propuesta.item) ? lista(propuesta.item.fuentes).map((f) => (esObjeto(f) ? f.url : undefined)) : []);
+  const descartes = (archivo: string, carpeta: string, campo: string, prefijo: string) => {
+    const registro = leerJsonSiExiste(join(ejecucion, archivo));
+    for (const d of esObjeto(registro) ? lista(registro[campo]) : []) {
+      if (!esObjeto(d) || typeof d.archivo !== 'string' || typeof d.indice !== 'number' || !/^[a-z-]+\.json$/.test(d.archivo)) continue;
+      const propuesta = propuestasDe(join(ejecucion, carpeta, d.archivo))[d.indice];
+      for (const url of urlsDe(propuesta)) anotar(esObjeto(propuesta) ? propuesta.partido : undefined, url, `${prefijo}: ${String(d.motivo)}`);
+    }
+  };
+  descartes('fusionar.json', 'fusion', 'rechazados', 'Rechazado al fusionar');
+  descartes('preparar.json', 'adjudicado', 'descartes', 'Apartado al preparar');
+  for (const p of PARTY_IDS) {
+    const adjudicado = leerJsonSiExiste(join(ejecucion, 'adjudicado', `${p}.json`));
+    for (const d of esObjeto(adjudicado) ? lista(adjudicado.decisiones) : []) {
+      if (esObjeto(d) && d.decision !== 'propuesto' && esTexto(d.motivo)) anotar(p, d.url, `Descartado en la adjudicación: ${d.motivo.trim()}`);
+    }
+  }
+  return motivos;
+}
+
 const rutaDeEntornoHome = () => {
   const home = process.env.HOME;
   if (!home) throw new Error('Falta HOME');
   return home;
 };
+
+/** Name of the n-th classification batch (two digits, so the files sort in order). */
+export const nombreLote = (n: number) => String(n).padStart(2, '0');
+
+/** A batch's tasks (lotes/clasificar-<nombre>.json) and the only files its session may create (.rutas.txt, as `find` prints them). */
+function escribirLote(ejecucion: string, nombre: string, tareas: TareaClasificar[]) {
+  escribirJson(join(ejecucion, 'lotes', `clasificar-${nombre}.json`), tareas);
+  writeFileSync(join(ejecucion, 'lotes', `clasificar-${nombre}.rutas.txt`), tareas.map((t) => `./${t.salida}\n`).join(''));
+}
 
 /** Classification tasks of the run split into those with a valid JSON output and those without, per party. */
 function clasificadas(ejecucion: string) {
@@ -1005,8 +1517,54 @@ async function main(args: string[]): Promise<number> {
         return meta && existsSync(texto) ? [{ id, meta, texto: readFileSync(texto, 'utf8') }] : [];
       });
       const alias = leerJson(join(datos, 'partidos-alias.json')) as Partial<Record<PartyId, Alias>>;
-      escribirJson(join(ejecucion, 'tareas-clasificar.json'), tareasClasificar({ fecha, raizCache: cache, documentos, alias, porEquidad: leerEquidad(ejecucion, fecha).salidas }));
+      const todas = tareasClasificar({ fecha, raizCache: cache, documentos, alias, porEquidad: leerEquidad(ejecucion, fecha).salidas });
+      // Pages that are not single articles are dropped before any model reads them, by the same rule for all.
+      const pagina = (docId: string) => {
+        const raw = (existsSync(join(docs, docId)) ? readdirSync(join(docs, docId)) : []).find((archivo) => archivo.startsWith('raw.'));
+        const ext = raw?.slice(4);
+        return { ext, html: ext === 'html' || ext === 'htm' ? readFileSync(join(docs, docId, raw!), 'utf8') : undefined };
+      };
+      const { tareas, descartados_previos } = prefiltrarTareas(todas, pagina);
+      escribirJson(join(ejecucion, 'tareas-clasificar.json'), tareas);
+      escribirJson(join(ejecucion, 'clasificar-descartados.json'), { descartados_previos });
+      // One Claude session per batch; each may create only its own answer files.
+      const lotes = lotesClasificar(tareas);
+      rmSync(join(ejecucion, 'lotes'), { recursive: true, force: true });
+      lotes.forEach((lote, i) => escribirLote(ejecucion, nombreLote(i + 1), lote));
+      process.stdout.write(`${todas.length} tareas, ${descartados_previos.length} descartadas antes (no son artículos), ${tareas.length} en ${lotes.length} lotes de ${TAMANO_LOTE_CLASIFICAR} como máximo\n`);
       return 0;
+    }
+    case 'clasificacion-completa': {
+      // The gate after the classification sessions: every task needs its valid answer file.
+      // With --preparar-reintento, missing or invalid answers get one more session (exit 3).
+      const preparar = args.includes('--preparar-reintento');
+      // --lote <nn>: only that batch, read-only (exit 0 when all its answers are there and valid).
+      const l = args.indexOf('--lote');
+      const lote = l === -1 ? undefined : args[l + 1];
+      if (lote !== undefined && (!/^\d{2}$/.test(lote) || preparar)) throw new Error('--lote <nn> sin --preparar-reintento');
+      const tareas = (leerJsonSiExiste(join(ejecucion, lote === undefined ? 'tareas-clasificar.json' : join('lotes', `clasificar-${lote}.json`))) ?? []) as TareaClasificar[];
+      const faltas = tareas.flatMap((tarea) => {
+        const ruta = join(ejecucion, tarea.salida);
+        const problema = problemaClasificacion(tarea, existsSync(ruta) ? readFileSync(ruta, 'utf8') : undefined);
+        return problema ? [{ tarea, problema }] : [];
+      });
+      if (lote !== undefined) return faltas.length ? 1 : 0;
+      if (preparar && faltas.length) {
+        for (const { tarea } of faltas) {
+          if (!existsSync(join(ejecucion, tarea.salida))) continue;
+          mkdirSync(join(ejecucion, 'reintento-anterior', 'clasificacion'), { recursive: true });
+          renameSync(join(ejecucion, tarea.salida), join(ejecucion, 'reintento-anterior', tarea.salida));
+        }
+        escribirLote(ejecucion, 'reintento', faltas.map((f) => f.tarea));
+        writeFileSync(join(ejecucion, 'clasificacion-reintentadas.txt'), faltas.map((f) => `- ${f.problema}\n`).join(''));
+        process.stdout.write(`${faltas.length} clasificaciones que faltan o no valen: se reintentan en una sesión más\n`);
+        return 3;
+      }
+      const ruta = join(ejecucion, 'clasificacion-faltan.txt');
+      if (faltas.length) writeFileSync(ruta, faltas.map((f) => `- ${f.problema}\n`).join(''));
+      else if (existsSync(ruta)) rmSync(ruta);
+      process.stdout.write(faltas.length ? `${faltas.length} clasificaciones que faltan o no valen (clasificacion-faltan.txt)\n` : `${tareas.length} clasificaciones completas\n`);
+      return faltas.length ? 1 : 0;
     }
     case 'preparar': {
       const { porPartido, descartes, deHechos } = preparar({
@@ -1023,12 +1581,17 @@ async function main(args: string[]): Promise<number> {
       const actuales = fichas();
       const antes = Object.fromEntries(PARTY_IDS.map((p) => [p, JSON.stringify(leerJson(join(ejecucion, 'antes', 'partidos', `${p}.json`)))])) as Record<PartyId, string>;
       const sinCambios = Object.fromEntries(PARTY_IDS.map((p) => [p, JSON.stringify(actuales[p])]));
+      // The perfiles that exist (the site has all four or none), and their snapshot of the day.
+      const perfiles = Object.fromEntries(PARTY_IDS.flatMap((p) => (existsSync(join(datos, 'perfiles', `${p}.json`)) ? [[p, leerJson(join(datos, 'perfiles', `${p}.json`))]] : []))) as Partial<Record<PartyId, Perfil>>;
+      const perfilesAntes = Object.fromEntries(PARTY_IDS.map((p) => [p, JSON.stringify(leerJsonSiExiste(join(ejecucion, 'antes', 'perfiles', `${p}.json`)))]));
+      const perfilesSinCambios = Object.fromEntries(PARTY_IDS.map((p) => [p, JSON.stringify(perfiles[p])]));
       const { promovidos, n } = promover(actuales);
-      const corte = igualarCorte(actuales, antes, fecha);
+      const corte = igualarCorte(actuales, antes, fecha, perfiles, perfilesAntes);
       for (const p of PARTY_IDS) if (JSON.stringify(actuales[p]) !== sinCambios[p]) escribirJson(join(datos, 'partidos', `${p}.json`), actuales[p]);
+      for (const p of PARTY_IDS) if (perfiles[p] && JSON.stringify(perfiles[p]) !== perfilesSinCambios[p]) escribirJson(join(datos, 'perfiles', `${p}.json`), perfiles[p]);
       const reg = leerJson(join(datos, 'busquedas.json')) as { busquedas: Busqueda[] };
       const equidad = leerEquidad(ejecucion, fecha);
-      const nuevas = entradasDelDia({ fecha, desde: descubierto()?.desde ?? fecha, registro: reg.busquedas, equidad });
+      const nuevas = entradasDelDia({ fecha, desde: descubierto()?.desde ?? fecha, registro: reg.busquedas, equidad, fichas: actuales, motivos: motivosDescarte(ejecucion) });
       if (nuevas.length) escribirJson(join(datos, 'busquedas.json'), { ...reg, busquedas: [...reg.busquedas, ...nuevas] });
       escribirJson(join(ejecucion, 'ajustar.json'), { fecha, n, promovidos, corte, busquedas: nuevas.map((b) => b.id) });
       return 0;
@@ -1039,18 +1602,141 @@ async function main(args: string[]): Promise<number> {
       const dir = d === -1 ? undefined : args[d + 1];
       const q = args.indexOf('--pasada');
       const pasada = q === -1 ? undefined : args[q + 1];
-      if (!dir || !esPasada(pasada)) throw new Error('Faltan --dir y --pasada busqueda|adjudicacion');
+      if (!dir || !esPasada(pasada)) throw new Error('Faltan --dir y --pasada busqueda|busqueda-reintento|clasificacion|hechos|adjudicacion');
+      // A classification session works on one batch: its tasks file and the only answer paths it may create.
+      const l = args.indexOf('--lote');
+      const lote = l === -1 ? undefined : args[l + 1];
+      if ((pasada === 'clasificacion') !== (lote !== undefined) || (lote !== undefined && !/^(?:\d{2}|reintento)$/.test(lote))) throw new Error('--lote <nn|reintento> va con --pasada clasificacion y solo con ella');
+      const archivoLote = lote === undefined ? undefined : join(ejecucion, 'lotes', `clasificar-${lote}.json`);
+      const tareasLote = archivoLote === undefined ? undefined : (leerJson(archivoLote) as TareaClasificar[]);
+      // An adjudication session works for one party: the only answer paths it may create.
+      const pp = args.indexOf('--partido');
+      const partido = pp === -1 ? undefined : args[pp + 1];
+      if ((pasada === 'adjudicacion') !== (partido !== undefined) || (partido !== undefined && !(PARTY_IDS as readonly string[]).includes(partido))) throw new Error(`--partido <${PARTY_IDS.join('|')}> va con --pasada adjudicacion y solo con ella`);
+      const rutasPartido = partido === undefined ? undefined : [`adjudicado/${partido}.json`, `adjudicado/${partido}.json.error.txt`];
+      const rutasHechos = pasada === 'hechos' ? ['hechos.json', 'hechos.json.error.txt'] : undefined;
       const recogida = join(import.meta.dirname, '..');
       const t = join(recogida, '..');
       const md = readFileSync(join(t, 'agentes', '08-diario.md'), 'utf8');
-      const salida = prompts(md, { FECHA: fecha, EJECUCION: ejecucion, CACHE: cache, DATOS: join(ejecucion, 'antes'), CRITERIOS: join(t, 'criterios'), ENCUESTAS: reglaEncuestas(fecha) });
+      const salida = prompts(md, { FECHA: fecha, EJECUCION: ejecucion, CACHE: cache, DATOS: join(ejecucion, 'antes'), CRITERIOS: join(t, 'criterios'), ENCUESTAS: reglaEncuestas(fecha), SATURACION: String(RESULTADOS_SATURACION), ...(archivoLote ? { TAREAS_CLASIFICAR: archivoLote } : {}), ...(partido ? { PARTIDO: partido } : {}) });
       const plantilla = readFileSync(join(recogida, 'claude-settings.diario.template.json'), 'utf8');
-      writeFileSync(join(dir, 'settings.json'), ajustesClaude(plantilla, { EJ: ejecucion, N29_CACHE: cache, T: t, HOME: rutaDeEntornoHome(), CONF: dir }, pasada));
+      writeFileSync(join(dir, 'settings.json'), ajustesClaude(plantilla, { EJ: ejecucion, N29_CACHE: cache, T: t, HOME: rutaDeEntornoHome(), CONF: dir }, pasada, tareasLote?.map((t) => t.salida) ?? rutasPartido ?? rutasHechos));
       writeFileSync(join(dir, 'prompt.txt'), salida[pasada]);
       writeFileSync(join(dir, 'agentes.json'), `${JSON.stringify(salida.agentes, null, 2)}\n`);
+      // The cap covers just the tasks of the session: all of them, or the retry subset.
+      const [archivoFuentes, archivoIguales] = pasada === 'busqueda-reintento' ? ['reintento-fuentes.json', 'reintento-equidad.json'] : ['descubrir.json', 'equidad-tareas.json'];
+      const previstas =
+        pasada !== 'busqueda' && pasada !== 'busqueda-reintento'
+          ? 0
+          : busquedasWebPrevistas(
+              ((leerJsonSiExiste(join(ejecucion, archivoFuentes)) ?? {}) as { tareas_busqueda?: TareaBusqueda[] }).tareas_busqueda ?? [],
+              (leerJsonSiExiste(join(ejecucion, archivoIguales)) ?? []) as TareaEquidad[],
+            );
+      writeFileSync(join(dir, 'busquedas-web.txt'), `${limiteBusquedasWeb(pasada, previstas)}\n`);
       return 0;
     }
+    case 'busqueda-completa': {
+      // The gate after the search pass: anything unsearched stops the day, listed in busqueda-faltan.txt for resumen.md.
+      // With --preparar-reintento, retryable gaps instead prepare one more session for just those tasks (exit 3).
+      const preparar = args.includes('--preparar-reintento');
+      // Without its task files the gate has nothing to compare with: that is a failure, never "complete".
+      const sinTareas = ['descubrir.json', 'equidad-tareas.json'].filter((archivo) => !existsSync(join(ejecucion, archivo)));
+      if (sinTareas.length) {
+        writeFileSync(join(ejecucion, 'busqueda-faltan.txt'), sinTareas.map((archivo) => `- falta ${archivo}\n`).join(''));
+        process.stdout.write(`faltan ${sinTareas.join(' y ')}\n`);
+        return 1;
+      }
+      const fuentes = descubierto()?.tareas_busqueda ?? [];
+      const iguales = (leerJsonSiExiste(join(ejecucion, 'equidad-tareas.json')) ?? []) as TareaEquidad[];
+      const rutas = [...fuentes.map((t) => join('busqueda', `${t.emisor}.json`)), ...iguales.map((t) => t.salida)];
+      // An answer saved as .error.txt that is valid JSON with only whitespace around it is accepted as it is.
+      for (const relativa of rutas) {
+        const ruta = join(ejecucion, relativa);
+        if (!existsSync(ruta) && existsSync(`${ruta}.error.txt`) && respuestaAceptable(readFileSync(`${ruta}.error.txt`, 'utf8'))) {
+          renameSync(`${ruta}.error.txt`, ruta);
+          writeFileSync(join(ejecucion, 'busqueda-aceptadas.txt'), `- ${relativa}\n`, { flag: 'a' });
+          process.stdout.write(`aceptada: ${relativa} (JSON válido con espacios alrededor)\n`);
+        }
+      }
+      const leer = (relativa: string): Respuesta => {
+        const ruta = join(ejecucion, relativa);
+        if (existsSync(ruta)) {
+          try {
+            return { contenido: leerJson(ruta) };
+          } catch {
+            return { error: true };
+          }
+        }
+        return existsSync(`${ruta}.error.txt`) ? { error: true } : undefined;
+      };
+      const registradas = (pasada: string) => {
+        const salida = leer(join('claude', `${pasada}.salida.json`));
+        return salida && 'contenido' in salida ? busquedasRegistradas(salida.contenido) : undefined;
+      };
+      // After a retry, its answers are checked against its own count, the rest against pass 1's.
+      const reintentoHecho = existsSync(join(ejecucion, 'busqueda-reintento.iniciado'));
+      const revision = revisarBusqueda({
+        fuentes,
+        porFuente: (emisor) => leer(join('busqueda', `${emisor}.json`)),
+        iguales,
+        porIgual: (tarea) => leer(tarea.salida),
+        busquedasReales: registradas('busqueda'),
+        ...(reintentoHecho
+          ? {
+              reintento: {
+                fuentes: (((leerJsonSiExiste(join(ejecucion, 'reintento-fuentes.json')) ?? {}) as { tareas_busqueda?: TareaBusqueda[] }).tareas_busqueda ?? []).map((t) => t.emisor),
+                iguales: ((leerJsonSiExiste(join(ejecucion, 'reintento-equidad.json')) ?? []) as TareaEquidad[]).map((t) => t.salida),
+                busquedasReales: registradas('busqueda-reintento'),
+              },
+            }
+          : {}),
+      });
+      const ruta = join(ejecucion, 'busqueda-faltan.txt');
+      const { faltas } = revision;
+      const reintento = revision.reintentables;
+      if (preparar && faltas.length && !revision.definitivas.length) {
+        // The same task definitions, verbatim, for just these tasks; the old answers are kept aside for the audit.
+        escribirJson(join(ejecucion, 'reintento-fuentes.json'), { tareas_busqueda: reintento.fuentes });
+        escribirJson(join(ejecucion, 'reintento-equidad.json'), reintento.iguales);
+        const reintentadas = [...reintento.fuentes.map((t) => join('busqueda', `${t.emisor}.json`)), ...reintento.iguales.map((t) => t.salida)];
+        for (const relativa of reintentadas) {
+          for (const archivo of [relativa, `${relativa}.error.txt`]) {
+            if (!existsSync(join(ejecucion, archivo))) continue;
+            mkdirSync(join(ejecucion, 'reintento-anterior', archivo, '..'), { recursive: true });
+            renameSync(join(ejecucion, archivo), join(ejecucion, 'reintento-anterior', archivo));
+          }
+        }
+        // What was missing, and what is redone: an equal search with its four parties.
+        writeFileSync(join(ejecucion, 'busqueda-reintentadas.txt'), [...faltas.map((falta) => `- ${falta}\n`), `- se rehacen: ${reintentadas.join(', ')}\n`].join(''));
+        // The only files the retry session may create: diario.sh seals everything else in the run folder.
+        writeFileSync(join(ejecucion, 'reintento-rutas.txt'), reintentadas.flatMap((r) => [`./${r}\n`, `./${r}.error.txt\n`]).join(''));
+        process.stdout.write(`${faltas.length} faltas: se reintentan ${reintentadas.length} tareas en una sesión más (busqueda-reintentadas.txt)\n`);
+        return 3;
+      }
+      if (faltas.length) writeFileSync(ruta, faltas.map((falta) => `- ${falta}\n`).join(''));
+      else if (existsSync(ruta)) rmSync(ruta);
+      // Gaps another session cannot fix: the day is not offered a resume.
+      if (revision.definitivas.length) writeFileSync(join(ejecucion, 'busqueda-definitivas.txt'), revision.definitivas.map((falta) => `- ${falta}\n`).join(''));
+      process.stdout.write(faltas.length ? `${faltas.length} faltas en la búsqueda (busqueda-faltan.txt)\n` : 'búsqueda completa\n');
+      return faltas.length ? 1 : 0;
+    }
+    case 'hechos-completo': {
+      // The shared facts are complete when hechos.json is a JSON object with a list `hechos`; every party's adjudicator reads that same file.
+      let contenido: unknown;
+      try {
+        contenido = leerJsonSiExiste(join(ejecucion, 'hechos.json'));
+      } catch {
+        contenido = undefined;
+      }
+      const completo = esObjeto(contenido) && Array.isArray(contenido.hechos);
+      process.stdout.write(completo ? 'hechos.json completo\n' : 'hechos.json: falta o no es un objeto JSON con una lista hechos\n');
+      return completo ? 0 : 1;
+    }
     case 'adjudicacion-completa': {
+      // With --partido, only that party's file (a resumed day keeps the parties already complete).
+      const pa = args.indexOf('--partido');
+      const soloPartido = pa === -1 ? undefined : args[pa + 1];
+      if (soloPartido !== undefined && !(PARTY_IDS as readonly string[]).includes(soloPartido)) throw new Error(`--partido debe ser ${PARTY_IDS.join(', ')}`);
       const archivos = Object.fromEntries(PARTY_IDS.map((p) => [p, (() => {
         try {
           return leerJsonSiExiste(join(ejecucion, 'adjudicado', `${p}.json`));
@@ -1058,7 +1744,7 @@ async function main(args: string[]): Promise<number> {
           return undefined;
         }
       })()]));
-      const problemas = problemasAdjudicacion(archivos, clasificadas(ejecucion).hechas);
+      const problemas = problemasAdjudicacion(archivos, clasificadas(ejecucion).hechas).filter((problema) => soloPartido === undefined || problema.startsWith(`adjudicado/${soloPartido}.json:`));
       for (const problema of problemas) process.stdout.write(`${problema}\n`);
       return problemas.length ? 1 : 0;
     }
@@ -1072,7 +1758,11 @@ async function main(args: string[]): Promise<number> {
           fusionar: leerJsonSiExiste(join(ejecucion, 'fusionar.json')) as never,
           ajustar: leerJsonSiExiste(join(ejecucion, 'ajustar.json')) as never,
           citasNuevas: leerTexto('citas-nuevas.txt'),
+          reintentadas: leerTexto('busqueda-reintentadas.txt'),
+          aceptadas: leerTexto('busqueda-aceptadas.txt'),
           sinClasificar: clasificadas(ejecucion).faltan,
+          enlaces: leerJsonSiExiste(join(ejecucion, 'enlaces.json')) as never,
+          clasificar: (leerJsonSiExiste(join(ejecucion, 'tareas-clasificar.json')) ?? []) as TareaClasificar[],
         }),
       );
       return 0;

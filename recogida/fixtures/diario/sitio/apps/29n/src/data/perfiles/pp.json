@@ -1,0 +1,44 @@
+{
+  "partido": "pp",
+  "periodo": {
+    "desde": "2026-10-05",
+    "hasta": "2026-11-09"
+  },
+  "limites": [
+    "Datos inventados para el ensayo en seco."
+  ],
+  "documentos": [
+    {
+      "id": "pp-d1",
+      "titulo": "Documento 1 de ejemplo",
+      "fecha": "2026-11-02",
+      "fecha_fuente": "Fecha impresa en el documento (2026-11-02)",
+      "tipo": "nota de prensa",
+      "url": "https://pp.example/notas/2026-11-02-1",
+      "procedencia": {
+        "via": "web",
+        "consultado": "2026-11-02"
+      }
+    }
+  ],
+  "propuestas": [],
+  "mensajes": [],
+  "en_espera": {
+    "documentos": [
+      {
+        "id": "pp-d2",
+        "titulo": "Documento 2 de ejemplo",
+        "fecha": "2026-11-10",
+        "fecha_fuente": "Fecha impresa en el documento (2026-11-10)",
+        "tipo": "nota de prensa",
+        "url": "https://pp.example/notas/2026-11-10-2",
+        "procedencia": {
+          "via": "web",
+          "consultado": "2026-11-10"
+        }
+      }
+    ],
+    "propuestas": [],
+    "mensajes": []
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "doc_id": "66ff642045cf6801",
+  "partido": "frente-amplio",
+  "url": "https://medio-c.example/2026/11/09/critica-frente-amplio",
+  "relevante": true,
+  "motivo": "Ejemplo.",
+  "fecha_publicacion": null,
+  "titular": "Ejemplo",
+  "medio": "medio-c.example",
+  "firma": null,
+  "genero": "noticia",
+  "fuente_primaria": false,
+  "pregunta": null,
+  "contexto": false,
+  "seccion": null,
+  "habla": null,
+  "tema": "POL",
+  "afirmaciones": [],
+  "otros_partidos": [],
+  "hecho_compartido": false,
+  "estado_sugerido": "PARCIAL",
+  "matiz_sugerido": null
+}

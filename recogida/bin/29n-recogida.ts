@@ -8,21 +8,24 @@
  *   29n-recogida descubrir   --fecha D [--dias 2]
  *   29n-recogida traer       --fecha D             (candidatos de descubrir.json)
  *   29n-recogida buzon       --fecha D [--todo]
+ *   29n-recogida enlaces     --fecha D             ($N29_BUZON/enlaces/<D>.txt → enlaces.json)
  *   29n-recogida transcribir --fecha D --video URL [--oficial URL] [--modelo-whisper ARCHIVO]
  *   29n-recogida binarios
  *   29n-recogida fusionar    --fecha D [--ejecucion CARPETA] [--seco]
  */
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { raizCache, rutaDeEntorno } from '../src/cache.ts';
-import { leerBuzon } from '../src/buzon.ts';
-import { accesoDesdeRegistro, descubrir, leerRegistro, type Descubrimiento } from '../src/descubrir.ts';
+import { leerBuzon, leerListaEnlaces } from '../src/buzon.ts';
+import { accesoDesdeRegistro, descubrir, leerCandidatos, leerRegistro, type Descubrimiento } from '../src/descubrir.ts';
+import { lectorCache } from '../src/citas.ts';
 import { fusionar } from '../src/fusionar.ts';
-import { Traedor, bloqueosDelDia, escribirBloqueados, guardarDesdeFeed, leerBloqueados, traerYGuardar } from '../src/traer.ts';
+import { Traedor, bloqueosDelDia, escribirBloqueados, guardarDesdeFeed, leerBloqueados, traerEnlaces, traerYGuardar } from '../src/traer.ts';
 import { detectarBinarios, faltan, transcribir } from '../src/transcripciones.ts';
 
-const AYUDA = `Uso: 29n-recogida <descubrir|traer|buzon|transcribir|binarios|fusionar> --fecha AAAA-MM-DD [opciones]`;
+const AYUDA = `Uso: 29n-recogida <descubrir|traer|buzon|enlaces|transcribir|binarios|fusionar> --fecha AAAA-MM-DD [opciones]`;
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -63,7 +66,7 @@ async function main() {
     case 'descubrir': {
       const dia = fecha();
       const cache = raizCache();
-      const registro = await leerRegistro(rutaDeEntorno('N29_SITIO'));
+      const registro = { ...(await leerRegistro(rutaDeEntorno('N29_SITIO'))), candidatos: await leerCandidatos(rutaDeEntorno('N29_SITIO')) };
       const { traedor, guardar } = await traedorDelDia(cache, dia);
       const resultado = await descubrir(registro, traedor, { fecha: dia, dias: values.dias ? Number(values.dias) : undefined });
       await guardar();
@@ -103,6 +106,22 @@ async function main() {
       if (resultado.rechazados.length) process.exitCode = 1;
       return;
     }
+    case 'enlaces': {
+      // The owner's links list: fetched like any discovered article, no date window; problems are avisos, never failures.
+      const dia = fecha();
+      const cache = raizCache();
+      const ruta = join(rutaDeEntorno('N29_BUZON'), 'enlaces', `${dia}.txt`);
+      const lista = leerListaEnlaces(existsSync(ruta) ? await readFile(ruta, 'utf8') : '');
+      const { traedor, guardar } = await traedorDelDia(cache, dia);
+      const resultado = await traerEnlaces(traedor, cache, lista);
+      await guardar();
+      const carpeta = carpetaEjecucion(cache, dia);
+      await mkdir(carpeta, { recursive: true });
+      await writeFile(join(carpeta, 'enlaces.json'), json({ fecha: dia, ...resultado }));
+      for (const aviso of resultado.avisos) console.log(`aviso línea ${aviso.linea}: ${aviso.motivo}`);
+      console.log(`${resultado.enlaces.filter((e) => e.estado === 'ok').length}/${resultado.enlaces.length} enlaces traídos, ${resultado.avisos.length} avisos`);
+      return;
+    }
     case 'binarios': {
       const binarios = await detectarBinarios();
       console.log(json(binarios));
@@ -121,7 +140,11 @@ async function main() {
       );
       await guardar();
       if (resultado.estado === 'ok') console.log(`${resultado.fuente}: ${resultado.guardado.dir} (${resultado.guardado.estado})`);
-      else {
+      else if (resultado.estado === 'aviso') {
+        // Login, geo-block, DRM, robots or a non-public address: recorded, never worked around.
+        console.error(`aviso: ${resultado.motivo}`);
+        process.exitCode = 1;
+      } else {
         console.error(resultado.motivo);
         if (resultado.estado === 'faltan-binarios') console.error(`Para instalar lo que falta:\n${resultado.instalar.join('\n')}`);
         process.exitCode = 1;
@@ -131,7 +154,8 @@ async function main() {
     case 'fusionar': {
       const dia = fecha();
       const carpeta = values.ejecucion ? resolve(values.ejecucion) : join(carpetaEjecucion(raizCache(), dia), 'adjudicado');
-      const plan = await fusionar({ sitio: rutaDeEntorno('N29_SITIO'), carpeta, fecha: dia, escribir: !values.seco });
+      // Quotes are checked against the run's cache (citas.ts): one not found literally leaves its item out.
+      const plan = await fusionar({ sitio: rutaDeEntorno('N29_SITIO'), carpeta, fecha: dia, escribir: !values.seco, leer: lectorCache(raizCache()) });
       console.log(json(plan));
       return;
     }

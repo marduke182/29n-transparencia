@@ -53,6 +53,16 @@
       "url": "https://psoe.example/prensa/2026/11/10/nota-programa",
       "decision": "propuesto",
       "motivo": "Ejemplo."
+    },
+    {
+      "url": "https://oficial.example/transcripciones/debate-2026-11-09",
+      "decision": "descartado",
+      "motivo": "Ejemplo."
+    },
+    {
+      "url": "https://medio-a.example/2026/11/08/debate-vivienda",
+      "decision": "descartado",
+      "motivo": "Ejemplo."
     }
   ],
   "objeciones_hechos": [],
