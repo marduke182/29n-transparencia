@@ -276,11 +276,11 @@ describe('firmaAntibots', () => {
 });
 
 describe('Traedor: sources that block the guide', () => {
-  it('never fetches a host in noTraer (recogida omitir or bloqueo), whatever points at it', async () => {
+  it('never fetches a host in noTraer (bloqueo, or the fixed list), whatever points at it', async () => {
     const { fn, llamadas } = fetchFalso({});
     const traedor = new Traedor({ fecha: '2026-11-13', fetch: fn, noTraer: ['elpais.com'], ...sinEspera() });
     for (const url of ['https://elpais.com/espana/a.html', 'https://www.elpais.com/b', 'https://feeds.elpais.com/rss']) {
-      expect(await traedor.traer(url)).toMatchObject({ estado: 'solo-buzon', motivo: expect.stringMatching(/omitir o bloqueo/) });
+      expect(await traedor.traer(url)).toMatchObject({ estado: 'solo-buzon', motivo: expect.stringMatching(/bloquea a la guía/) });
     }
     expect(llamadas).toEqual([]);
   });

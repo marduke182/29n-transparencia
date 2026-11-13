@@ -16,8 +16,9 @@
  *   (a party site's feed) is `soloListado`: only that URL is fetched, never its
  *   pages. A blocked host with no working method is `soloBuzon`: never fetched,
  *   inbox only (buzon.ts). Without a registry, psoe.es and voxespana.es are
- *   inbox-only by default. Hosts of emisores with recogida `omitir` or a
- *   `bloqueo` (`noTraer`) are never fetched, whatever points at them.
+ *   inbox-only by default. Hosts that block the guide (`noTraer`: emisores
+ *   with a `bloqueo`, and SIN_AGENTES_CLAUDE_FIJOS) are never fetched,
+ *   whatever points at them.
  * - Blocks the guide lists on /fuentes/ (`vetos`): a robots.txt that disallows
  *   the site root to Claude's agents (AGENTES_CLAUDE; that host is then not
  *   fetched either), and an anti-bot answer (403/429 or a challenge page with
@@ -240,7 +241,7 @@ export interface Opciones {
   soloBuzon?: readonly string[];
   /** Hosts whose pages block: only these URLs (their listing) may be fetched. */
   soloListado?: Readonly<Record<string, readonly string[]>>;
-  /** Hosts never fetched: emisores with recogida omitir or a bloqueo in fuentes.json. */
+  /** Hosts never fetched: emisores with a bloqueo in fuentes.json, and the fixed list of bloqueos.ts. */
   noTraer?: readonly string[];
   /** DNS resolution, to refuse hosts that resolve to internal addresses. Default: resolverReal. */
   resolver?: Resolver;
@@ -507,7 +508,7 @@ export class Traedor {
     const host = hostDe(url);
     const red = await this.motivoRed(parsed.hostname);
     if (red) return { estado: 'error', url, motivo: red };
-    if (hostEn(host, this.noTraer)) return { estado: 'solo-buzon', url, motivo: `${host} tiene recogida omitir o bloqueo en fuentes.json: no se trae (solo el buzón)` };
+    if (hostEn(host, this.noTraer)) return { estado: 'solo-buzon', url, motivo: `${host} bloquea a la guía (bloqueo en fuentes.json): no se trae (solo el buzón)` };
     if (hostEn(host, this.soloBuzon)) return { estado: 'solo-buzon', url, motivo: `${host} bloquea a clientes automatizados: solo por el buzón` };
     const listados = Object.entries(this.soloListado).find(([otro]) => hostEn(host, [otro]))?.[1];
     if (listados && !listados.some((permitida) => urlCanonica(permitida) === urlCanonica(url))) {

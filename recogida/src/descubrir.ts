@@ -13,6 +13,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { XMLParser } from 'fast-xml-parser';
+import { SIN_AGENTES_CLAUDE_FIJOS } from './bloqueos.ts';
 import { PARTY_IDS, urlCanonica } from './cache.ts';
 import { decodificarEntidades } from './buzon.ts';
 import { decodificarCuerpo, hostDe, hostEn, type Bloqueo, type Traedor } from './traer.ts';
@@ -39,7 +40,7 @@ export interface AccesoHosts {
   soloBuzon: string[];
   /** Pages block, but the listed method works: only these URLs are fetched. */
   soloListado: Record<string, string[]>;
-  /** Hosts of emisores with recogida `omitir` or a `bloqueo`: never fetched, whatever points at them (a search result, a link of the inbox list). */
+  /** Hosts that block the guide: emisores with a `bloqueo`, plus SIN_AGENTES_CLAUDE_FIJOS. Never fetched, whatever points at them (a search result, a link of the inbox list). An emisor that is omitir only for scope is not listed: its pages may still come from a search or the inbox. */
   noTraer: string[];
 }
 
@@ -52,7 +53,7 @@ export interface AccesoHosts {
 export function accesoDesdeRegistro(emisores: Emisor[]): AccesoHosts {
   const acceso: AccesoHosts = { soloBuzon: [], soloListado: {}, noTraer: [] };
   for (const emisor of emisores) {
-    if (emisor.recogida?.metodo === 'omitir' || emisor.bloqueo) acceso.noTraer.push(...emisor.hosts);
+    if (emisor.bloqueo) acceso.noTraer.push(...emisor.hosts);
     if (emisor.acceso?.estado !== 'parcial' && emisor.acceso?.estado !== 'bloqueado') continue;
     const metodo = emisor.recogida?.metodo;
     const url = emisor.recogida?.url;
@@ -62,7 +63,7 @@ export function accesoDesdeRegistro(emisores: Emisor[]): AccesoHosts {
     }
   }
   acceso.soloBuzon.sort();
-  acceso.noTraer = [...new Set(acceso.noTraer)].sort();
+  acceso.noTraer = [...new Set([...SIN_AGENTES_CLAUDE_FIJOS, ...acceso.noTraer])].sort();
   return acceso;
 }
 

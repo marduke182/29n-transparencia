@@ -114,15 +114,16 @@ describe('parsers', () => {
 
 describe('accesoDesdeRegistro', () => {
   it('reads a working method for partial or blocked hosts, inbox only otherwise', () => {
-    expect(accesoDesdeRegistro(emisores)).toEqual({ soloBuzon: ['voxespana.es'], soloListado: { 'partido-ejemplo.es': ['https://partido-ejemplo.es/feed/'] }, noTraer: ['fuera.cl', 'voxespana.es'] });
+    expect(accesoDesdeRegistro(emisores)).toEqual({ soloBuzon: ['voxespana.es'], soloListado: { 'partido-ejemplo.es': ['https://partido-ejemplo.es/feed/'] }, noTraer: ['abc.es', 'elmundo.es', 'elpais.com'] });
     const psoe: Emisor = { id: 'web-psoe', nombre: 'PSOE', hosts: ['psoe.es'], tipo: 'partido', acceso: { estado: 'bloqueado', comprobado: '2026-11-10', detalle: 'reto' } };
     expect(accesoDesdeRegistro([psoe]).soloBuzon).toEqual(['psoe.es']);
     expect(accesoDesdeRegistro([{ ...psoe, recogida: { metodo: 'rss', url: 'https://psoe.es/feed' } }]).soloListado).toEqual({ 'psoe.es': ['https://psoe.es/feed'] });
   });
-  it('never fetches the hosts of an emisor with recogida omitir or a bloqueo', () => {
-    const bloqueado: Emisor = { id: 'el-pais', nombre: 'El País', hosts: ['elpais.com'], tipo: 'medio', recogida: { metodo: 'omitir' }, bloqueo: { tipo: 'robots', evidencia: 'User-agent: Claude-User · Disallow: /', consultado: '2026-11-13', robots: 'https://elpais.com/robots.txt', agentes: ['Claude-User'] } };
-    expect(accesoDesdeRegistro([bloqueado, emisores[0]!]).noTraer).toEqual(['elpais.com']);
-    expect(accesoDesdeRegistro([{ ...bloqueado, recogida: undefined }]).noTraer).toEqual(['elpais.com']);
+  it('never fetches the hosts of an emisor with a bloqueo, nor the fixed list; omitir only for scope stays fetchable', () => {
+    const bloqueado: Emisor = { id: 'democrata', nombre: 'Demócrata', hosts: ['democrata.es'], tipo: 'medio', recogida: { metodo: 'omitir' }, bloqueo: { tipo: 'robots', evidencia: 'User-agent: Claude-User · Disallow: /', consultado: '2026-11-13', robots: 'https://democrata.es/robots.txt', agentes: ['Claude-User'] } };
+    const soloAmbito: Emisor = { id: 'ine', nombre: 'INE', hosts: ['ine.es'], tipo: 'oficial', recogida: { metodo: 'omitir', nota: 'Solo se cita para datos.' } };
+    expect(accesoDesdeRegistro([bloqueado, soloAmbito, emisores[0]!]).noTraer).toEqual(['abc.es', 'democrata.es', 'elmundo.es', 'elpais.com']);
+    expect(accesoDesdeRegistro([]).noTraer).toEqual(['abc.es', 'elmundo.es', 'elpais.com']);
   });
 });
 
@@ -219,6 +220,18 @@ describe('descubrir con atrasos', () => {
     expect(extra[1]!.busquedas[3]!.texto).toBe('site:medio.es ("Persona Cuatro" OR "Vox")');
     // The normal task comes before the atrasos one of the same source.
     expect(con.tareas_busqueda.map((t) => t.salida ?? t.emisor)).toEqual(['busca', 'busqueda/busca.atrasos.json', 'busqueda/medio.atrasos.json']);
+  });
+  it('accepts a source with its own feed (la-razon, rss): its listing stays, and only the atrasos task is a search', async () => {
+    const laRazon: Emisor = { id: 'la-razon', nombre: 'La Razón', hosts: ['larazon.es'], tipo: 'medio', recogida: { metodo: 'rss', url: 'https://www.larazon.es/espana/?outputType=xml' } };
+    const eldiario: Emisor = { id: 'eldiario-es', nombre: 'elDiario.es', hosts: ['eldiario.es'], tipo: 'medio' };
+    const registro = { emisores: [...emisores, laRazon, eldiario], alias, candidatos };
+    const a = { desde: '2026-10-05', hasta: '2026-11-12', emisores: ['la-razon', 'eldiario-es'] };
+    const { traedor: t, fetch } = traedor();
+    const con = await descubrir(registro, t, { fecha: '2026-11-13', listados, atrasos: a });
+    expect(fetch.mock.calls.map(([url]) => String(url))).toContain('https://www.larazon.es/espana/?outputType=xml');
+    expect(con.tareas_busqueda.filter((x) => x.emisor === 'la-razon').map((x) => x.salida)).toEqual(['busqueda/la-razon.atrasos.json']);
+    expect(con.tareas_busqueda.filter((x) => x.emisor === 'eldiario-es').map((x) => x.salida ?? 'día')).toEqual(['día', 'busqueda/eldiario-es.atrasos.json']);
+    expect(con.tareas_busqueda.find((x) => x.salida === 'busqueda/la-razon.atrasos.json')!.busquedas[0]!.texto).toBe('site:larazon.es ("Persona Uno" OR "Frente Amplio")');
   });
   it('refuses unknown ids, omitir and inbox-only sources, bad dates, desde after hasta and hasta after the run date', async () => {
     const pedir = (a: typeof atrasos) => descubrir({ emisores, alias, candidatos }, traedor().traedor, { fecha: '2026-11-10', listados, atrasos: a });
