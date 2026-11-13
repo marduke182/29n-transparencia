@@ -95,6 +95,10 @@ describe('transcribir', () => {
     if (resultado.estado !== 'ok') return;
     expect(resultado.fuente).toBe('subtitulos');
     expect(resultado.guardado.meta).toMatchObject({ via: 'transcripcion', fuente_transcripcion: 'subtitulos', video_url: VIDEO, idioma: 'es', calidad_primaria: true });
+    // A video nobody listed carries no origin; one the owner listed is marked buzon-videos.
+    expect(resultado.guardado.meta.origen).toBeUndefined();
+    const delDueno = await transcribir({ video_url: VIDEO, fecha: '2026-11-11', origen: 'buzon-videos' }, { raizCache: cache, traedor: abierto(), ejecutar: ejecutarFalso({ manuales: true }).ejecutar, binarios: TODOS });
+    expect(delDueno).toMatchObject({ estado: 'ok', guardado: { meta: { origen: 'buzon-videos', video_url: VIDEO } } });
     expect(llamadas).toHaveLength(1);
     const args = llamadas[0]!.args;
     for (const flag of ['--skip-download', '--write-subs', '--write-auto-subs', '--ignore-config', '--no-plugin-dirs', '--no-cookies', '--no-cookies-from-browser']) expect(args).toContain(flag);

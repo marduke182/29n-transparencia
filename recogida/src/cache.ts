@@ -146,7 +146,18 @@ export async function guardar(raiz: string, entrada: Entrada): Promise<Guardado>
   };
 
   const anterior = await leerMeta(raiz, id);
-  if (anterior?.sha256_contenido === meta.sha256_contenido) return { id, dir, estado: 'sin-cambios', meta: anterior };
+  if (anterior?.sha256_contenido === meta.sha256_contenido) {
+    // Same content: a no-op, except that the owner's marks are never lost. A document the run had already cached
+    // and the owner now supplies (inbox, links list, listed video) keeps that origin (citas.ts, citableEn).
+    const marcas: Record<string, unknown> = {};
+    if (meta.via === 'buzon' && anterior.via !== 'buzon' && anterior.origen === undefined) marcas.origen = 'buzon';
+    if (typeof meta.origen === 'string' && anterior.origen === undefined) marcas.origen = meta.origen;
+    if (typeof meta.url_pedida === 'string' && anterior.url_pedida === undefined) marcas.url_pedida = meta.url_pedida;
+    if (!Object.keys(marcas).length) return { id, dir, estado: 'sin-cambios', meta: anterior };
+    const marcada = { ...anterior, ...marcas };
+    await writeFile(join(dir, 'meta.json'), `${JSON.stringify(marcada, null, 2)}\n`);
+    return { id, dir, estado: 'sin-cambios', meta: marcada };
+  }
 
   let estado: Guardado['estado'] = 'nuevo';
   if (anterior) {

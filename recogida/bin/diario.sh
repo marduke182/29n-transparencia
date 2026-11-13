@@ -26,7 +26,7 @@
 #   N29_CACHE            cache and run folders, outside any repository
 #   N29_BUZON            the owner's manual inbox
 #   N29_PRESUPUESTO_USD  spending cap of each Claude pass (required)
-#   N29_CLAUDE           claude binary (default: claude), version 2.1.321 or later
+#   N29_CLAUDE           claude binary (default: claude), version 2.1.322 exactly (N29_CLAUDE_VERSION_OK=1 for a newer one)
 #   N29_RAMA_BASE        base branch (default: master), N29_REMOTO (default: origin)
 #   N29_LIMITE_CLAUDE_S, N29_LIMITE_VIDEO_S (above 14400), N29_MODELO_WHISPER   optional
 #   N29_GH_TOKEN         optional: the dedicated token for the push and the PR, used only there
@@ -137,7 +137,11 @@ con_limite() {
   perl -e 'alarm shift @ARGV; exec { $ARGV[0] } @ARGV or die "exec: $!\n"' "$segundos" "$@"
 }
 real() { (cd "$1" && pwd -P); }
-CLAUDE_MINIMA="2.1.321"
+CLAUDE_MINIMA="2.1.322"
+# The version the permissions were checked against, and Claude Code's preapproved WebFetch domains read from
+# (diario.ts, WEBFETCH_PREAPROBADOS and CLAUDE_VERIFICADA): a newer one could preapprove more domains, so it
+# runs only with N29_CLAUDE_VERSION_OK=1, after the list is checked again.
+CLAUDE_VERIFICADA="2.1.322"
 # version_minima <versión> <mínima>: true when x.y.z >= the minimum.
 version_minima() {
   local v="$1" m="$2" a b i
@@ -195,8 +199,12 @@ else
     *) die "N29_EXIGIR_TOKEN debe ser 0 o 1" ;;
   esac
   command -v "$N29_CLAUDE" >/dev/null || die "no se encuentra claude ($N29_CLAUDE)"
-  version_minima "$("$N29_CLAUDE" --version 2>/dev/null | awk '{print $1}')" "$CLAUDE_MINIMA" ||
+  VERSION_CLAUDE="$("$N29_CLAUDE" --version 2>/dev/null | awk '{print $1}')"
+  version_minima "$VERSION_CLAUDE" "$CLAUDE_MINIMA" ||
     die "claude debe ser la versión $CLAUDE_MINIMA o posterior (las opciones y permisos de esta ejecución se comprobaron con ella)"
+  if [ "$VERSION_CLAUDE" != "$CLAUDE_VERIFICADA" ] && [ "${N29_CLAUDE_VERSION_OK:-0}" != 1 ]; then
+    die "claude es la versión $VERSION_CLAUDE y los permisos (los dominios que WebFetch aprueba de serie) se comprobaron con la $CLAUDE_VERIFICADA: revísalos (WEBFETCH_PREAPROBADOS en diario.ts) o ejecuta con N29_CLAUDE_VERSION_OK=1"
+  fi
   command -v git >/dev/null || die "falta git"
   command -v gh >/dev/null || [ "$SIN_GIT" = 1 ] || die "falta gh"
   [ -d "$N29_REPO" ] || die "N29_REPO no es una carpeta"
@@ -536,14 +544,17 @@ instantanea() {
 }
 
 paso_transcribir() {
-  local video oficial codigo=0
+  local video oficial buzon codigo=0 origen
   glue videos >"$EJ/videos.tsv" || return $?
-  while IFS="$(printf '\t')" read -r video oficial; do
+  while IFS="$(printf '\t')" read -r video oficial buzon; do
     [ -n "$video" ] || continue
+    # A video the owner listed: its transcript is marked origen buzon-videos (citas.ts, citableEn).
+    origen=""
+    [ "$buzon" != buzon ] || origen=buzon-videos
     if [ -n "$oficial" ]; then
-      con_limite "$LIMITE_VIDEO" node ${IMPORTAR:+--import "$IMPORTAR"} "$RECOGIDA/bin/29n-recogida.ts" transcribir --fecha "$FECHA" --video "$video" --oficial "$oficial" ${N29_MODELO_WHISPER:+--modelo-whisper "$N29_MODELO_WHISPER"} || codigo=1
+      con_limite "$LIMITE_VIDEO" node ${IMPORTAR:+--import "$IMPORTAR"} "$RECOGIDA/bin/29n-recogida.ts" transcribir --fecha "$FECHA" --video "$video" --oficial "$oficial" ${origen:+--origen "$origen"} ${N29_MODELO_WHISPER:+--modelo-whisper "$N29_MODELO_WHISPER"} || codigo=1
     else
-      con_limite "$LIMITE_VIDEO" node ${IMPORTAR:+--import "$IMPORTAR"} "$RECOGIDA/bin/29n-recogida.ts" transcribir --fecha "$FECHA" --video "$video" ${N29_MODELO_WHISPER:+--modelo-whisper "$N29_MODELO_WHISPER"} || codigo=1
+      con_limite "$LIMITE_VIDEO" node ${IMPORTAR:+--import "$IMPORTAR"} "$RECOGIDA/bin/29n-recogida.ts" transcribir --fecha "$FECHA" --video "$video" ${origen:+--origen "$origen"} ${N29_MODELO_WHISPER:+--modelo-whisper "$N29_MODELO_WHISPER"} || codigo=1
     fi
   done <"$EJ/videos.tsv"
   return $codigo

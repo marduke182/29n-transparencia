@@ -4,7 +4,7 @@
  * the run date is an argument and every list is sorted.
  *
  *   node src/diario.ts tareas-equidad      --fecha D   equidad-tareas.json: the equal searches, one per kind and party
- *   node src/diario.ts videos              --fecha D   one "video<TAB>oficial" line per video to transcribe
+ *   node src/diario.ts videos              --fecha D   one "video<TAB>oficial<TAB>buzon" line per video to transcribe (buzon: the owner listed it)
  *   node src/diario.ts candidatos-busqueda --fecha D   descubrir.busqueda.json: URLs found by the search agents
  *   node src/diario.ts tareas-clasificar   --fecha D   tareas-clasificar.json: one task per new document and party
  *   node src/diario.ts preparar            --fecha D   fusion/<partido>.json + preparar.json: what fusionar may merge
@@ -507,8 +507,8 @@ export { esVideo };
  * $N29_BUZON/videos/<fecha>.txt ("VIDEO_URL [OFICIAL_URL]", # comments).
  * Only https URLs on FUENTES_VIDEO; the official transcript must be https too.
  */
-export function videosDelDia(descubierto: Pick<Descubrimiento, 'candidatos'> | undefined, listaBuzon: string | undefined): { video: string; oficial?: string }[] {
-  const salida = new Map<string, { video: string; oficial?: string }>();
+export function videosDelDia(descubierto: Pick<Descubrimiento, 'candidatos'> | undefined, listaBuzon: string | undefined): { video: string; oficial?: string; buzon?: true }[] {
+  const salida = new Map<string, { video: string; oficial?: string; buzon?: true }>();
   for (const candidato of descubierto?.candidatos ?? []) {
     if (candidato.genero !== 'debate' && candidato.genero !== 'entrevista') continue;
     if (!esVideo(candidato.url)) continue;
@@ -519,7 +519,8 @@ export function videosDelDia(descubierto: Pick<Descubrimiento, 'candidatos'> | u
     if (!video || !esVideo(video)) continue;
     const clave = canonicaSegura(video);
     if (!clave) continue;
-    salida.set(clave, { video, ...(oficial && /^https:\/\/\S+$/.test(oficial) ? { oficial } : {}) });
+    // The owner listed it: its transcript is marked (origen buzon-videos) and may back a published item.
+    salida.set(clave, { video, ...(oficial && /^https:\/\/\S+$/.test(oficial) ? { oficial } : {}), buzon: true });
   }
   return [...salida.entries()].sort(([a], [b]) => comparar(a, b)).map(([, video]) => video);
 }
@@ -1433,6 +1434,9 @@ export const PERMITIDAS_SIN_ESPECIFICADOR: readonly string[] = ['StructuredOutpu
  * each one they do not allow: an explicit `WebFetch(domain:…)` rule takes
  * precedence over that set (tools-reference, "WebFetch tool behavior").
  */
+/** The Claude Code version WEBFETCH_PREAPROBADOS was read from; diario.sh refuses another one unless N29_CLAUDE_VERSION_OK=1. */
+export const CLAUDE_VERIFICADA = '2.1.322';
+
 export const WEBFETCH_PREAPROBADOS: readonly string[] = [
   'agentskills.io', 'angular.io', 'asp.net', 'blazor.net', 'bun.sh', 'claude.ai', 'claude.com', 'cloud.google.com', 'code.claude.com', 'cypress.io', 'd3js.org',
   'dev.mysql.com', 'dev.wix.com', 'devcenter.heroku.com', 'developer.android.com', 'developer.apple.com', 'developer.mozilla.org', 'doc.rust-lang.org', 'docs.aws.amazon.com',
@@ -1886,7 +1890,7 @@ async function main(args: string[]): Promise<number> {
     }
     case 'videos': {
       const ruta = join(rutaDeEntorno('N29_BUZON'), 'videos', `${fecha}.txt`);
-      for (const v of videosDelDia(descubierto(), existsSync(ruta) ? readFileSync(ruta, 'utf8') : undefined)) process.stdout.write(`${v.video}\t${v.oficial ?? ''}\n`);
+      for (const v of videosDelDia(descubierto(), existsSync(ruta) ? readFileSync(ruta, 'utf8') : undefined)) process.stdout.write(`${v.video}\t${v.oficial ?? ''}\t${v.buzon ? 'buzon' : ''}\n`);
       return 0;
     }
     case 'candidatos-busqueda': {

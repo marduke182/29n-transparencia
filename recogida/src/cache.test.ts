@@ -46,6 +46,17 @@ describe('guardar', () => {
     expect(versiones).toEqual([`2026-11-10-${primero.meta.sha256_contenido.slice(0, 8)}`]);
     expect(await readFile(join(raiz, 'docs', primero.id, 'texto.txt'), 'utf8')).toBe('v2\n');
   });
+
+  it('keeps the owner\'s mark when the owner supplies a document the run had already cached with the same content', async () => {
+    await guardar(raiz, { ...base, raw: 'v1', texto: 'v1' });
+    const marcado = await guardar(raiz, { ...base, raw: 'v1', texto: 'v1', consultado: '2026-11-11', extra: { origen: 'buzon-enlaces', url_pedida: 'https://corto.es/x' } });
+    expect(marcado.estado).toBe('sin-cambios');
+    expect(marcado.meta).toMatchObject({ consultado: '2026-11-10', origen: 'buzon-enlaces', url_pedida: 'https://corto.es/x' });
+    const meta = JSON.parse(await readFile(join(raiz, 'docs', marcado.id, 'meta.json'), 'utf8'));
+    expect(meta.origen).toBe('buzon-enlaces');
+    // A later run without the mark does not remove it, and nothing else changes.
+    expect((await guardar(raiz, { ...base, raw: 'v1', texto: 'v1', consultado: '2026-11-12' })).meta.origen).toBe('buzon-enlaces');
+  });
 });
 
 describe('raizCache', () => {

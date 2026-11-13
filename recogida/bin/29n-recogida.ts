@@ -9,7 +9,7 @@
  *   29n-recogida traer       --fecha D             (candidatos de descubrir.json)
  *   29n-recogida buzon       --fecha D [--todo]
  *   29n-recogida enlaces     --fecha D             ($N29_BUZON/enlaces/<D>.txt → enlaces.json)
- *   29n-recogida transcribir --fecha D --video URL [--oficial URL] [--modelo-whisper ARCHIVO]
+ *   29n-recogida transcribir --fecha D --video URL [--oficial URL] [--modelo-whisper ARCHIVO] [--origen buzon-videos]
  *   29n-recogida binarios
  *   29n-recogida fusionar    --fecha D [--ejecucion CARPETA] [--seco]
  */
@@ -18,7 +18,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { raizCache, rutaDeEntorno } from '../src/cache.ts';
-import { leerBuzon, leerListaEnlaces } from '../src/buzon.ts';
+import { ORIGEN_VIDEOS, leerBuzon, leerListaEnlaces } from '../src/buzon.ts';
 import { accesoDesdeRegistro, descubrir, leerCandidatos, leerRegistro, type Atrasos, type Descubrimiento } from '../src/descubrir.ts';
 import { citableEn, hostsRegistrados, lectorCache } from '../src/citas.ts';
 import { fusionar } from '../src/fusionar.ts';
@@ -35,6 +35,7 @@ const { positionals, values } = parseArgs({
     todo: { type: 'boolean' },
     video: { type: 'string' },
     oficial: { type: 'string' },
+    origen: { type: 'string' },
     'modelo-whisper': { type: 'string' },
     ejecucion: { type: 'string' },
     seco: { type: 'boolean' },
@@ -155,10 +156,18 @@ async function main() {
     case 'transcribir': {
       const dia = fecha();
       if (!values.video) throw new Error('Falta --video URL');
+      // --origen buzon-videos: a video the owner listed (diario.ts videos, third column); no other value.
+      if (values.origen !== undefined && values.origen !== ORIGEN_VIDEOS) throw new Error(`--origen solo admite ${ORIGEN_VIDEOS}`);
       const cache = raizCache();
       const { traedor, guardar } = await traedorDelDia(cache, dia);
       const resultado = await transcribir(
-        { video_url: values.video, oficial_url: values.oficial, fecha: dia, modeloWhisper: values['modelo-whisper'] ? resolve(values['modelo-whisper']) : undefined },
+        {
+          video_url: values.video,
+          oficial_url: values.oficial,
+          fecha: dia,
+          modeloWhisper: values['modelo-whisper'] ? resolve(values['modelo-whisper']) : undefined,
+          ...(values.origen === ORIGEN_VIDEOS ? { origen: ORIGEN_VIDEOS } : {}),
+        },
         { raizCache: cache, traedor },
       );
       await guardar();

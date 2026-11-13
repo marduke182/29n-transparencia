@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -107,24 +107,56 @@ describe('lectorCache', () => {
 describe('citableEn: solo hosts registrados o documentos del dueño', () => {
   const raiz = mkdtempSync(join(tmpdir(), 'n29-citable-'));
   afterAll(() => rmSync(raiz, { recursive: true, force: true }));
-  const guardarMeta = (url: string, meta: Record<string, unknown>) => {
+  const guardarMeta = (url: string, meta: Record<string, unknown>, texto = 'texto') => {
     const dir = join(raiz, 'docs', idDocumento(urlCanonica(url)));
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'meta.json'), JSON.stringify({ url, url_canonica: urlCanonica(url), ...meta }));
+    writeFileSync(join(dir, 'texto.txt'), texto);
   };
+  // The site registry as of 13 Nov 2026 (fixtures/registro-hosts-2026-11-13.json): no video host is an emisor.
+  const real = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'fixtures', 'registro-hosts-2026-11-13.json'), 'utf8')).hosts as string[];
 
-  it('admite un host de fuentes.json y sus subdominios, y un documento traído por el buzón o la lista de enlaces; nada más', () => {
+  it('admite exactamente un host de fuentes.json (sin www., como el validador del sitio), y un documento traído por el buzón o la lista de enlaces; nada más', () => {
     const hosts = hostsRegistrados({ emisores: [{ id: 'medio', hosts: ['www.Medio.es'] }, { id: 'roto' }, { hosts: [3] }] });
     expect(hosts).toEqual(['medio.es']);
     guardarMeta('https://ajeno.com/buzon', { via: 'buzon' });
     guardarMeta('https://ajeno.com/enlace', { via: 'web', origen: 'buzon-enlaces' });
     guardarMeta('https://ajeno.com/busqueda', { via: 'web' });
     const citable = citableEn(raiz, hosts);
-    expect(['https://medio.es/a', 'https://www.medio.es/b?utm_source=x', 'https://cdn.medio.es/c.pdf'].every(citable)).toBe(true);
+    expect(['https://medio.es/a', 'https://www.medio.es/b?utm_source=x'].every(citable)).toBe(true);
+    // A subdomain the registry does not list fails the site's validator too.
+    expect(citable('https://cdn.medio.es/c.pdf')).toBe(false);
     expect(citable('https://ajeno.com/buzon')).toBe(true);
     expect(citable('https://ajeno.com/enlace')).toBe(true);
-    // Found by a search, cached, but on an unregistered host: not citable.
     expect(citable('https://ajeno.com/busqueda')).toBe(false);
     for (const mala of ['https://medio.es.ajeno.com/x', 'https://notmedio.es/x', 'ftp://medio.es/x', 'no es una url', 'https://ajeno.com/sin-cache']) expect(citable(mala), mala).toBe(false);
+  });
+
+  it('admite la transcripción de un vídeo que listó el dueño (YouTube, RTVE Play), buscada por la URL del vídeo, con el registro real', () => {
+    const youtube = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+    const rtve = 'https://www.rtve.es/play/videos/telediario-1/15-horas-12-11-26/16812345/';
+    const ajeno = 'https://www.youtube.com/watch?v=aaaaaaaaaaa';
+    expect(real.length).toBeGreaterThan(50);
+    expect(real.some((h) => /youtube|youtu\.be|rtve/.test(h))).toBe(false);
+    // Subtitles: stored under the video URL. An official transcript: stored under its own URL, with video_url in the meta.
+    guardarMeta(youtube, { via: 'transcripcion', video_url: youtube, origen: 'buzon-videos' }, 'subtítulos');
+    guardarMeta('https://partido.example/transcripcion-debate.pdf', { via: 'transcripcion', video_url: rtve, origen: 'buzon-videos' }, 'Mañana empieza la campaña');
+    // A video discovered by the run, not listed by the owner: no mark.
+    guardarMeta(ajeno, { via: 'transcripcion', video_url: ajeno });
+    const citable = citableEn(raiz, real);
+    expect(citable(youtube)).toBe(true);
+    expect(citable(rtve)).toBe(true);
+    expect(citable(rtve.replace('https://www.', 'https://'))).toBe(true);
+    expect(citable(ajeno)).toBe(false);
+    // The quote check finds the official transcript by the video URL too.
+    expect(lectorCache(raiz)(rtve)).toBe('Mañana empieza la campaña');
+  });
+
+  it('admite un enlace del dueño redirigido por la URL que listó y por la final', () => {
+    guardarMeta('https://ajeno.com/final', { via: 'web', origen: 'buzon-enlaces', url_pedida: 'https://acortador.ajeno.com/x1' }, 'final');
+    const citable = citableEn(raiz, ['medio.es']);
+    expect(citable('https://ajeno.com/final')).toBe(true);
+    expect(citable('https://acortador.ajeno.com/x1')).toBe(true);
+    expect(lectorCache(raiz)('https://acortador.ajeno.com/x1')).toBe('final');
   });
 });
