@@ -5,7 +5,7 @@
  * never inside a repo) and N29_BUZON (manual inbox). The run date is always
  * an argument: `--fecha YYYY-MM-DD`.
  *
- *   29n-recogida descubrir   --fecha D [--dias 2]
+ *   29n-recogida descubrir   --fecha D [--dias 2] [--atrasos-desde D1 --atrasos-hasta D2 --atrasos-emisores a,b]
  *   29n-recogida traer       --fecha D             (candidatos de descubrir.json)
  *   29n-recogida buzon       --fecha D [--todo]
  *   29n-recogida enlaces     --fecha D             ($N29_BUZON/enlaces/<D>.txt → enlaces.json)
@@ -19,10 +19,10 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { raizCache, rutaDeEntorno } from '../src/cache.ts';
 import { leerBuzon, leerListaEnlaces } from '../src/buzon.ts';
-import { accesoDesdeRegistro, descubrir, leerCandidatos, leerRegistro, type Descubrimiento } from '../src/descubrir.ts';
+import { accesoDesdeRegistro, descubrir, leerCandidatos, leerRegistro, type Atrasos, type Descubrimiento } from '../src/descubrir.ts';
 import { lectorCache } from '../src/citas.ts';
 import { fusionar } from '../src/fusionar.ts';
-import { Traedor, bloqueosDelDia, escribirBloqueados, guardarDesdeFeed, leerBloqueados, traerEnlaces, traerYGuardar } from '../src/traer.ts';
+import { Traedor, bloqueosDelDia, escribirBloqueados, guardarDesdeFeed, guardarVetos, leerBloqueados, traerEnlaces, traerYGuardar } from '../src/traer.ts';
 import { detectarBinarios, faltan, transcribir } from '../src/transcripciones.ts';
 
 const AYUDA = `Uso: 29n-recogida <descubrir|traer|buzon|enlaces|transcribir|binarios|fusionar> --fecha AAAA-MM-DD [opciones]`;
@@ -38,6 +38,9 @@ const { positionals, values } = parseArgs({
     'modelo-whisper': { type: 'string' },
     ejecucion: { type: 'string' },
     seco: { type: 'boolean' },
+    'atrasos-desde': { type: 'string' },
+    'atrasos-hasta': { type: 'string' },
+    'atrasos-emisores': { type: 'string' },
   },
 });
 
@@ -54,8 +57,23 @@ async function traedorDelDia(cache: string, dia: string) {
   const todos = await leerBloqueados(ruta);
   const { emisores } = await leerRegistro(rutaDeEntorno('N29_SITIO'));
   const traedor = new Traedor({ fecha: dia, bloqueados: bloqueosDelDia(todos, dia), ...accesoDesdeRegistro(emisores) });
-  const guardar = () => escribirBloqueados(ruta, { ...todos, ...traedor.bloqueados });
+  // The blocks the guide lists (robots.txt against Claude's agents, anti-bot answers) go to the run's bloqueos-guia.json.
+  const guardar = async () => {
+    await escribirBloqueados(ruta, { ...todos, ...traedor.bloqueados });
+    await guardarVetos(join(carpetaEjecucion(cache, dia), 'bloqueos-guia.json'), traedor.vetos, todos);
+  };
   return { traedor, guardar };
+}
+
+/** The atrasos of descubrir: the three options together, or none. */
+function atrasos(): Atrasos | undefined {
+  const desde = values['atrasos-desde'];
+  const hasta = values['atrasos-hasta'];
+  const emisores = values['atrasos-emisores'];
+  const dados = [desde, hasta, emisores].filter((valor) => valor !== undefined).length;
+  if (dados === 0) return undefined;
+  if (dados !== 3) throw new Error('--atrasos-desde, --atrasos-hasta y --atrasos-emisores van juntas (las tres o ninguna)');
+  return { desde: desde!, hasta: hasta!, emisores: emisores!.split(',').map((id) => id.trim()) };
 }
 
 const carpetaEjecucion = (cache: string, dia: string) => join(cache, 'ejecuciones', dia);
@@ -68,7 +86,8 @@ async function main() {
       const cache = raizCache();
       const registro = { ...(await leerRegistro(rutaDeEntorno('N29_SITIO'))), candidatos: await leerCandidatos(rutaDeEntorno('N29_SITIO')) };
       const { traedor, guardar } = await traedorDelDia(cache, dia);
-      const resultado = await descubrir(registro, traedor, { fecha: dia, dias: values.dias ? Number(values.dias) : undefined });
+      const pedidos = atrasos();
+      const resultado = await descubrir(registro, traedor, { fecha: dia, dias: values.dias ? Number(values.dias) : undefined, ...(pedidos ? { atrasos: pedidos } : {}) });
       await guardar();
       const carpeta = carpetaEjecucion(cache, dia);
       await mkdir(carpeta, { recursive: true });

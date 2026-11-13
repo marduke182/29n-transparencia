@@ -2,6 +2,16 @@
 
 Registro fechado de los cambios en el proceso, los criterios y los validadores. Más reciente primero. Solo reglas y esquemas, no datos.
 
+## 13 de noviembre de 2026
+
+### Recogida diaria: atrasos y fuentes que bloquean
+
+Cambios del proceso, no de los criterios; iguales para los cuatro partidos. Ver [recogida](recogida/README.md#uso) y [agentes/08-diario.md](agentes/08-diario.md).
+
+1. **Atrasos.** Una ejecución normal puede buscar además en fuentes nombradas lo publicado en una ventana anterior (`--atrasos-desde`, `--atrasos-hasta`, `--atrasos-emisores`; las tres o ninguna). Cada fuente nombrada recibe una tarea de búsqueda más, construida igual que las del día (el candidato primero, una consulta por partido), con su propia ventana, la nota «Atrasos: devuelve solo lo publicado del <desde> al <hasta>.» y su propia respuesta (`busqueda/<emisor>.atrasos.json`). No sustituye a recuperar un día: el resto de la ejecución, las búsquedas iguales incluidas, sigue con la ventana del día. La ejecución se niega con un id desconocido, con una fuente omitida, bloqueada o solo de buzón, y con fechas mal formadas, invertidas o posteriores al día. El resumen lo dice en «Atrasos».
+2. **Sitios que no admiten a los agentes de Claude.** El robots.txt de El País, El Mundo y ABC (leído el 13 de noviembre de 2026) prohíbe el acceso a Claude-User, ClaudeBot y Claude-SearchBot. Ninguna sesión de Claude puede abrirlos ni abrir los demás sitios con `bloqueo` en el registro de fuentes (el host y sus subdominios), y la recogida no trae nada de un emisor con recogida omitida o con `bloqueo`, aunque lo señale un resultado de búsqueda o la lista de enlaces del buzón.
+3. **Fuentes que bloquean.** La recogida anota cada robots.txt que prohíbe la raíz a Claude-User o a Claude-SearchBot y cada respuesta antibots (403 o 429 con la firma de un servicio antibots, o una página «no eres un robot»), con la fecha y la evidencia. Los robots.txt pasan al registro de fuentes del sitio en el PR del día (`bloqueo` y recogida omitida; un emisor nuevo, con el host como nombre, si no estaba), con una lista blanca que no admite ningún otro cambio en ese archivo. Los bloqueos antibots no se escriben solos, porque un reto puede deberse a la frecuencia de las peticiones: el resumen los lista para revisar y dice si es la primera vez. Un bloqueo nunca se quita solo; si un robots.txt deja de excluir a los agentes de Claude, el resumen lo dice para que una persona decida. El resumen y el PR llevan el apartado «Fuentes que bloquean».
+
 ## 12 de noviembre de 2026
 
 La guía pasa de cinco a cuatro partidos: Frente Amplio, PP, PSOE y Vox. Podemos queda fuera.

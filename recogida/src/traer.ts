@@ -16,7 +16,12 @@
  *   (a party site's feed) is `soloListado`: only that URL is fetched, never its
  *   pages. A blocked host with no working method is `soloBuzon`: never fetched,
  *   inbox only (buzon.ts). Without a registry, psoe.es and voxespana.es are
- *   inbox-only by default.
+ *   inbox-only by default. Hosts of emisores with recogida `omitir` or a
+ *   `bloqueo` (`noTraer`) are never fetched, whatever points at them.
+ * - Blocks the guide lists on /fuentes/ (`vetos`): a robots.txt that disallows
+ *   the site root to Claude's agents (AGENTES_CLAUDE; that host is then not
+ *   fetched either), and an anti-bot answer (403/429 or a challenge page with
+ *   a known signature). Each with the date and its evidence.
  */
 import dns from 'node:dns';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -235,6 +240,8 @@ export interface Opciones {
   soloBuzon?: readonly string[];
   /** Hosts whose pages block: only these URLs (their listing) may be fetched. */
   soloListado?: Readonly<Record<string, readonly string[]>>;
+  /** Hosts never fetched: emisores with recogida omitir or a bloqueo in fuentes.json. */
+  noTraer?: readonly string[];
   /** DNS resolution, to refuse hosts that resolve to internal addresses. Default: resolverReal. */
   resolver?: Resolver;
 }
@@ -249,9 +256,18 @@ interface Robots {
   esperaMs: number;
 }
 
-/** Parses robots.txt and keeps the group for our token, or else `*`. */
-export function leerRobots(texto: string): Robots {
-  const grupos: { agentes: string[]; reglas: Regla[]; espera?: number }[] = [];
+interface GrupoRobots {
+  /** User agents of the group, lowercase. */
+  agentes: string[];
+  /** The same, as written in the file. */
+  escritos: string[];
+  reglas: Regla[];
+  espera?: number;
+}
+
+/** Groups of a robots.txt, in file order. */
+function gruposRobots(texto: string): GrupoRobots[] {
+  const grupos: GrupoRobots[] = [];
   let actual: (typeof grupos)[number] | undefined;
   let leyendoAgentes = false;
   for (const lineaCruda of texto.split(/\r?\n/)) {
@@ -262,10 +278,11 @@ export function leerRobots(texto: string): Robots {
     const valor = match[2]!.trim();
     if (campo === 'user-agent') {
       if (!leyendoAgentes || !actual) {
-        actual = { agentes: [], reglas: [] };
+        actual = { agentes: [], escritos: [], reglas: [] };
         grupos.push(actual);
       }
       actual.agentes.push(valor.toLowerCase());
+      actual.escritos.push(valor);
       leyendoAgentes = true;
       continue;
     }
@@ -278,9 +295,70 @@ export function leerRobots(texto: string): Robots {
       if (Number.isFinite(segundos) && segundos > 0) actual.espera = segundos * 1000;
     }
   }
-  const propio = grupos.find((grupo) => grupo.agentes.some((agente) => agente !== '*' && TOKEN_ROBOTS.startsWith(agente)));
-  const grupo = propio ?? grupos.find((g) => g.agentes.includes('*'));
+  return grupos;
+}
+
+/** The group that applies to a product token: the first naming it (prefix, case-insensitive), or else `*`. */
+function grupoPara(grupos: GrupoRobots[], token: string): GrupoRobots | undefined {
+  const propio = grupos.find((grupo) => grupo.agentes.some((agente) => agente !== '*' && token.toLowerCase().startsWith(agente)));
+  return propio ?? grupos.find((g) => g.agentes.includes('*'));
+}
+
+/** Parses robots.txt and keeps the group for our token, or else `*`. */
+export function leerRobots(texto: string): Robots {
+  const grupo = grupoPara(gruposRobots(texto), TOKEN_ROBOTS);
   return { reglas: grupo?.reglas ?? [], esperaMs: grupo?.espera ?? 0 };
+}
+
+/**
+ * Anthropic's agents that read pages for a Claude session: Claude-User (a
+ * fetch asked for by a user) and Claude-SearchBot (search). A site whose
+ * robots.txt disallows its root to either is not read by Claude, nor fetched
+ * by this pipeline. Checked against Anthropic's crawler documentation on
+ * 13 Nov 2026.
+ */
+export const AGENTES_CLAUDE = ['Claude-User', 'Claude-SearchBot'] as const;
+
+/**
+ * Whether a robots.txt disallows the site root to Claude's agents
+ * (AGENTES_CLAUDE, each by its own group or else `*`), with the evidence: the
+ * Anthropic user agents of the deciding groups as written (`*` when a group
+ * applies only as the default), the first deciding rule (with that group's
+ * Anthropic agents), and the paths those groups still allow.
+ */
+export function vetoClaude(texto: string): { agentes: string[]; evidencia: string; permitido: string[] } | undefined {
+  const grupos = gruposRobots(texto);
+  const decisivos: GrupoRobots[] = [];
+  for (const token of AGENTES_CLAUDE) {
+    const grupo = grupoPara(grupos, token);
+    if (grupo && !permitido({ reglas: grupo.reglas, esperaMs: 0 }, '/') && !decisivos.includes(grupo)) decisivos.push(grupo);
+  }
+  if (!decisivos.length) return undefined;
+  const anthropic = (g: GrupoRobots) => (g.agentes.includes('*') ? ['*'] : g.escritos.filter((a) => /claude|anthropic/i.test(a)));
+  const agentes = [...new Set(decisivos.flatMap(anthropic))];
+  const regla = decisivos[0]!.reglas.filter((r) => !r.permitir && coincide(r.patron, '/')).sort((a, b) => b.patron.length - a.patron.length)[0];
+  const permitidas = [...new Set(decisivos.flatMap((g) => g.reglas.filter((r) => r.permitir && r.patron.startsWith('/') && r.patron !== '/').map((r) => r.patron)))];
+  return { agentes, evidencia: `User-agent: ${anthropic(decisivos[0]!).join(', ')} · Disallow: ${regla?.patron ?? '/'}`, permitido: permitidas };
+}
+
+/** A block the guide lists on /fuentes/: robots.txt against Claude's agents, or an anti-bot answer. */
+export interface VetoGuia {
+  tipo: 'robots' | 'antibots';
+  host: string;
+  /** Run date. */
+  consultado: string;
+  /** The URL whose request found it. */
+  url: string;
+  /** The rule line, or the status code and the anti-bot marker. */
+  evidencia: string;
+  /** robots: the robots.txt read, the agents it names and the paths it still allows. */
+  robots?: string;
+  agentes?: string[];
+  permitido?: string[];
+  /** antibots: the HTTP status. */
+  estado_http?: number;
+  /** antibots: no earlier record of a block of this host in bloqueados.json. */
+  primera?: boolean;
 }
 
 function coincide(patron: string, ruta: string): boolean {
@@ -317,6 +395,35 @@ const RETOS = [
 /** Markers of a geo-block. */
 const GEOBLOQUEO = [/not available in your (country|region)/i, /no est[aá] disponible en (tu|su) (pa[ií]s|regi[oó]n)/i, /geo[- ]?(block|restrict)/i];
 
+/** Anti-bot signatures in headers and bodies, with the name the guide gives them. */
+const FIRMAS_ANTIBOTS: { nombre: string; cabecera?: [string, RegExp]; cuerpo?: RegExp }[] = [
+  { nombre: 'Cloudflare (cf-mitigated: challenge)', cabecera: ['cf-mitigated', /challenge/i] },
+  { nombre: 'Cloudflare (página de reto)', cuerpo: /cf-chl|challenge-platform|cf_chl_opt|cf-turnstile|<title>\s*(just a moment|attention required|un momento)/i },
+  { nombre: 'DataDome (cabecera x-datadome)', cabecera: ['x-datadome', /./] },
+  { nombre: 'DataDome (página de reto)', cuerpo: /captcha-delivery|datadome/i },
+  { nombre: 'Akamai (server: AkamaiGHost)', cabecera: ['server', /akamaighost/i] },
+  { nombre: 'Akamai (página de acceso denegado)', cuerpo: /<title>\s*access denied\s*<\/title>[\s\S]*reference\s*#/i },
+  { nombre: 'Imperva/Incapsula', cuerpo: /_Incapsula_Resource|incapsula incident id/i },
+  { nombre: 'captcha (reCAPTCHA o hCaptcha)', cuerpo: /\bg-recaptcha\b|\bh-captcha\b/i },
+  { nombre: 'página «no eres un robot»', cuerpo: /(confirm|verify|prove) (that )?you('| a)re (not a (ro)?bot|(a )?human)|are you a (ro)?bot|no (eres|soy) un robot|verifica(r)? que eres (humano|una persona)/i },
+];
+
+/**
+ * The anti-bot signature of a blocking answer, or undefined: a 403 or 429
+ * whose headers or body carry a known marker, or a challenge page with any
+ * status. A bare 403 (no marker), a 401, a 451 or a geo-block is not one.
+ */
+export function firmaAntibots(estado: number, cabeceras: Pick<Headers, 'get'> | undefined, cuerpo: string): string | undefined {
+  const inicio = cuerpo.slice(0, 200_000);
+  for (const firma of FIRMAS_ANTIBOTS) {
+    const porCabecera = firma.cabecera && cabeceras ? firma.cabecera[1].test(cabeceras.get(firma.cabecera[0]) ?? '') : false;
+    const porCuerpo = firma.cuerpo ? firma.cuerpo.test(inicio) : false;
+    if (!porCabecera && !porCuerpo) continue;
+    if (estado === 403 || estado === 429 || porCuerpo) return firma.nombre;
+  }
+  return undefined;
+}
+
 /** Why a response is a block (status, challenge or geo-block), or undefined. */
 export function motivoBloqueo(estado: number, cuerpo: string): string | undefined {
   if (estado === 401) return 'HTTP 401';
@@ -342,6 +449,9 @@ export class Traedor {
   private readonly intervaloMs: number;
   private readonly soloBuzon: readonly string[];
   private readonly soloListado: Readonly<Record<string, readonly string[]>>;
+  private readonly noTraer: readonly string[];
+  /** Blocks for the guide found by this fetcher, by host (the first one wins). */
+  readonly vetos: Record<string, VetoGuia> = {};
   private readonly ultimo = new Map<string, number>();
   private readonly robots = new Map<string, Robots | 'bloqueado' | 'no-disponible'>();
   private readonly resolver: Resolver;
@@ -358,6 +468,7 @@ export class Traedor {
     this.bloqueados = { ...opciones.bloqueados };
     this.soloBuzon = opciones.soloBuzon ?? SOLO_BUZON_POR_DEFECTO;
     this.soloListado = opciones.soloListado ?? {};
+    this.noTraer = opciones.noTraer ?? [];
     this.resolver = opciones.resolver ?? resolverReal;
   }
 
@@ -396,6 +507,7 @@ export class Traedor {
     const host = hostDe(url);
     const red = await this.motivoRed(parsed.hostname);
     if (red) return { estado: 'error', url, motivo: red };
+    if (hostEn(host, this.noTraer)) return { estado: 'solo-buzon', url, motivo: `${host} tiene recogida omitir o bloqueo en fuentes.json: no se trae (solo el buzón)` };
     if (hostEn(host, this.soloBuzon)) return { estado: 'solo-buzon', url, motivo: `${host} bloquea a clientes automatizados: solo por el buzón` };
     const listados = Object.entries(this.soloListado).find(([otro]) => hostEn(host, [otro]))?.[1];
     if (listados && !listados.some((permitida) => urlCanonica(permitida) === urlCanonica(url))) {
@@ -406,6 +518,8 @@ export class Traedor {
     const robots = await this.robotsDe(parsed, host);
     if (robots === 'bloqueado') return { estado: 'bloqueado', url, bloqueo: this.bloqueados[host]! };
     if (robots === 'no-disponible') return { estado: 'robots', url, motivo: `robots.txt de ${host} no disponible: no se pide nada a este host` };
+    const veto = this.vetos[host];
+    if (veto?.tipo === 'robots') return { estado: 'robots', url, motivo: `robots.txt de ${host} no admite agentes de Claude (${veto.evidencia}): no se trae` };
     if (!permitido(robots, parsed.pathname + parsed.search)) return { estado: 'robots', url, motivo: `robots.txt de ${host} no permite ${parsed.pathname}` };
     return undefined;
   }
@@ -424,9 +538,10 @@ export class Traedor {
     return this.fetch(url, { headers: { 'User-Agent': USER_AGENT, Accept: aceptar }, redirect: 'manual' });
   }
 
-  private bloquear(host: string, url: string, estado: number | null, motivo: string): Respuesta {
+  private bloquear(host: string, url: string, estado: number | null, motivo: string, firma?: string): Respuesta {
     const bloqueo: Bloqueo = { fecha: this.fecha, estado_http: estado, motivo, url };
     this.bloqueados[host] = bloqueo;
+    if (firma && estado !== null) this.vetos[host] ??= { tipo: 'antibots', host, consultado: this.fecha, url, evidencia: `HTTP ${estado}: ${firma}`, estado_http: estado };
     return { estado: 'bloqueado', url, bloqueo };
   }
 
@@ -434,22 +549,63 @@ export class Traedor {
     const guardado = this.robots.get(host);
     if (guardado) return guardado;
     const url = `${origen.protocol}//${origen.host}/robots.txt`;
+    const pedida = origen.toString();
     let resultado: Robots | 'bloqueado' | 'no-disponible';
     try {
       const respuesta = await this.pedir(url, host, 'text/plain');
       const texto = await respuesta.text();
       const motivo = motivoBloqueo(respuesta.status, texto);
       if (motivo) {
-        this.bloquear(host, url, respuesta.status, `robots.txt: ${motivo}`);
+        this.bloquear(host, url, respuesta.status, `robots.txt: ${motivo}`, firmaAntibots(respuesta.status, respuesta.headers, texto));
         resultado = 'bloqueado';
       } else if (respuesta.status >= 500) resultado = 'no-disponible';
       else if (respuesta.status >= 400) resultado = { reglas: [], esperaMs: 0 };
-      else resultado = leerRobots(texto);
+      else {
+        resultado = leerRobots(texto);
+        const veto = vetoClaude(texto);
+        if (veto) {
+          this.vetos[host] ??= {
+            tipo: 'robots',
+            host,
+            consultado: this.fecha,
+            url: pedida,
+            evidencia: veto.evidencia,
+            robots: url,
+            agentes: veto.agentes,
+            ...(veto.permitido.length ? { permitido: veto.permitido } : {}),
+          };
+        }
+      }
     } catch {
       resultado = 'no-disponible';
     }
     this.robots.set(host, resultado);
     return resultado;
+  }
+
+  /**
+   * The text of one robots.txt, to see whether a recorded bloqueo still holds.
+   * robots.txt is read even on hosts never fetched (noTraer, inbox only), but
+   * with every network check of comprobar (https, a public host resolving to
+   * public addresses), the per-host interval and no redirects. undefined when
+   * it could not be read.
+   */
+  async textoRobots(url: string): Promise<string | undefined> {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return undefined;
+    }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.pathname !== '/robots.txt' || parsed.search) return undefined;
+    if (await this.motivoRed(parsed.hostname)) return undefined;
+    try {
+      const respuesta = await this.pedir(url, hostDe(url), 'text/plain');
+      if (respuesta.status !== 200) return undefined;
+      return await respuesta.text();
+    } catch {
+      return undefined;
+    }
   }
 
   /** Fetches one URL, following up to 5 redirects through the same checks. */
@@ -475,7 +631,7 @@ export class Traedor {
       const tipo = (respuesta.headers.get('content-type') ?? '').toLowerCase();
       const comoTexto = tipo.includes('pdf') ? '' : decodificarCuerpo(tipo, cuerpo.slice(0, 200_000));
       const motivo = motivoBloqueo(respuesta.status, comoTexto);
-      if (motivo) return this.bloquear(host, actual, respuesta.status, motivo);
+      if (motivo) return this.bloquear(host, actual, respuesta.status, motivo, firmaAntibots(respuesta.status, respuesta.headers, comoTexto));
       if (respuesta.status >= 400) return { estado: 'error', url, motivo: `HTTP ${respuesta.status}`, estado_http: respuesta.status };
       return { estado: 'ok', url, url_final: actual, estado_http: respuesta.status, tipo, cuerpo };
     }
@@ -523,6 +679,29 @@ export async function leerBloqueados(ruta: string): Promise<Record<string, Bloqu
 
 export async function escribirBloqueados(ruta: string, bloqueados: Record<string, Bloqueo>): Promise<void> {
   const ordenado = Object.fromEntries(Object.keys(bloqueados).sort().map((host) => [host, bloqueados[host]]));
+  await mkdir(dirname(ruta), { recursive: true });
+  await writeFile(ruta, `${JSON.stringify(ordenado, null, 2)}\n`);
+}
+
+/**
+ * Adds a stage's vetos to the run's bloqueos-guia.json (host → VetoGuia; a
+ * host already there keeps its first record). An anti-bot veto is `primera`
+ * when bloqueados.json had no block of that host before the stage.
+ */
+export async function guardarVetos(ruta: string, vetos: Record<string, VetoGuia>, anteriores: Record<string, Bloqueo>): Promise<void> {
+  const nuevos = Object.entries(vetos);
+  if (!nuevos.length) return;
+  let todos: Record<string, VetoGuia> = {};
+  try {
+    todos = JSON.parse(await readFile(ruta, 'utf8')) as Record<string, VetoGuia>;
+  } catch {
+    todos = {};
+  }
+  for (const [host, veto] of nuevos) {
+    if (todos[host]) continue;
+    todos[host] = veto.tipo === 'antibots' ? { ...veto, primera: !anteriores[host] } : veto;
+  }
+  const ordenado = Object.fromEntries(Object.keys(todos).sort().map((host) => [host, todos[host]]));
   await mkdir(dirname(ruta), { recursive: true });
   await writeFile(ruta, `${JSON.stringify(ordenado, null, 2)}\n`);
 }

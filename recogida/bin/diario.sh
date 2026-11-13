@@ -16,6 +16,9 @@
 #                                      dry run: the CLI stages against the fixture
 #                                      in fixtures/diario, offline, without Claude,
 #                                      the site checks or git; prints a digest
+#   diario.sh --fecha D --atrasos-desde D1 --atrasos-hasta D2 --atrasos-emisores a,b
+#                                      atrasos: the day's run plus one more search task per named
+#                                      source for D1..D2 (not with --reanudar or --sellar)
 #
 # Environment (live runs; see recogida/README.md):
 #   N29_REPO             checkout of the site repository (the worktree is created from it)
@@ -37,7 +40,7 @@
 set -euo pipefail
 
 uso() {
-  sed -n '6,13p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '6,21p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 die() {
@@ -53,6 +56,9 @@ REANUDAR=0
 SELLO_ESPERADO=""
 SELLAR=0
 SALIDA=""
+ATRASOS_DESDE=""
+ATRASOS_HASTA=""
+ATRASOS_EMISORES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --fecha) valor "$@"; FECHA="$2"; shift 2 ;;
@@ -61,6 +67,9 @@ while [ $# -gt 0 ]; do
     --sin-git) SIN_GIT=1; shift ;;
     --reanudar) valor "$@"; REANUDAR=1; SELLO_ESPERADO="$2"; shift 2 ;;
     --sellar) SELLAR=1; shift ;;
+    --atrasos-desde) valor "$@"; ATRASOS_DESDE="$2"; shift 2 ;;
+    --atrasos-hasta) valor "$@"; ATRASOS_HASTA="$2"; shift 2 ;;
+    --atrasos-emisores) valor "$@"; ATRASOS_EMISORES="$2"; shift 2 ;;
     -h | --help) uso ;;
     *) die "opción desconocida: $1" ;;
   esac
@@ -68,12 +77,27 @@ done
 
 HOY="$(date +%F)" # the only clock read of the run
 FECHA="${FECHA:-$HOY}"
-case "$FECHA" in
-  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
-  *) die "--fecha debe ser AAAA-MM-DD" ;;
-esac
-# A real calendar date (parsed, not read from the clock): 2026-02-30 is refused.
-[ "$(date -j -f %F "$FECHA" +%F 2>/dev/null || date -d "$FECHA" +%F 2>/dev/null)" = "$FECHA" ] || die "--fecha $FECHA no es una fecha"
+# fecha_valida <opción> <valor>: AAAA-MM-DD and a real calendar date (parsed, not read from the clock): 2026-02-30 is refused.
+fecha_valida() {
+  case "$2" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) die "$1 debe ser AAAA-MM-DD" ;;
+  esac
+  [ "$(date -j -f %F "$2" +%F 2>/dev/null || date -d "$2" +%F 2>/dev/null)" = "$2" ] || die "$1 $2 no es una fecha"
+}
+fecha_valida --fecha "$FECHA"
+# Atrasos: the three options together or none; descubrir checks the ids against fuentes.json and the window against --fecha.
+ATRASOS=()
+if [ -n "$ATRASOS_DESDE$ATRASOS_HASTA$ATRASOS_EMISORES" ]; then
+  [ -n "$ATRASOS_DESDE" ] && [ -n "$ATRASOS_HASTA" ] && [ -n "$ATRASOS_EMISORES" ] || die "--atrasos-desde, --atrasos-hasta y --atrasos-emisores van juntas"
+  fecha_valida --atrasos-desde "$ATRASOS_DESDE"
+  fecha_valida --atrasos-hasta "$ATRASOS_HASTA"
+  [ ! "$ATRASOS_DESDE" \> "$ATRASOS_HASTA" ] || die "--atrasos-desde $ATRASOS_DESDE es posterior a --atrasos-hasta $ATRASOS_HASTA"
+  [ ! "$ATRASOS_HASTA" \> "$FECHA" ] || die "--atrasos-hasta $ATRASOS_HASTA es posterior a --fecha $FECHA"
+  printf '%s\n' "$ATRASOS_EMISORES" | grep -E -q -x '[a-z0-9-]+(,[a-z0-9-]+)*' || die "--atrasos-emisores debe ser una lista de ids separados por comas (a-z, 0-9, -)"
+  [ "$REANUDAR" = 0 ] && [ "$SELLAR" = 0 ] || die "--atrasos-* no valen con --reanudar ni con --sellar"
+  ATRASOS=(--atrasos-desde "$ATRASOS_DESDE" --atrasos-hasta "$ATRASOS_HASTA" --atrasos-emisores "$ATRASOS_EMISORES")
+fi
 [ "$SECO" = 1 ] || [ ! "$FECHA" \> "$HOY" ] || die "--fecha $FECHA es posterior a hoy ($HOY)"
 [ -z "$SALIDA" ] || [ "$SECO" = 1 ] || die "--salida solo vale con --seco"
 [ "$REANUDAR" = 0 ] && [ "$SELLAR" = 0 ] || [ "$SECO" = 0 ] || die "--reanudar y --sellar no valen con --seco"
@@ -795,9 +819,11 @@ cambios_sitio() {
   fi
 }
 
-# Allowlist: only the four party files, the four perfiles and busquedas.json,
-# modified or added, each valid JSON. Anything else (a deletion, a rename, any
-# other file, any non-JSON file) stops the run before install, test and build.
+# Allowlist: only the four party files, the four perfiles, busquedas.json and
+# fuentes.json, modified or added, each valid JSON; fuentes.json only with the
+# changes fuentes-bloqueo makes (`diario.ts alcance-fuentes`). Anything else (a
+# deletion, a rename, any other file, any non-JSON file) stops the run before
+# install, test and build.
 paso_alcance() {
   local linea estado ruta malos=""
   while IFS= read -r linea; do
@@ -810,6 +836,9 @@ paso_alcance() {
     esac
     case "$ruta" in
       apps/29n/src/data/busquedas.json) ;;
+      apps/29n/src/data/fuentes.json)
+        glue alcance-fuentes </dev/null >"$PRIV/alcance-fuentes.txt" || { malos="$malos$linea (cambios que fuentes-bloqueo no hace: $(tr '\n' ';' <"$PRIV/alcance-fuentes.txt"))"$'\n'; continue; }
+        ;;
       apps/29n/src/data/partidos/frente-amplio.json | apps/29n/src/data/partidos/pp.json | apps/29n/src/data/partidos/psoe.json | apps/29n/src/data/partidos/vox.json) ;;
       apps/29n/src/data/perfiles/frente-amplio.json | apps/29n/src/data/perfiles/pp.json | apps/29n/src/data/perfiles/psoe.json | apps/29n/src/data/perfiles/vox.json) ;;
       *) malos="$malos$linea (fuera de la lista)"$'\n'; continue ;;
@@ -923,7 +952,12 @@ if [ "$SECO" = 0 ]; then etapa worktree fatal crear_worktree; else omitida workt
 etapa instantanea fatal instantanea
 
 # 1. Collection
-etapa descubrir fatal cli descubrir --fecha "$FECHA"
+if [ ${#ATRASOS[@]} -gt 0 ]; then
+  printf 'atrasos\tok\t%s a %s: %s\n' "$ATRASOS_DESDE" "$ATRASOS_HASTA" "$ATRASOS_EMISORES" >>"$EJ/etapas.tsv"
+  etapa descubrir fatal cli descubrir --fecha "$FECHA" "${ATRASOS[@]}"
+else
+  etapa descubrir fatal cli descubrir --fecha "$FECHA"
+fi
 etapa traer fatal cli traer --fecha "$FECHA"
 etapa buzon aviso cli buzon --fecha "$FECHA"
 # The owner's links list ($N29_BUZON/enlaces/<fecha>.txt), fetched like any article; bad lines are avisos.
@@ -966,6 +1000,8 @@ etapa preparar fatal glue preparar
 # 4. Merge (the script, not Claude, writes the site)
 etapa fusionar fatal paso_fusionar
 etapa ajustar fatal glue ajustar
+# Sources found blocking today (robots.txt against Claude's agents) go into fuentes.json; recorded ones are reread, never removed.
+etapa fuentes-bloqueo aviso glue fuentes-bloqueo
 # Allowlist of the site, git-ignored files included, before anything is installed.
 etapa alcance fatal paso_alcance ignorados
 etapa citas comprobacion paso_citas

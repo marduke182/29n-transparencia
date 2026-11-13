@@ -27,6 +27,8 @@ export interface Emisor {
   partido?: string;
   acceso?: { estado: 'abierto' | 'parcial' | 'bloqueado'; comprobado: string; detalle: string };
   recogida?: { metodo: Metodo; url?: string; nota?: string };
+  /** It blocks the guide (the site's `Bloqueo`): its robots.txt excludes Claude's agents, or it answered with an anti-bot block. Never fetched, by this pipeline or by Claude. */
+  bloqueo?: { tipo: 'robots' | 'antibots'; evidencia: string; consultado: string; robots?: string; agentes?: string[] };
 }
 
 /** Methods that read a listing directly. */
@@ -37,6 +39,8 @@ export interface AccesoHosts {
   soloBuzon: string[];
   /** Pages block, but the listed method works: only these URLs are fetched. */
   soloListado: Record<string, string[]>;
+  /** Hosts of emisores with recogida `omitir` or a `bloqueo`: never fetched, whatever points at them (a search result, a link of the inbox list). */
+  noTraer: string[];
 }
 
 /**
@@ -46,8 +50,9 @@ export interface AccesoHosts {
  * still stops the host), and `soloBuzon` otherwise.
  */
 export function accesoDesdeRegistro(emisores: Emisor[]): AccesoHosts {
-  const acceso: AccesoHosts = { soloBuzon: [], soloListado: {} };
+  const acceso: AccesoHosts = { soloBuzon: [], soloListado: {}, noTraer: [] };
   for (const emisor of emisores) {
+    if (emisor.recogida?.metodo === 'omitir' || emisor.bloqueo) acceso.noTraer.push(...emisor.hosts);
     if (emisor.acceso?.estado !== 'parcial' && emisor.acceso?.estado !== 'bloqueado') continue;
     const metodo = emisor.recogida?.metodo;
     const url = emisor.recogida?.url;
@@ -57,6 +62,7 @@ export function accesoDesdeRegistro(emisores: Emisor[]): AccesoHosts {
     }
   }
   acceso.soloBuzon.sort();
+  acceso.noTraer = [...new Set(acceso.noTraer)].sort();
   return acceso;
 }
 
@@ -95,7 +101,50 @@ export interface TareaBusqueda {
   desde: string;
   hasta: string;
   nota?: string;
+  /** Answer path in the run folder, when not busqueda/<emisor>.json: an atrasos task writes busqueda/<emisor>.atrasos.json. */
+  salida?: string;
 }
+
+/** Answer path of a source search task, relative to the run folder. */
+export const salidaTarea = (tarea: Pick<TareaBusqueda, 'emisor' | 'salida'>) => tarea.salida ?? `busqueda/${tarea.emisor}.json`;
+
+/**
+ * Atrasos (backfill): named sources searched once more, in the same run, for
+ * an earlier window. Not the same as recovering a missed day (`--fecha` of
+ * that day): only these sources, only the search, one query per party.
+ */
+export interface Atrasos {
+  desde: string;
+  hasta: string;
+  emisores: string[];
+}
+
+const esFechaIso = (valor: string) => /^\d{4}-\d{2}-\d{2}$/.test(valor) && new Date(`${valor}T00:00:00Z`).toISOString().slice(0, 10) === valor;
+
+/**
+ * Checks an atrasos request against the registry and the run date: known ids,
+ * none repeated, none with recogida omitir or inbox only, real ISO dates,
+ * desde <= hasta <= fecha. Throws with the reason.
+ */
+export function comprobarAtrasos(atrasos: Atrasos, emisores: Emisor[], acceso: AccesoHosts, fecha: string): void {
+  if (!esFechaIso(atrasos.desde) || !esFechaIso(atrasos.hasta)) throw new Error(`atrasos: las fechas deben ser AAAA-MM-DD reales (${atrasos.desde}, ${atrasos.hasta})`);
+  if (atrasos.desde > atrasos.hasta) throw new Error(`atrasos: desde (${atrasos.desde}) es posterior a hasta (${atrasos.hasta})`);
+  if (atrasos.hasta > fecha) throw new Error(`atrasos: hasta (${atrasos.hasta}) es posterior a la fecha de la ejecución (${fecha})`);
+  if (!atrasos.emisores.length) throw new Error('atrasos: falta al menos un emisor');
+  const vistos = new Set<string>();
+  for (const id of atrasos.emisores) {
+    if (vistos.has(id)) throw new Error(`atrasos: ${id} está repetido`);
+    vistos.add(id);
+    const emisor = emisores.find((e) => e.id === id);
+    if (!emisor) throw new Error(`atrasos: ${id} no es un emisor de fuentes.json`);
+    if (emisor.recogida?.metodo === 'omitir') throw new Error(`atrasos: ${id} tiene recogida omitir`);
+    if (emisor.bloqueo) throw new Error(`atrasos: ${id} tiene bloqueo (su robots.txt no admite agentes de Claude)`);
+    if (emisor.hosts.every((host) => hostEn(host, acceso.soloBuzon))) throw new Error(`atrasos: ${id} es solo buzón`);
+  }
+}
+
+/** The fixed note of an atrasos task. */
+export const notaAtrasos = (atrasos: Pick<Atrasos, 'desde' | 'hasta'>) => `Atrasos: devuelve solo lo publicado del ${atrasos.desde} al ${atrasos.hasta}.`;
 
 /** The one source query of a party: its terms joined with OR, the terms left out for length, and the two halves to run if it saturates. */
 export interface ConsultaFuente {
@@ -165,6 +214,8 @@ export function consultasFuente(hosts: string[], consultas: { partido: string; t
 export interface Descubrimiento {
   fecha: string;
   desde: string;
+  /** Only when the run was asked for atrasos. */
+  atrasos?: Atrasos;
   candidatos: Candidato[];
   tareas_busqueda: TareaBusqueda[];
   omitidos: { emisor: string; nota?: string }[];
@@ -430,12 +481,14 @@ async function leerListado(
 export async function descubrir(
   registro: { emisores: Emisor[]; alias: Record<string, Alias>; candidatos: Record<string, string> },
   traedor: Traedor,
-  opciones: { fecha: string; dias?: number; listados?: Listado[] },
+  opciones: { fecha: string; dias?: number; listados?: Listado[]; atrasos?: Atrasos },
 ): Promise<Descubrimiento> {
   const desde = restarDias(opciones.fecha, opciones.dias ?? 2);
   const ventana = { desde, hasta: opciones.fecha };
   const acceso = accesoDesdeRegistro(registro.emisores);
-  const salida: Descubrimiento = { fecha: opciones.fecha, desde, candidatos: [], tareas_busqueda: [], omitidos: [], solo_buzon: [], fallos: [], bloqueados: {} };
+  const { atrasos } = opciones;
+  if (atrasos) comprobarAtrasos(atrasos, registro.emisores, acceso, opciones.fecha);
+  const salida: Descubrimiento = { fecha: opciones.fecha, desde, ...(atrasos ? { atrasos } : {}), candidatos: [], tareas_busqueda: [], omitidos: [], solo_buzon: [], fallos: [], bloqueados: {} };
   for (const partido of PARTY_IDS) {
     if (!registro.alias[partido]) throw new Error(`descubrir: falta la entrada de ${partido} en partidos-alias.json (cada partido necesita sus términos de búsqueda)`);
   }
@@ -467,12 +520,27 @@ export async function descubrir(
   for (const listado of opciones.listados ?? LISTADOS_DEBATES) {
     await leerListado(traedor, { ...listado }, ventana, salida, acceso);
   }
+  // Atrasos: one more search task per named source, built like any other, with its own window and answer file.
+  for (const emisor of registro.emisores) {
+    if (!atrasos?.emisores.includes(emisor.id)) continue;
+    salida.tareas_busqueda.push({
+      emisor: emisor.id,
+      nombre: emisor.nombre,
+      hosts: emisor.hosts,
+      consultas,
+      busquedas: consultasFuente(emisor.hosts, consultas),
+      desde: atrasos.desde,
+      hasta: atrasos.hasta,
+      nota: notaAtrasos(atrasos),
+      salida: `busqueda/${emisor.id}.atrasos.json`,
+    });
+  }
 
   // One candidate per canonical URL (the first listing wins), then a fixed order.
   const unicos = new Map<string, Candidato>();
   for (const candidato of salida.candidatos) if (!unicos.has(candidato.url_canonica)) unicos.set(candidato.url_canonica, candidato);
   salida.candidatos = [...unicos.values()].sort((a, b) => a.emisor.localeCompare(b.emisor) || a.url_canonica.localeCompare(b.url_canonica));
-  salida.tareas_busqueda.sort((a, b) => a.emisor.localeCompare(b.emisor));
+  salida.tareas_busqueda.sort((a, b) => a.emisor.localeCompare(b.emisor) || Number(Boolean(a.salida)) - Number(Boolean(b.salida)));
   salida.omitidos.sort((a, b) => a.emisor.localeCompare(b.emisor));
   salida.solo_buzon.sort((a, b) => a.emisor.localeCompare(b.emisor));
   salida.bloqueados = Object.fromEntries(Object.entries(traedor.bloqueados).sort(([a], [b]) => a.localeCompare(b)));

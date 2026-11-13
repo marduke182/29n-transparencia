@@ -24,12 +24,13 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PARTY_IDS, idDocumento, raizCache, rutaDeEntorno, urlCanonica, type Meta, type PartyId } from './cache.ts';
-import { accesoDesdeRegistro, leerRegistro, terminosDe, type Alias, type Candidato, type Descubrimiento, type Emisor, type TareaBusqueda } from './descubrir.ts';
+import { accesoDesdeRegistro, leerRegistro, salidaTarea, terminosDe, type Alias, type Candidato, type Descubrimiento, type Emisor, type TareaBusqueda } from './descubrir.ts';
 import { clavesDe, VEDA_ENCUESTAS } from './fusionar.ts';
 import { motivoContexto, motivoPregunta, type Pregunta } from './preguntas.ts';
 import { PARTY_SHORT } from './resumen.ts';
 import { esVideo } from './transcripciones.ts';
-import { Traedor, bloqueosDelDia, escribirBloqueados, hostDe, hostEn, leerBloqueados, type ResultadoEnlace } from './traer.ts';
+import { Traedor, bloqueosDelDia, escribirBloqueados, guardarVetos, hostDe, hostEn, leerBloqueados, type ResultadoEnlace, type VetoGuia } from './traer.ts';
+import { SIN_AGENTES_CLAUDE_FIJOS, cambiosFuentesNoAdmitidos, hostsSinClaude, registrarBloqueos, reglasWebFetch, revisarBloqueos } from './bloqueos.ts';
 import { ORIGEN_ENLACES, type AvisoEnlace } from './buzon.ts';
 
 type Objeto = Record<string, unknown>;
@@ -306,7 +307,7 @@ const sinRespuesta = (ruta: string, respuesta: Respuesta) =>
 
 /** Gaps of one source answer, and the web searches it declares done. */
 function revisarFuente(tarea: TareaBusqueda, respuesta: Respuesta): { faltas: string[]; declaradas: number } {
-  const ruta = `busqueda/${tarea.emisor}.json`;
+  const ruta = salidaTarea(tarea);
   const falta = sinRespuesta(ruta, respuesta);
   if (falta) return { faltas: [falta], declaradas: 0 };
   const contenido = (respuesta as { contenido: unknown }).contenido;
@@ -367,12 +368,13 @@ function revisarIgual(tarea: TareaEquidad, respuesta: Respuesta): { faltas: stri
  */
 export function revisarBusqueda(entrada: {
   fuentes: TareaBusqueda[];
-  porFuente: (emisor: string) => Respuesta;
+  /** The saved answer of a source task, at salidaTarea(tarea) (busqueda/<emisor>.json, or the atrasos file). */
+  porFuente: (emisor: string, tarea: TareaBusqueda) => Respuesta;
   iguales: TareaEquidad[];
   porIgual: (tarea: TareaEquidad) => Respuesta;
   /** WebSearch calls Claude Code counted for pass 1 (busquedasRegistradas), when its output reports them. */
   busquedasReales?: number;
-  /** The retry session, if it ran: the tasks it redid (emisores, salidas) and the WebSearch calls it counted. Their answers are checked against its count; the rest against pass 1's. */
+  /** The retry session, if it ran: the tasks it redid (answer paths of source tasks, or emisores; salidas of equal searches) and the WebSearch calls it counted. Their answers are checked against its count; the rest against pass 1's. */
   reintento?: { fuentes: readonly string[]; iguales: readonly string[]; busquedasReales?: number };
 }): RevisionBusqueda {
   const revision: RevisionBusqueda = { faltas: [], reintentables: { fuentes: [], iguales: [] }, definitivas: [] };
@@ -383,6 +385,10 @@ export function revisarBusqueda(entrada: {
   const declaradas = { pasada: 0, reintento: 0 };
   const sesion = (reintentada: boolean) => (reintentada ? 'reintento' : 'pasada');
   for (const tarea of entrada.fuentes) {
+    if (tarea.salida !== undefined && tarea.salida !== `busqueda/${tarea.emisor}.atrasos.json`) {
+      definitiva(`descubrir.json: la tarea de ${tarea.emisor} tiene una salida no admitida (${String(tarea.salida)})`);
+      continue;
+    }
     if (!Array.isArray(tarea.busquedas) || !tarea.busquedas.length) {
       definitiva(`descubrir.json: la tarea de ${tarea.emisor} no tiene búsquedas`);
       continue;
@@ -392,8 +398,9 @@ export function revisarBusqueda(entrada: {
       definitiva(`descubrir.json: la tarea de ${tarea.emisor} no tiene exactamente una búsqueda por partido (${PARTY_IDS.map((p, i) => `${p} ${porPartido[i]}`).join(', ')})`);
       continue;
     }
-    const { faltas, declaradas: hechas } = revisarFuente(tarea, entrada.porFuente(tarea.emisor));
-    declaradas[sesion(entrada.reintento?.fuentes.includes(tarea.emisor) ?? false)] += hechas;
+    const { faltas, declaradas: hechas } = revisarFuente(tarea, entrada.porFuente(tarea.emisor, tarea));
+    const redone = entrada.reintento?.fuentes;
+    declaradas[sesion(Boolean(redone && (redone.includes(salidaTarea(tarea)) || (!tarea.salida && redone.includes(tarea.emisor)))))] += hechas;
     if (faltas.length) {
       revision.faltas.push(...faltas);
       revision.reintentables.fuentes.push(tarea);
@@ -1301,7 +1308,7 @@ export function limiteBusquedasWeb(pasada: Pasada, previstas: number): number {
  * only, and denies the other pass's. Paths with glob, parenthesis or control
  * characters are refused, so a path cannot widen a rule.
  */
-export function ajustesClaude(plantilla: string, valores: Record<string, string>, pasada: Pasada, soloRutas?: readonly string[]): string {
+export function ajustesClaude(plantilla: string, valores: Record<string, string>, pasada: Pasada, soloRutas?: readonly string[], sinWebFetch: readonly string[] = []): string {
   for (const [nombre, valor] of Object.entries(valores)) {
     if (!valor.startsWith('/') || /[*?()[\]{}\x00-\x1f]/.test(valor)) throw new Error(`ajustes: ruta no admitida en ${nombre}: ${valor}`);
   }
@@ -1337,6 +1344,8 @@ export function ajustesClaude(plantilla: string, valores: Record<string, string>
   if (pasada === 'hechos' && soloRutas === undefined) throw new Error('ajustes: una sesión de hechos necesita sus rutas');
   ajustes.permissions.allow.push(...reglas(soloRutas ?? ESCRITURA_POR_PASADA[pasada]));
   ajustes.permissions.deny.push(...reglas(otra));
+  // Sites whose robots.txt excludes Claude's agents: no pass may fetch them (the host and every subdomain), the fixed list always included.
+  ajustes.permissions.deny.push(...reglasWebFetch([...new Set([...SIN_AGENTES_CLAUDE_FIJOS, ...sinWebFetch])].sort()));
   return `${JSON.stringify(ajustes, null, 2)}\n`;
 }
 
@@ -1491,6 +1500,7 @@ async function main(args: string[]): Promise<number> {
       const traedor = new Traedor({ fecha, bloqueados: bloqueosDelDia(todos, fecha), ...accesoDesdeRegistro(emisores) });
       const { tareas, sondeo } = await sondear((leerJson(join(ejecucion, 'equidad-tareas.json')) ?? []) as TareaEquidad[], traedor);
       await escribirBloqueados(ruta, { ...todos, ...traedor.bloqueados });
+      await guardarVetos(join(ejecucion, 'bloqueos-guia.json'), traedor.vetos, todos);
       escribirJson(join(ejecucion, 'equidad-tareas.json'), tareas);
       escribirJson(join(ejecucion, 'sondeo.json'), sondeo);
       for (const s of sondeo) process.stdout.write(`${s.estado}\t${s.estado_http ?? ''}\t${s.url}\n`);
@@ -1620,7 +1630,14 @@ async function main(args: string[]): Promise<number> {
       const md = readFileSync(join(t, 'agentes', '08-diario.md'), 'utf8');
       const salida = prompts(md, { FECHA: fecha, EJECUCION: ejecucion, CACHE: cache, DATOS: join(ejecucion, 'antes'), CRITERIOS: join(t, 'criterios'), ENCUESTAS: reglaEncuestas(fecha), SATURACION: String(RESULTADOS_SATURACION), ...(archivoLote ? { TAREAS_CLASIFICAR: archivoLote } : {}), ...(partido ? { PARTIDO: partido } : {}) });
       const plantilla = readFileSync(join(recogida, 'claude-settings.diario.template.json'), 'utf8');
-      writeFileSync(join(dir, 'settings.json'), ajustesClaude(plantilla, { EJ: ejecucion, N29_CACHE: cache, T: t, HOME: rutaDeEntornoHome(), CONF: dir }, pasada, tareasLote?.map((t) => t.salida) ?? rutasPartido ?? rutasHechos));
+      // WebFetch denials from the registry (every emisor with bloqueo) and today's robots.txt vetos.
+      // Without a registry (a bare worktree) the fixed list still applies.
+      const emisores = ((leerJsonSiExiste(join(datos, 'fuentes.json')) ?? {}) as { emisores?: Emisor[] }).emisores ?? [];
+      const vetos = Object.values((leerJsonSiExiste(join(ejecucion, 'bloqueos-guia.json')) ?? {}) as Record<string, VetoGuia>);
+      writeFileSync(
+        join(dir, 'settings.json'),
+        ajustesClaude(plantilla, { EJ: ejecucion, N29_CACHE: cache, T: t, HOME: rutaDeEntornoHome(), CONF: dir }, pasada, tareasLote?.map((t) => t.salida) ?? rutasPartido ?? rutasHechos, hostsSinClaude(emisores, vetos)),
+      );
       writeFileSync(join(dir, 'prompt.txt'), salida[pasada]);
       writeFileSync(join(dir, 'agentes.json'), `${JSON.stringify(salida.agentes, null, 2)}\n`);
       // The cap covers just the tasks of the session: all of them, or the retry subset.
@@ -1648,7 +1665,7 @@ async function main(args: string[]): Promise<number> {
       }
       const fuentes = descubierto()?.tareas_busqueda ?? [];
       const iguales = (leerJsonSiExiste(join(ejecucion, 'equidad-tareas.json')) ?? []) as TareaEquidad[];
-      const rutas = [...fuentes.map((t) => join('busqueda', `${t.emisor}.json`)), ...iguales.map((t) => t.salida)];
+      const rutas = [...fuentes.map(salidaTarea), ...iguales.map((t) => t.salida)];
       // An answer saved as .error.txt that is valid JSON with only whitespace around it is accepted as it is.
       for (const relativa of rutas) {
         const ruta = join(ejecucion, relativa);
@@ -1677,14 +1694,14 @@ async function main(args: string[]): Promise<number> {
       const reintentoHecho = existsSync(join(ejecucion, 'busqueda-reintento.iniciado'));
       const revision = revisarBusqueda({
         fuentes,
-        porFuente: (emisor) => leer(join('busqueda', `${emisor}.json`)),
+        porFuente: (_emisor, tarea) => leer(salidaTarea(tarea)),
         iguales,
         porIgual: (tarea) => leer(tarea.salida),
         busquedasReales: registradas('busqueda'),
         ...(reintentoHecho
           ? {
               reintento: {
-                fuentes: (((leerJsonSiExiste(join(ejecucion, 'reintento-fuentes.json')) ?? {}) as { tareas_busqueda?: TareaBusqueda[] }).tareas_busqueda ?? []).map((t) => t.emisor),
+                fuentes: (((leerJsonSiExiste(join(ejecucion, 'reintento-fuentes.json')) ?? {}) as { tareas_busqueda?: TareaBusqueda[] }).tareas_busqueda ?? []).map(salidaTarea),
                 iguales: ((leerJsonSiExiste(join(ejecucion, 'reintento-equidad.json')) ?? []) as TareaEquidad[]).map((t) => t.salida),
                 busquedasReales: registradas('busqueda-reintento'),
               },
@@ -1698,7 +1715,7 @@ async function main(args: string[]): Promise<number> {
         // The same task definitions, verbatim, for just these tasks; the old answers are kept aside for the audit.
         escribirJson(join(ejecucion, 'reintento-fuentes.json'), { tareas_busqueda: reintento.fuentes });
         escribirJson(join(ejecucion, 'reintento-equidad.json'), reintento.iguales);
-        const reintentadas = [...reintento.fuentes.map((t) => join('busqueda', `${t.emisor}.json`)), ...reintento.iguales.map((t) => t.salida)];
+        const reintentadas = [...reintento.fuentes.map(salidaTarea), ...reintento.iguales.map((t) => t.salida)];
         for (const relativa of reintentadas) {
           for (const archivo of [relativa, `${relativa}.error.txt`]) {
             if (!existsSync(join(ejecucion, archivo))) continue;
@@ -1719,6 +1736,25 @@ async function main(args: string[]): Promise<number> {
       if (revision.definitivas.length) writeFileSync(join(ejecucion, 'busqueda-definitivas.txt'), revision.definitivas.map((falta) => `- ${falta}\n`).join(''));
       process.stdout.write(faltas.length ? `${faltas.length} faltas en la búsqueda (busqueda-faltan.txt)\n` : 'búsqueda completa\n');
       return faltas.length ? 1 : 0;
+    }
+    case 'fuentes-bloqueo': {
+      // The blocks found today go into the site registry (bloqueo, recogida omitir, or a minimal new emisor); recorded ones are reread, never removed.
+      const ruta = join(datos, 'fuentes.json');
+      const registro = leerJson(ruta) as { emisores: Emisor[] };
+      const vetos = Object.values((leerJsonSiExiste(join(ejecucion, 'bloqueos-guia.json')) ?? {}) as Record<string, VetoGuia>);
+      const { registro: nuevo, informe, cambiado } = registrarBloqueos(registro, vetos, fecha);
+      const traedor = new Traedor({ fecha, ...accesoDesdeRegistro(registro.emisores) });
+      Object.assign(informe, await revisarBloqueos(registro.emisores, traedor));
+      if (cambiado) escribirJson(ruta, nuevo);
+      escribirJson(join(ejecucion, 'fuentes-bloqueo.json'), informe);
+      process.stdout.write(`${informe.nuevos.length} emisores nuevos, ${informe.actualizados.length} actualizados, ${informe.sin_registrar.length} sin registrar, ${informe.ya_no_bloquean.length} ya no bloquean\n`);
+      return 0;
+    }
+    case 'alcance-fuentes': {
+      // The allowlist of fuentes.json: only the changes fuentes-bloqueo makes.
+      const problemas = cambiosFuentesNoAdmitidos(leerJsonSiExiste(join(ejecucion, 'antes', 'fuentes.json')), leerJsonSiExiste(join(datos, 'fuentes.json')));
+      for (const problema of problemas) process.stdout.write(`${problema}\n`);
+      return problemas.length ? 1 : 0;
     }
     case 'hechos-completo': {
       // The shared facts are complete when hechos.json is a JSON object with a list `hechos`; every party's adjudicator reads that same file.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PARTY_IDS, PARTY_SHORT, resumen, type EntradaResumen } from './resumen.ts';
+import { PARTY_IDS, PARTY_SHORT, leerAtrasos, resumen, type EntradaResumen } from './resumen.ts';
 
 const item = (ref: string, extra: Record<string, unknown> = {}) => ({
   ref,
@@ -135,5 +135,36 @@ describe('resumen', () => {
 
   it('rechaza una fecha que no es AAAA-MM-DD', () => {
     expect(() => resumen({ ...entrada, fecha: 'hoy' })).toThrow();
+  });
+});
+
+describe('atrasos y fuentes que bloquean', () => {
+  it('sin atrasos ni informe de bloqueos, la salida no cambia', () => {
+    const sin = resumen(structuredClone(entrada));
+    expect(sin).not.toMatch(/## Atrasos|## Fuentes que bloquean/);
+  });
+  it('lista los atrasos: fuentes, ventana y una consulta por partido', () => {
+    const texto = resumen({ ...structuredClone(entrada), atrasos: { desde: '2026-10-05', hasta: '2026-11-12', emisores: ['eldiario-es', 'publico'] } });
+    expect(texto).toContain('## Atrasos\n\nAdemás de la ventana del día, se buscó del 2026-10-05 al 2026-11-12 en estas 2 fuentes, una consulta por partido, la misma regla para los cuatro:\n\n- eldiario-es\n- publico\n');
+    expect(leerAtrasos({ desde: '2026-10-05', hasta: '2026-11-12', emisores: ['a'] })).toEqual({ desde: '2026-10-05', hasta: '2026-11-12', emisores: ['a'] });
+    expect(leerAtrasos({ desde: '2026-10-05', emisores: ['a'] })).toBeUndefined();
+  });
+  it('lista las fuentes que bloquean: nuevas, cambiadas, sin escribir (primera vez o no) y las que ya no bloquean', () => {
+    const vacio = { fecha: '2026-11-13', nuevos: [], actualizados: [], ya_registrados: [], sin_registrar: [], ya_no_bloquean: [], sin_comprobar: [] };
+    expect(resumen({ ...structuredClone(entrada), bloqueos: vacio })).toContain('## Fuentes que bloquean\n\n_Ningún bloqueo nuevo ni cambiado._\n');
+    const texto = resumen({
+      ...structuredClone(entrada),
+      bloqueos: {
+        ...vacio,
+        nuevos: [{ id: 'nuevo-es', host: 'nuevo.es', evidencia: 'User-agent: Claude-User · Disallow: /' }],
+        actualizados: [{ id: 'medio', host: 'medio.es', evidencia: 'User-agent: * · Disallow: /', antes: 'recogida rss' }],
+        sin_registrar: [{ host: 'dd.es', tipo: 'antibots', evidencia: 'HTTP 403: DataDome (página de reto)', motivo: 'bloqueo antibots', primera: true }],
+        ya_no_bloquean: [{ id: 'el-pais', robots: 'https://elpais.com/robots.txt' }],
+      },
+    });
+    expect(texto).toContain('- nuevo-es (nuevo.es): User-agent: Claude-User · Disallow: /');
+    expect(texto).toContain('- medio (medio.es): User-agent: * · Disallow: /; antes, recogida rss');
+    expect(texto).toContain('### Bloqueos antibots, para revisar (no se escriben solos en fuentes.json)\n\n- dd.es: HTTP 403: DataDome (página de reto); primera vez\n');
+    expect(texto).toContain('### Ya no bloquean (revisar a mano: el bloqueo no se quita solo)\n\n- el-pais: https://elpais.com/robots.txt');
   });
 });

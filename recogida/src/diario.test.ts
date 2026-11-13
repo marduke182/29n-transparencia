@@ -790,6 +790,26 @@ describe('ajustesClaude', () => {
     expect(ajustes.permissions.defaultMode).toBe('dontAsk');
   });
 
+  it('denies WebFetch of the sites whose robots.txt excludes Claude\'s agents in every pass, subdomains included', () => {
+    const pasadas: [Parameters<typeof ajustesClaude>[2], string[] | undefined][] = [
+      ['busqueda', undefined],
+      ['busqueda-reintento', undefined],
+      ['clasificacion', ['clasificacion/aa11.pp.json']],
+      ['hechos', ['hechos.json']],
+      ['adjudicacion', ['adjudicado/pp.json']],
+    ];
+    for (const [pasada, rutas] of pasadas) {
+      const ajustes = JSON.parse(ajustesClaude(plantilla, valores, pasada, rutas, ['otro-medio.es']));
+      expect(ajustes.permissions.deny, pasada).toEqual(
+        expect.arrayContaining(['abc.es', 'elmundo.es', 'elpais.com', 'otro-medio.es'].flatMap((h) => [`WebFetch(domain:${h})`, `WebFetch(domain:*.${h})`])),
+      );
+      // Without the registry the fixed list still applies.
+      expect(JSON.parse(ajustesClaude(plantilla, valores, pasada, rutas)).permissions.deny, pasada).toEqual(expect.arrayContaining(['WebFetch(domain:elpais.com)', 'WebFetch(domain:*.elpais.com)']));
+    }
+    expect(() => ajustesClaude(plantilla, valores, 'busqueda', undefined, ['*.es'])).toThrow(/host no admitido/);
+    expect(() => ajustesClaude(plantilla, valores, 'busqueda', undefined, ['a.es)'])).toThrow(/host no admitido/);
+  });
+
   it('refuses paths that could widen a rule, a template that allows writes or Bash, and an unknown pass', () => {
     expect(() => ajustesClaude(plantilla, { ...valores, EJ: '/c/**' }, 'busqueda')).toThrow(/ruta no admitida/);
     expect(() => ajustesClaude(plantilla, { ...valores, CONF: 'relativa' }, 'busqueda')).toThrow(/ruta no admitida/);
@@ -894,6 +914,22 @@ describe('faltasBusqueda', () => {
 
   it('is empty when every source term and every unblocked equal query ran', () => {
     expect(faltasBusqueda(base)).toEqual([]);
+  });
+
+  it('checks an atrasos task at its own answer file, next to the same source\'s day task', () => {
+    const atrasos: TareaBusqueda = { ...fuenteA, desde: '2026-10-05', hasta: '2026-11-08', nota: 'Atrasos: devuelve solo lo publicado del 2026-10-05 al 2026-11-08.', salida: 'busqueda/a.atrasos.json' };
+    const vistas: string[] = [];
+    const porFuente = (emisor: string, tarea: TareaBusqueda): Respuesta => {
+      vistas.push(tarea.salida ?? `busqueda/${emisor}.json`);
+      return tarea.salida ? undefined : respuestaFuente(tarea);
+    };
+    const revision = revisarBusqueda({ ...base, fuentes: [fuenteA, atrasos], porFuente });
+    expect(vistas).toEqual(['busqueda/a.json', 'busqueda/a.atrasos.json']);
+    expect(revision.faltas).toEqual(['busqueda/a.atrasos.json: falta']);
+    expect(revision.reintentables.fuentes).toEqual([atrasos]);
+    expect(faltasBusqueda({ ...base, fuentes: [fuenteA, atrasos], porFuente: (_e, tarea) => respuestaFuente(tarea) })).toEqual([]);
+    // Only the atrasos file name is accepted as another answer path.
+    expect(faltasBusqueda({ ...base, fuentes: [{ ...atrasos, salida: '../fuera.json' }] })).toEqual(['descubrir.json: la tarea de a tiene una salida no admitida (../fuera.json)']);
   });
 
   it('lists a missing source answer, one that is not JSON, and one without the consultas list', () => {

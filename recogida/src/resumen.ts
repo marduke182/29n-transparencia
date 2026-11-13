@@ -17,6 +17,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { InformeBloqueos } from './bloqueos.ts';
 import { urlDeArchivo } from './buzon.ts';
 import { PARTY_IDS, type PartyId } from './cache.ts';
 import { contarPalabras } from './citas.ts';
@@ -73,6 +74,10 @@ export interface EntradaResumen {
   buzon?: Partial<Record<PartyId, unknown[]>>;
   /** Registro de fuentes, para clasificar hosts; sin él ningún host cuenta como prensa. */
   emisores?: EmisorMinimo[];
+  /** Los atrasos pedidos a descubrir (descubrir.json), si los hubo. */
+  atrasos?: { desde: string; hasta: string; emisores: string[] };
+  /** fuentes-bloqueo.json de la ejecución: las fuentes que bloquean, nuevas y cambiadas; sin él no hay apartado. */
+  bloqueos?: InformeBloqueos;
 }
 
 type Obj = Record<string, unknown>;
@@ -372,6 +377,42 @@ function bloquePartido(id: PartyId, e: EntradaResumen, emisorDe: Map<string, Emi
   return salida;
 }
 
+/** Los atrasos del día: fuentes nombradas buscadas otra vez para una ventana anterior, con la misma regla para los cuatro partidos. */
+function bloqueAtrasos(atrasos: NonNullable<EntradaResumen['atrasos']>): string[] {
+  return [
+    '## Atrasos',
+    '',
+    `Además de la ventana del día, se buscó del ${atrasos.desde} al ${atrasos.hasta} en ${atrasos.emisores.length === 1 ? 'esta fuente' : `estas ${atrasos.emisores.length} fuentes`}, una consulta por partido, la misma regla para los cuatro:`,
+    '',
+    ...atrasos.emisores.map((id) => `- ${id}`),
+    '',
+  ];
+}
+
+/**
+ * Las fuentes que bloquean: lo escrito hoy en fuentes.json (emisores nuevos,
+ * para revisar su nombre y tipo, y bloqueos nuevos o cambiados), los bloqueos
+ * antibots para revisar, con su evidencia y si es la primera vez, lo demás que
+ * no se escribe y los bloqueos registrados cuyo robots.txt ya no excluye a los
+ * agentes de Claude, que nunca se quitan solos.
+ */
+export function bloqueFuentesQueBloquean(b: InformeBloqueos): string[] {
+  const lineas = ['## Fuentes que bloquean', ''];
+  const lista = (titulo: string, elementos: string[]) => {
+    if (elementos.length) lineas.push(`### ${titulo}`, '', ...elementos, '');
+  };
+  lista('Emisores nuevos en fuentes.json (revisar: nombre provisional = host, tipo medio)', b.nuevos.map((n) => `- ${n.id} (${n.host}): ${n.evidencia}`));
+  lista('Bloqueo añadido o cambiado en fuentes.json (recogida omitir)', b.actualizados.map((a) => `- ${a.id} (${a.host}): ${a.evidencia}${a.antes ? `; antes, ${a.antes}` : ''}`));
+  const linea = (s: InformeBloqueos['sin_registrar'][number]) =>
+    `- ${s.id ? `${s.id} (${s.host})` : s.host}: ${s.evidencia}${s.primera === undefined ? '' : s.primera ? '; primera vez' : '; ya se había visto antes'}`;
+  lista('Bloqueos antibots, para revisar (no se escriben solos en fuentes.json)', b.sin_registrar.filter((s) => s.tipo === 'antibots').map(linea));
+  lista('robots.txt encontrado hoy, no escrito en fuentes.json', b.sin_registrar.filter((s) => s.tipo !== 'antibots').map((s) => `${linea(s)} (${s.motivo})`));
+  lista('Ya no bloquean (revisar a mano: el bloqueo no se quita solo)', b.ya_no_bloquean.map((y) => `- ${y.id}: ${y.robots}`));
+  lista('Bloqueos registrados sin comprobar hoy (robots.txt no leído)', b.sin_comprobar.map((y) => `- ${y.id}: ${y.robots}`));
+  if (lineas.length === 2) lineas.push('_Ningún bloqueo nuevo ni cambiado._', '');
+  return lineas;
+}
+
 /** El resumen completo en Markdown. */
 export function resumen(e: EntradaResumen): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(e.fecha)) throw new Error(`fecha "${e.fecha}" no es AAAA-MM-DD`);
@@ -380,6 +421,8 @@ export function resumen(e: EntradaResumen): string {
   const lineas = [`# Resumen de la recogida del ${e.fecha}`, ''];
   if (!e.emisores?.length) lineas.push('_Sin registro de fuentes: ningún host cuenta como prensa._', '');
   if (!e.buzon) lineas.push('_Sin buzón: no se leyó ninguna carpeta del buzón._', '');
+  if (e.atrasos) lineas.push(...bloqueAtrasos(e.atrasos));
+  if (e.bloqueos) lineas.push(...bloqueFuentesQueBloquean(e.bloqueos));
   for (const id of PARTY_IDS) lineas.push(...bloquePartido(id, e, emisorDe));
   return lineas.join('\n').replace(/\n+$/, '\n');
 }
@@ -416,6 +459,12 @@ function leerBuzonDelDia(raiz: string, fecha: string): NonNullable<EntradaResume
   return salida;
 }
 
+/** Los atrasos de descubrir.json, solo si tienen la forma esperada. */
+export function leerAtrasos(valor: unknown): EntradaResumen['atrasos'] {
+  if (!esObjeto(valor) || !esTexto(valor.desde) || !esTexto(valor.hasta) || !Array.isArray(valor.emisores) || !valor.emisores.every(esTexto)) return undefined;
+  return { desde: valor.desde, hasta: valor.hasta, emisores: valor.emisores };
+}
+
 function argumento(args: string[], nombre: string): string | undefined {
   const i = args.indexOf(nombre);
   return i === -1 ? undefined : args[i + 1];
@@ -437,7 +486,12 @@ function main(args: string[]): number {
   const emisores = (esObjeto(fuentes) ? lista(fuentes.emisores) : []).filter(
     (em): em is EmisorMinimo => esObjeto(em) && Array.isArray(em.hosts) && esTexto(em.tipo) && esTexto(em.nombre),
   );
-  process.stdout.write(resumen({ fecha, antes: instantanea(resolve(cache, antes)), despues: instantanea(datos), buzon, emisores }));
+  const descubierto = leerJson(join(resolve(cache), 'ejecuciones', fecha, 'descubrir.json'));
+  const atrasos = esObjeto(descubierto) ? leerAtrasos(descubierto.atrasos) : undefined;
+  const bloqueos = leerJson(join(resolve(cache), 'ejecuciones', fecha, 'fuentes-bloqueo.json'));
+  process.stdout.write(
+    resumen({ fecha, antes: instantanea(resolve(cache, antes)), despues: instantanea(datos), buzon, emisores, ...(atrasos ? { atrasos } : {}), ...(esObjeto(bloqueos) ? { bloqueos: bloqueos as unknown as InformeBloqueos } : {}) }),
+  );
   return 0;
 }
 

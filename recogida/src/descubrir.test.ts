@@ -114,10 +114,15 @@ describe('parsers', () => {
 
 describe('accesoDesdeRegistro', () => {
   it('reads a working method for partial or blocked hosts, inbox only otherwise', () => {
-    expect(accesoDesdeRegistro(emisores)).toEqual({ soloBuzon: ['voxespana.es'], soloListado: { 'partido-ejemplo.es': ['https://partido-ejemplo.es/feed/'] } });
+    expect(accesoDesdeRegistro(emisores)).toEqual({ soloBuzon: ['voxespana.es'], soloListado: { 'partido-ejemplo.es': ['https://partido-ejemplo.es/feed/'] }, noTraer: ['fuera.cl', 'voxespana.es'] });
     const psoe: Emisor = { id: 'web-psoe', nombre: 'PSOE', hosts: ['psoe.es'], tipo: 'partido', acceso: { estado: 'bloqueado', comprobado: '2026-11-10', detalle: 'reto' } };
     expect(accesoDesdeRegistro([psoe]).soloBuzon).toEqual(['psoe.es']);
     expect(accesoDesdeRegistro([{ ...psoe, recogida: { metodo: 'rss', url: 'https://psoe.es/feed' } }]).soloListado).toEqual({ 'psoe.es': ['https://psoe.es/feed'] });
+  });
+  it('never fetches the hosts of an emisor with recogida omitir or a bloqueo', () => {
+    const bloqueado: Emisor = { id: 'el-pais', nombre: 'El País', hosts: ['elpais.com'], tipo: 'medio', recogida: { metodo: 'omitir' }, bloqueo: { tipo: 'robots', evidencia: 'User-agent: Claude-User · Disallow: /', consultado: '2026-11-13', robots: 'https://elpais.com/robots.txt', agentes: ['Claude-User'] } };
+    expect(accesoDesdeRegistro([bloqueado, emisores[0]!]).noTraer).toEqual(['elpais.com']);
+    expect(accesoDesdeRegistro([{ ...bloqueado, recogida: undefined }]).noTraer).toEqual(['elpais.com']);
   });
 });
 
@@ -185,6 +190,49 @@ describe('descubrir', () => {
     expect(pedidas).not.toContain('https://diario.es/post-sitemap1.xml');
     expect(pedidas.filter((url) => url.includes('partido-ejemplo.es'))).toEqual(['https://partido-ejemplo.es/robots.txt', 'https://partido-ejemplo.es/feed/']);
     expect(pedidas.some((url) => url.includes('voxespana.es'))).toBe(false);
+  });
+});
+
+describe('descubrir con atrasos', () => {
+  const atrasos = { desde: '2026-10-05', hasta: '2026-11-08', emisores: ['busca', 'medio'] };
+  it('adds one search task per named source, built like any other, with its own window, note and answer file', async () => {
+    const sin = await descubrir({ emisores, alias, candidatos }, traedor().traedor, { fecha: '2026-11-10', listados });
+    const con = await descubrir({ emisores, alias, candidatos }, traedor().traedor, { fecha: '2026-11-10', listados, atrasos });
+    expect(sin.atrasos).toBeUndefined();
+    expect('atrasos' in sin).toBe(false);
+    expect(con.atrasos).toEqual(atrasos);
+    // The day's own work is unchanged: the same candidates and the normal busca task.
+    expect(con.candidatos).toEqual(sin.candidatos);
+    expect(con.tareas_busqueda.filter((t) => !t.salida)).toEqual(sin.tareas_busqueda);
+    const extra = con.tareas_busqueda.filter((t) => t.salida);
+    expect(extra.map((t) => [t.emisor, t.salida, t.desde, t.hasta, t.nota])).toEqual([
+      ['busca', 'busqueda/busca.atrasos.json', '2026-10-05', '2026-11-08', 'Atrasos: devuelve solo lo publicado del 2026-10-05 al 2026-11-08.'],
+      ['medio', 'busqueda/medio.atrasos.json', '2026-10-05', '2026-11-08', 'Atrasos: devuelve solo lo publicado del 2026-10-05 al 2026-11-08.'],
+    ]);
+    // Same queries as the day's task of busca: four parties, candidate first, one query each.
+    const normal = con.tareas_busqueda.find((t) => t.emisor === 'busca' && !t.salida)!;
+    expect(extra[0]!.busquedas).toEqual(normal.busquedas);
+    for (const tarea of extra) {
+      expect(tarea.busquedas.map((b) => b.partido)).toEqual(['frente-amplio', 'pp', 'psoe', 'vox']);
+      expect(tarea.busquedas.every((b, i) => b.terminos[0] === Object.values(candidatos)[i])).toBe(true);
+    }
+    expect(extra[1]!.busquedas[3]!.texto).toBe('site:medio.es ("Persona Cuatro" OR "Vox")');
+    // The normal task comes before the atrasos one of the same source.
+    expect(con.tareas_busqueda.map((t) => t.salida ?? t.emisor)).toEqual(['busca', 'busqueda/busca.atrasos.json', 'busqueda/medio.atrasos.json']);
+  });
+  it('refuses unknown ids, omitir and inbox-only sources, bad dates, desde after hasta and hasta after the run date', async () => {
+    const pedir = (a: typeof atrasos) => descubrir({ emisores, alias, candidatos }, traedor().traedor, { fecha: '2026-11-10', listados, atrasos: a });
+    await expect(pedir({ ...atrasos, emisores: ['nadie'] })).rejects.toThrow(/nadie no es un emisor/);
+    await expect(pedir({ ...atrasos, emisores: ['fuera'] })).rejects.toThrow(/fuera tiene recogida omitir/);
+    await expect(pedir({ ...atrasos, emisores: ['web-vox'] })).rejects.toThrow(/web-vox tiene recogida omitir/);
+    const soloBuzon: Emisor = { id: 'cerrada', nombre: 'Cerrada', hosts: ['cerrada.es'], tipo: 'partido', partido: 'psoe', acceso: { estado: 'bloqueado', comprobado: '2026-11-10', detalle: '403' } };
+    await expect(descubrir({ emisores: [...emisores, soloBuzon], alias, candidatos }, traedor().traedor, { fecha: '2026-11-10', listados, atrasos: { ...atrasos, emisores: ['cerrada'] } })).rejects.toThrow(/cerrada es solo buzón/);
+    await expect(pedir({ ...atrasos, desde: '2026-10-5' })).rejects.toThrow(/AAAA-MM-DD/);
+    await expect(pedir({ ...atrasos, desde: '2026-02-30' })).rejects.toThrow(/AAAA-MM-DD/);
+    await expect(pedir({ ...atrasos, desde: '2026-11-09', hasta: '2026-11-08' })).rejects.toThrow(/posterior a hasta/);
+    await expect(pedir({ ...atrasos, hasta: '2026-11-11' })).rejects.toThrow(/posterior a la fecha de la ejecución/);
+    await expect(pedir({ ...atrasos, emisores: [] })).rejects.toThrow(/al menos un emisor/);
+    await expect(pedir({ ...atrasos, emisores: ['busca', 'busca'] })).rejects.toThrow(/repetido/);
   });
 });
 

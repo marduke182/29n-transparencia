@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Traedor, USER_AGENT, bloqueosDelDia, decodificarCuerpo, crearFetchSeguro, direccionInterna, gruposIPv6, leerRobots, lookupPublico, motivoBloqueo, motivoHostNoPublico, permitido } from './traer.ts';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Traedor, USER_AGENT, bloqueosDelDia, decodificarCuerpo, crearFetchSeguro, direccionInterna, firmaAntibots, gruposIPv6, guardarVetos, leerRobots, lookupPublico, motivoBloqueo, motivoHostNoPublico, permitido, vetoClaude } from './traer.ts';
 
 type Ruta = { status: number; body?: string; headers?: Record<string, string> };
 
@@ -224,5 +227,128 @@ describe('red pública', () => {
     });
     expect(await t.traer('https://no-existe.es/a')).toMatchObject({ estado: 'error', motivo: expect.stringMatching(/no resuelve/) });
     expect(llamadas).toEqual([]);
+  });
+});
+
+// Shapes of the robots.txt files read on 2026-11-13: one group per agent (elpais.com),
+// a shared group with Allow lines (www.abc.es, www.elmundo.es), and a `*` group only (www.eldiario.es).
+const ROBOTS_POR_AGENTE = 'User-agent: *\nDisallow: /api/\n\nUser-agent: ClaudeBot\nDisallow: /\n\nUser-agent: Claude-User\nDisallow: /\n\nUser-agent: Claude-SearchBot\nDisallow: /\n';
+const ROBOTS_COMPARTIDO = 'User-agent: GPTBot\nUser-agent: ClaudeBot\nUser-agent: Claude-User\nUser-agent: Claude-SearchBot\nUser-agent: anthropic-ai\nDisallow: /\nAllow: /uestudio/\n\nUser-agent: *\nDisallow: /buscador/\n';
+const ROBOTS_ABIERTO = 'User-agent: *\nDisallow: /api/\nDisallow: /buscador/\n';
+
+describe('vetoClaude', () => {
+  it('finds a robots.txt that disallows the root to Claude-User or Claude-SearchBot, with the agents, the rule and the allowed paths', () => {
+    expect(vetoClaude(ROBOTS_POR_AGENTE)).toEqual({ agentes: ['Claude-User', 'Claude-SearchBot'], evidencia: 'User-agent: Claude-User · Disallow: /', permitido: [] });
+    expect(vetoClaude(ROBOTS_COMPARTIDO)).toEqual({
+      agentes: ['ClaudeBot', 'Claude-User', 'Claude-SearchBot', 'anthropic-ai'],
+      evidencia: 'User-agent: ClaudeBot, Claude-User, Claude-SearchBot, anthropic-ai · Disallow: /',
+      permitido: ['/uestudio/'],
+    });
+    // Only Claude-SearchBot is enough; only ClaudeBot (training) is not.
+    expect(vetoClaude('User-agent: Claude-SearchBot\nDisallow: /\n')?.agentes).toEqual(['Claude-SearchBot']);
+    expect(vetoClaude('User-agent: ClaudeBot\nDisallow: /\n')).toBeUndefined();
+    // A `*` group that disallows everything applies to Claude's agents too.
+    expect(vetoClaude('User-agent: *\nDisallow: /\n')).toEqual({ agentes: ['*'], evidencia: 'User-agent: * · Disallow: /', permitido: [] });
+    // Path rules for `*`, or a Claude group that allows the root, are not a site block.
+    expect(vetoClaude(ROBOTS_ABIERTO)).toBeUndefined();
+    expect(vetoClaude('User-agent: *\nDisallow: /\n\nUser-agent: Claude-User\nUser-agent: Claude-SearchBot\nAllow: /\n')).toBeUndefined();
+    expect(vetoClaude('')).toBeUndefined();
+  });
+});
+
+describe('firmaAntibots', () => {
+  const cabeceras = (h: Record<string, string>) => new Headers(h);
+  it('names the anti-bot service of a 403 or 429, or of a challenge page with any status', () => {
+    expect(firmaAntibots(403, cabeceras({ 'x-datadome': 'protected' }), '')).toBe('DataDome (cabecera x-datadome)');
+    expect(firmaAntibots(403, cabeceras({}), '<script src="https://ct.captcha-delivery.com/c.js">')).toBe('DataDome (página de reto)');
+    expect(firmaAntibots(403, cabeceras({ 'cf-mitigated': 'challenge' }), '')).toBe('Cloudflare (cf-mitigated: challenge)');
+    expect(firmaAntibots(200, cabeceras({}), '<title>Just a moment...</title>')).toBe('Cloudflare (página de reto)');
+    expect(firmaAntibots(403, cabeceras({ server: 'AkamaiGHost' }), 'Access Denied')).toBe('Akamai (server: AkamaiGHost)');
+    expect(firmaAntibots(429, cabeceras({}), '<p>Please confirm you are not a robot</p>')).toBe('página «no eres un robot»');
+    expect(firmaAntibots(403, undefined, '<p>Confirma que no eres un robot</p>')).toBe('página «no eres un robot»');
+  });
+  it('is undefined for a bare 403, a 401 or 451, and for marker headers on a normal answer', () => {
+    expect(firmaAntibots(403, cabeceras({}), 'Forbidden')).toBeUndefined();
+    expect(firmaAntibots(401, cabeceras({ 'x-datadome': '1' }), '')).toBeUndefined();
+    expect(firmaAntibots(451, cabeceras({}), 'not available in your country')).toBeUndefined();
+    expect(firmaAntibots(200, cabeceras({ server: 'AkamaiGHost' }), '<p>Artículo</p>')).toBeUndefined();
+  });
+});
+
+describe('Traedor: sources that block the guide', () => {
+  it('never fetches a host in noTraer (recogida omitir or bloqueo), whatever points at it', async () => {
+    const { fn, llamadas } = fetchFalso({});
+    const traedor = new Traedor({ fecha: '2026-11-13', fetch: fn, noTraer: ['elpais.com'], ...sinEspera() });
+    for (const url of ['https://elpais.com/espana/a.html', 'https://www.elpais.com/b', 'https://feeds.elpais.com/rss']) {
+      expect(await traedor.traer(url)).toMatchObject({ estado: 'solo-buzon', motivo: expect.stringMatching(/omitir o bloqueo/) });
+    }
+    expect(llamadas).toEqual([]);
+  });
+
+  it('the network checks still come first: an internal address is refused as before', async () => {
+    const { fn, llamadas } = fetchFalso({});
+    const traedor = new Traedor({ fecha: '2026-11-13', fetch: fn, noTraer: ['interno.es'], ...sinEspera(), resolver: async () => ['10.0.0.1'] });
+    expect(await traedor.traer('https://interno.es/a')).toMatchObject({ estado: 'error', motivo: expect.stringMatching(/dirección interna/) });
+    expect(llamadas).toEqual([]);
+  });
+
+  it('records a robots.txt that excludes Claude\'s agents and fetches nothing else from that host', async () => {
+    const { fn, llamadas } = fetchFalso({ 'https://www.medio.es/robots.txt': { status: 200, body: ROBOTS_COMPARTIDO }, 'https://abierto.es/robots.txt': { status: 200, body: ROBOTS_ABIERTO }, 'https://abierto.es/a': { status: 200, body: 'ok' } });
+    const traedor = new Traedor({ fecha: '2026-11-13', fetch: fn, ...sinEspera() });
+    expect(await traedor.traer('https://www.medio.es/espana/a.html')).toMatchObject({ estado: 'robots', motivo: expect.stringMatching(/no admite agentes de Claude/) });
+    expect((await traedor.traer('https://www.medio.es/uestudio/x')).estado).toBe('robots');
+    expect((await traedor.traer('https://abierto.es/a')).estado).toBe('ok');
+    expect(llamadas.map((l) => l.url)).toEqual(['https://www.medio.es/robots.txt', 'https://abierto.es/robots.txt', 'https://abierto.es/a']);
+    expect(traedor.vetos).toEqual({
+      'medio.es': {
+        tipo: 'robots',
+        host: 'medio.es',
+        consultado: '2026-11-13',
+        url: 'https://www.medio.es/espana/a.html',
+        evidencia: 'User-agent: ClaudeBot, Claude-User, Claude-SearchBot, anthropic-ai · Disallow: /',
+        robots: 'https://www.medio.es/robots.txt',
+        agentes: ['ClaudeBot', 'Claude-User', 'Claude-SearchBot', 'anthropic-ai'],
+        permitido: ['/uestudio/'],
+      },
+    });
+  });
+
+  it('records an anti-bot answer with its status and marker, and a bare 403 only as a block', async () => {
+    const { fn } = fetchFalso({
+      'https://dd.es/robots.txt': { status: 200, body: '' },
+      'https://dd.es/a': { status: 403, body: '<html>captcha-delivery.com</html>' },
+      'https://seco.es/robots.txt': { status: 200, body: '' },
+      'https://seco.es/a': { status: 403, body: 'Forbidden' },
+    });
+    const traedor = new Traedor({ fecha: '2026-11-13', fetch: fn, ...sinEspera() });
+    expect((await traedor.traer('https://dd.es/a')).estado).toBe('bloqueado');
+    expect((await traedor.traer('https://seco.es/a')).estado).toBe('bloqueado');
+    expect(traedor.vetos).toEqual({ 'dd.es': { tipo: 'antibots', host: 'dd.es', consultado: '2026-11-13', url: 'https://dd.es/a', evidencia: 'HTTP 403: DataDome (página de reto)', estado_http: 403 } });
+    expect(Object.keys(traedor.bloqueados).sort()).toEqual(['dd.es', 'seco.es']);
+  });
+
+  it('rereads a robots.txt even on a noTraer host, through the same network checks', async () => {
+    const { fn, llamadas } = fetchFalso({ 'https://elpais.com/robots.txt': { status: 200, body: ROBOTS_POR_AGENTE } });
+    const traedor = new Traedor({ fecha: '2026-11-13', fetch: fn, noTraer: ['elpais.com'], ...sinEspera() });
+    expect(await traedor.textoRobots('https://elpais.com/robots.txt')).toBe(ROBOTS_POR_AGENTE);
+    expect(await traedor.textoRobots('https://elpais.com/otra')).toBeUndefined();
+    expect(await traedor.textoRobots('http://elpais.com/robots.txt')).toBeUndefined();
+    expect(await new Traedor({ fecha: '2026-11-13', fetch: fn, ...sinEspera(), resolver: async () => ['127.0.0.1'] }).textoRobots('https://elpais.com/robots.txt')).toBeUndefined();
+    expect(llamadas.map((l) => l.url)).toEqual(['https://elpais.com/robots.txt']);
+  });
+
+  it('guardarVetos keeps each host\'s first record and marks an anti-bot block seen for the first time', async () => {
+    const carpeta = await mkdtemp(join(tmpdir(), 'n29-vetos-'));
+    const ruta = join(carpeta, 'bloqueos-guia.json');
+    const antibots = (host: string) => ({ tipo: 'antibots' as const, host, consultado: '2026-11-13', url: `https://${host}/`, evidencia: 'HTTP 403: DataDome (página de reto)', estado_http: 403 });
+    await guardarVetos(ruta, {}, {});
+    await expect(readFile(ruta, 'utf8')).rejects.toThrow();
+    await guardarVetos(ruta, { 'b.es': antibots('b.es'), 'a.es': antibots('a.es') }, { 'a.es': { fecha: '2026-11-10', estado_http: 403, motivo: 'HTTP 403', url: 'https://a.es/' } });
+    await guardarVetos(ruta, { 'b.es': { ...antibots('b.es'), evidencia: 'otra' } }, {});
+    const guardado = JSON.parse(await readFile(ruta, 'utf8'));
+    expect(Object.keys(guardado)).toEqual(['a.es', 'b.es']);
+    expect(guardado['a.es'].primera).toBe(false);
+    expect(guardado['b.es']).toMatchObject({ primera: true, evidencia: 'HTTP 403: DataDome (página de reto)' });
+    await rm(carpeta, { recursive: true, force: true });
   });
 });
