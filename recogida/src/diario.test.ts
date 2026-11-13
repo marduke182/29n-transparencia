@@ -488,7 +488,7 @@ describe('preparar: hosts sin registrar', () => {
   it('drops any proposal or shared fact that names a URL citable refuses, wherever the URL is (sources, quote, perfil documents)', () => {
     const citable = (url: string) => new URL(url).hostname.endsWith('medio.es');
     const item = (url: string, extra: Record<string, unknown> = {}) => ({ texto: 'Algo.', estado: 'PARCIAL', matiz: 'Según Medio.', fuentes: [{ url, medio: 'Medio' }], ...extra });
-    const { porPartido, descartes } = preparar({
+    const { porPartido, descartes, revisar } = preparar({
       fecha: FECHA,
       equidad: {},
       citable,
@@ -511,15 +511,39 @@ describe('preparar: hosts sin registrar', () => {
       ],
       hechos: { hechos: [{ hecho: 'debate', seccion: 'temas', pregunta: 'Q2', partidos: ['pp', 'vox'], item: item('https://inyectado.com/d') }] },
     });
-    expect(porPartido.pp.length).toBe(1);
+    // A URL the sheet already cites goes through (listed for review): only unregistered hosts are dropped here.
+    expect(porPartido.pp.length).toBe(3);
+    expect(revisar).toEqual([
+      { archivo: 'pp.json', indice: 4, partido: 'pp', url: 'https://medio.es/ya', en_ficha: 'ref 7, temas' },
+      { archivo: 'pp.json', indice: 5, partido: 'pp', url: 'https://medio.es/espera', en_ficha: 'ref 8, criticos-defensores, en espera' },
+    ]);
     expect(descartes.map((d) => [d.archivo, d.indice, d.motivo])).toEqual([
       ['hechos.json', 0, 'hecho "debate": https://inyectado.com/d: host sin registrar en fuentes.json; no se publica sin revisión'],
       ['pp.json', 1, 'https://inyectado.com/a: host sin registrar en fuentes.json; no se publica sin revisión'],
       ['pp.json', 2, 'https://inyectado.com/b: host sin registrar en fuentes.json; no se publica sin revisión'],
       ['pp.json', 3, 'https://inyectado.com/c: host sin registrar en fuentes.json; no se publica sin revisión'],
-      ['pp.json', 4, 'ya_publicado (para revisar): https://medio.es/ya ya está en la ficha (ref 7, temas)'],
-      ['pp.json', 5, 'ya_publicado (para revisar): https://medio.es/espera ya está en la ficha (ref 8, criticos-defensores, en espera)'],
     ]);
+  });
+});
+
+describe('preparar: una fuente citada por varios elementos', () => {
+  it('lets every new item citing a programme PDF the sheet already cites through, for the four parties alike, and lists them for review', () => {
+    const pdf = 'https://partido.es/programa-2026.pdf';
+    const ficha = { secciones: [{ id: 'por-escrito', items: [{ ref: '3', fuentes: [{ url: pdf }] }, { ref: '4', fuentes: [{ url: pdf }] }] }] };
+    const item = (texto: string) => ({ texto, estado: 'VERIFICADO', fuentes: [{ url: pdf, medio: 'Partido' }] });
+    const propuestas = (p: string) => ['Propone A.', 'Propone B.', 'Propone C.'].map((t) => ({ partido: p, seccion: 'por-escrito', pregunta: 'Q2', item: item(t) }));
+    const { porPartido, descartes, revisar } = preparar({
+      fecha: FECHA,
+      equidad: {},
+      citable: () => true,
+      existentes: Object.fromEntries(PARTIDOS.map((p) => [p, ficha])),
+      hechos: undefined,
+      adjudicados: PARTIDOS.map((p) => ({ archivo: `${p}.json`, contenido: { propuestas: propuestas(p) } })),
+    });
+    for (const p of PARTIDOS) expect(porPartido[p].length, p).toBe(3);
+    expect(descartes).toEqual([]);
+    expect(revisar.length).toBe(12);
+    expect(new Set(revisar.map((r) => r.en_ficha))).toEqual(new Set(['ref 3, por-escrito']));
   });
 });
 

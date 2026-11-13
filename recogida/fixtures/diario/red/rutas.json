@@ -1,4 +1,9 @@
 {
+  "https://larazon.es/robots.txt": {
+    "estado": 200,
+    "tipo": "text/plain",
+    "archivo": "robots.txt"
+  },
   "https://medio-a.example/2026/11/08/debate-vivienda": {
     "estado": 200,
     "tipo": "text/html; charset=utf-8",
@@ -85,6 +90,16 @@
     "archivo": "prohibido.html"
   },
   "https://verificador.example/robots.txt": {
+    "estado": 200,
+    "tipo": "text/plain",
+    "archivo": "robots.txt"
+  },
+  "https://www.larazon.es/espana/?outputType=xml": {
+    "estado": 200,
+    "tipo": "application/rss+xml",
+    "archivo": "la-razon-feed.xml"
+  },
+  "https://www.larazon.es/robots.txt": {
     "estado": 200,
     "tipo": "text/plain",
     "archivo": "robots.txt"

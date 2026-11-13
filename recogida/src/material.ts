@@ -35,8 +35,14 @@ const comparar = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 export const OBJETIVO_CLASIFICACION = 60_000;
 /** Tasks of one classification call at most (a document's tasks are never split). */
 export const MAX_TAREAS_CLASIFICACION = 20;
-/** Characters a facts or adjudication call aims at (Opus), fixed context included. */
+/** Characters a facts call aims at (Opus), fixed context included. */
 export const OBJETIVO_JUICIO = 400_000;
+/**
+ * Characters of documents in one adjudication batch at most, the same for the
+ * four parties: how many batches a party gets depends on its documents only,
+ * never on the size of its sheet or perfil (the fixed context comes on top).
+ */
+export const ESPACIO_DOCUMENTOS_ADJUDICACION = 250_000;
 /** Characters of any prompt at most: a larger one is not sent (the call is skipped and the gate decides). */
 export const MAX_PROMPT = 480_000;
 /** Characters of one document above which it is reduced to a party-neutral excerpt. */
@@ -140,12 +146,17 @@ export const seccionJson = (nombre: string, valor: unknown) => `${nombre} (JSON)
 /** A named section with data from the web, the site data or a model: untrusted, between delimiters. */
 export const seccionNoFiable = (nombre: string, valor: unknown) => `${nombre}:\n${datosNoFiables(nombre, typeof valor === 'string' ? valor : JSON.stringify(valor, null, 1))}`;
 
-/** One cached document as a prompt block: its meta, what refers to it (`extra`) and its text, as untrusted data. */
-export function bloqueDocumento(id: string, meta: Objeto | undefined, texto: string | undefined, extra: Record<string, unknown> = {}): string {
+/**
+ * One cached document as a prompt block: its meta, what refers to it (`extra`)
+ * and its text, as untrusted data. A part of a split document (`parte`, "k de
+ * n") keeps its real doc_id in META and says its part in its own field.
+ */
+export function bloqueDocumento(id: string, meta: Objeto | undefined, texto: string | undefined, extra: Record<string, unknown> = {}, parte?: string): string {
   const m = meta ?? {};
-  const cabecera = { doc_id: id, url: m.url, url_canonica: m.url_canonica, consultado: m.consultado, via: m.via, ...(m.origen ? { origen: m.origen } : {}), ...extra };
+  const cabecera = { doc_id: id, ...(parte ? { parte } : {}), url: m.url, url_canonica: m.url_canonica, consultado: m.consultado, via: m.via, ...(m.origen ? { origen: m.origen } : {}), ...extra };
   const cuerpo = `META: ${JSON.stringify(cabecera)}\n${texto === undefined ? 'TEXTO: (no está en la caché)' : `TEXTO:\n${texto}`}`;
-  return `DOCUMENTO ${id}:\n${datosNoFiables(`DOCUMENTO ${id}`, cuerpo)}`;
+  const nombre = parte ? `${id} (parte ${parte})` : id;
+  return `DOCUMENTO ${nombre}:\n${datosNoFiables(`DOCUMENTO ${nombre}`, cuerpo)}`;
 }
 
 /** The source registry as the calls need it: id, name, hosts and kind of each emisor. */
@@ -357,14 +368,14 @@ export function promptClasificacion(base: string, tareas: readonly TareaClasific
  * MAX_PROMPT with the fixed context (`fijo` characters), consecutive parts
  * that each fit, so no prompt is ever over the limit and no text is lost.
  */
-export function bloquesDocumento(id: string, meta: Objeto | undefined, texto: string | undefined, extra: Record<string, unknown>, fijo: number, max = MAX_PROMPT): string[] {
+export function bloquesDocumento(id: string, meta: Objeto | undefined, texto: string | undefined, extra: Record<string, unknown>, fijo: number, max = MAX_PROMPT, espacio = Number.POSITIVE_INFINITY): string[] {
   const entero = bloqueDocumento(id, meta, texto, extra);
-  const sitio = max - fijo - 2_000;
+  const sitio = Math.min(max - fijo - 2_000, espacio);
   if (texto === undefined || entero.length <= sitio) return [entero];
   const cabida = Math.max(10_000, sitio - (entero.length - texto.length));
   const partes: string[] = [];
   for (let i = 0; i < texto.length; i += cabida) partes.push(texto.slice(i, i + cabida));
-  return partes.map((parte, k) => bloqueDocumento(`${id} (parte ${k + 1} de ${partes.length})`, meta, parte, extra));
+  return partes.map((parte, k) => bloqueDocumento(id, meta, parte, extra, `${k + 1} de ${partes.length}`));
 }
 
 /** The shared facts: one piece per candidate document with all its classifications, batched by event, with the registry and the published facts. */
@@ -420,7 +431,7 @@ export interface MaterialAdjudicacion {
  * full items of the sections it touches, and its pieces. Every piece, and so
  * every equal-search result, is in exactly one batch.
  */
-export function promptsAdjudicacion(base: string, m: MaterialAdjudicacion, objetivo = OBJETIVO_JUICIO): Prompts {
+export function promptsAdjudicacion(base: string, m: MaterialAdjudicacion, objetivo = ESPACIO_DOCUMENTOS_ADJUDICACION): Prompts {
   const recortes: Recorte[] = [];
   const seccionesDe = (clasificacion: Objeto | undefined, resultados: Objeto[]) =>
     [...new Set([...(clasificacion && typeof clasificacion.seccion === 'string' ? [clasificacion.seccion] : []), ...resultados.map((r) => SECCION_DE_TIPO[String(r.tipo)] ?? '')].filter(Boolean))].sort(comparar);
@@ -442,15 +453,19 @@ export function promptsAdjudicacion(base: string, m: MaterialAdjudicacion, objet
       if (recorte) recortes.push(recorte);
       const secciones = seccionesDe(doc.clasificacion, doc.resultados);
       const extra = { ...(doc.clasificacion ? { clasificacion: doc.clasificacion } : {}), ...(doc.resultados.length ? { resultados_equidad: doc.resultados } : {}) };
-      return bloquesDocumento(doc.id, doc.meta, texto, extra, fijoMax).map((bloque, k) => ({ id: k ? `${doc.id}#${k + 1}` : doc.id, bloque, grupo: secciones[0] ?? '~', secciones, resultados: k ? [] : urls(doc.resultados) }));
+      return bloquesDocumento(doc.id, doc.meta, texto, extra, fijoMax, MAX_PROMPT, ESPACIO_DOCUMENTOS_ADJUDICACION).map((bloque, k) => ({ id: k ? `${doc.id}#${k + 1}` : doc.id, bloque, grupo: doc.id, secciones, resultados: k ? [] : urls(doc.resultados), orden: secciones[0] ?? '~' }));
     }),
     ...m.resultadosSueltos.map((r) => {
       const secciones = seccionesDe(undefined, [r]);
       const id = `resultado ${String(r.url)}`;
-      return { id, bloque: `RESULTADO DE LA BÚSQUEDA IGUAL (sin documento en la caché):\n${datosNoFiables(id, JSON.stringify(r))}`, grupo: secciones[0] ?? '~', secciones, resultados: urls([r]) };
+      return { id, bloque: `RESULTADO DE LA BÚSQUEDA IGUAL (sin documento en la caché):\n${datosNoFiables(id, JSON.stringify(r))}`, grupo: id, secciones, resultados: urls([r]), orden: secciones[0] ?? '~' };
     }),
-  ].sort((a, b) => comparar(a.grupo, b.grupo) || comparar(a.id, b.id));
-  const lotes = lotesDePiezas(piezas, (s) => base.length + AVISO_DATOS.length + fijoDe(s).length + 8, objetivo);
+  ]
+    // In section order, so a batch touches few sections, but never a break forced between sections: a batch holds
+    // ESPACIO_DOCUMENTOS_ADJUDICACION characters of documents for every party, whatever its fixed context.
+    .sort((a, b) => comparar(a.orden, b.orden) || comparar(a.id, b.id))
+    .map(({ orden: _orden, ...pieza }) => pieza);
+  const lotes = lotesDePiezas(piezas, () => 0, objetivo);
   const grupos = lotes.length ? lotes : [[]];
   const prompts = grupos.map((lote) => promptLote(base, fijoDe(new Set(lote.flatMap((p) => p.secciones))), lote.map((p) => p.bloque)));
   return {

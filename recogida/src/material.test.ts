@@ -91,6 +91,8 @@ describe('extractos: los mismos términos para los cuatro partidos', () => {
     expect(bloques.length).toBeGreaterThan(1);
     for (const b of bloques) expect(b.length + 300_000).toBeLessThanOrEqual(480_000);
     expect(bloques[0]).toContain('DOCUMENTO dd (parte 1 de');
+    // The real doc_id stays in META; the part has a field of its own.
+    for (const [k, b] of bloques.entries()) expect(b).toContain(`META: {"doc_id":"dd","parte":"${k + 1} de ${bloques.length}","url":"https://medio.es/dd"`);
     const recuperado = bloques.map((b) => /TEXTO:\n([\s\S]*)\n<<<FIN/.exec(b)![1]).join('');
     expect(recuperado).toBe(texto);
     expect(bloquesDocumento('dd', undefined, 'corto', {}, 300_000)).toHaveLength(1);
@@ -180,6 +182,18 @@ describe('lotes de los juicios', () => {
     documentos,
     resultadosSueltos,
     terminos: TERMINOS,
+  });
+
+  it('gives every party the same room for documents per batch: the batch count depends on the documents, not on the sheet', () => {
+    const docs: MaterialAdjudicacion['documentos'] = ['d1', 'd2', 'd3', 'd4', 'd5'].map((id, n) => ({ id, meta: { url: `https://medio.es/${id}` }, texto: 'w'.repeat(90_000), clasificacion: { relevante: true, seccion: ['temas', 'encuestas', 'temas', 'cambios', 'historial'][n] }, resultados: [] }));
+    const fichaGrande = { ...FICHA, secciones: [...FICHA.secciones, { id: 'temas', items: Array.from({ length: 400 }, (_, n) => ({ ref: `x${n}`, texto: 'Texto largo de un elemento. '.repeat(10), estado: 'PARCIAL', fuentes: [{ url: `https://medio.es/x${n}` }] })) }] };
+    const pequena = promptsAdjudicacion('BASE', material(docs));
+    const grande = promptsAdjudicacion('BASE', { ...material(docs), ficha: fichaGrande, perfil: { partido: 'pp', limites: ['x'.repeat(30_000)], documentos: [], propuestas: [], mensajes: [] } });
+    expect(grande.lotes.map((l) => l.documentos)).toEqual(pequena.lotes.map((l) => l.documentos));
+    expect(pequena.lotes.map((l) => l.documentos)).toEqual([["d4", "d2"], ["d5", "d1"], ["d3"]]);
+    // Batches are not cut at section boundaries: documents of several sections share one.
+    expect(pequena.lotes[0]!.secciones!.length).toBeGreaterThan(1);
+    expect(Math.max(...grande.lotes.map((l) => l.caracteres))).toBeLessThanOrEqual(480_000);
   });
 
   it('starts every adjudication batch with the same context, the whole sheet in one line per item included', () => {

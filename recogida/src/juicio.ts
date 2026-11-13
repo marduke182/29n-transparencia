@@ -132,7 +132,8 @@ export const ESQUEMAS = {
     type: 'object',
     required: ['hechos', 'descartados', 'avisos'],
     properties: {
-      hechos: lista({ type: 'object', required: ['hecho', 'seccion', 'partidos', 'item'], properties: { hecho: texto, pregunta: { enum: PREGUNTAS }, seccion: { enum: SECCIONES }, partidos: lista(texto), item: { type: 'object' }, motivo: texto } }),
+      // A later facts batch may add parties to a fact already written today with just {hecho, partidos}.
+      hechos: lista({ type: 'object', required: ['hecho', 'partidos'], properties: { hecho: texto, pregunta: { enum: PREGUNTAS }, seccion: { enum: SECCIONES }, partidos: lista(texto), item: { type: 'object' }, motivo: texto } }),
       descartados: lista({ type: 'object', required: ['doc_id', 'motivo'], properties: { doc_id: texto, motivo: texto } }),
       avisos: lista(texto),
     },
@@ -204,40 +205,55 @@ export const canonico = (v: unknown): string =>
 /**
  * Several batches' answers of a facts or adjudication pass, as one answer
  * file: lists concatenated in batch order. Facts that share a key are one
- * fact: merged (the union of `partidos`, in party order) when their question,
- * section and item are identical; otherwise a conflict, and nothing is merged
- * (the caller writes nothing and the gate retries the pass).
+ * fact: the first batch's item, question and section, and the union of the
+ * parties of every batch (in party order). A later batch may name only
+ * `{hecho, partidos}` to add parties; one that rewrites the item differently
+ * keeps the first item, and the difference goes to `avisos` for review:
+ * a copy slip never costs the day. An entry with no item for a key no batch
+ * wrote is left out, with an aviso. `conflictos` is kept for callers and is
+ * always empty.
  */
 export function unirRespuestas(pasada: 'hechos' | 'adjudicacion', valores: readonly Objeto[]): { valor: Objeto; conflictos: string[] } {
   const listas = pasada === 'hechos' ? ['hechos', 'descartados', 'avisos'] : ['propuestas', 'decisiones', 'objeciones_hechos', 'hosts_sin_registrar', 'avisos'];
   const unido: Objeto = pasada === 'adjudicacion' ? { partido: valores[0]?.partido } : {};
   for (const clave of listas) unido[clave] = valores.flatMap((v) => (Array.isArray(v[clave]) ? (v[clave] as unknown[]) : []));
   if (pasada === 'adjudicacion') unido.hosts_sin_registrar = [...new Set(unido.hosts_sin_registrar as string[])].sort();
-  const conflictos: string[] = [];
   if (pasada === 'hechos') {
     const ORDEN = ['frente-amplio', 'pp', 'psoe', 'vox'];
+    const avisos = unido.avisos as unknown[];
     const porClave = new Map<string, Objeto>();
     const hechos: Objeto[] = [];
+    const pendientes: Objeto[] = [];
     for (const h of unido.hechos as unknown[]) {
-      if (!esObjeto(h) || typeof h.hecho !== 'string') {
-        hechos.push(h as Objeto);
-        continue;
-      }
+      if (!esObjeto(h) || typeof h.hecho !== 'string') continue;
       const previo = porClave.get(h.hecho);
       if (!previo) {
-        const copia = { ...h, partidos: Array.isArray(h.partidos) ? [...h.partidos] : h.partidos };
+        if (!esObjeto(h.item)) {
+          pendientes.push(h);
+          continue;
+        }
+        const copia = { ...h, partidos: Array.isArray(h.partidos) ? [...h.partidos] : [] };
         porClave.set(h.hecho, copia);
         hechos.push(copia);
         continue;
       }
-      if (canonico(previo.item) !== canonico(h.item) || previo.pregunta !== h.pregunta || previo.seccion !== h.seccion) {
-        conflictos.push(`hecho "${h.hecho}": dos lotes lo escribieron con distinto item, pregunta o seccion`);
-        continue;
+      if (h.item !== undefined && (canonico(previo.item) !== canonico(h.item) || (h.pregunta !== undefined && previo.pregunta !== h.pregunta) || (h.seccion !== undefined && previo.seccion !== h.seccion))) {
+        avisos.push(`hecho "${h.hecho}": otro lote lo escribió con distinto item, pregunta o seccion; se mantiene el primero y se unen los partidos (para revisar)`);
       }
       const partidos = new Set([...(Array.isArray(previo.partidos) ? previo.partidos : []), ...(Array.isArray(h.partidos) ? h.partidos : [])].map(String));
       previo.partidos = [...partidos].sort((a, b) => (ORDEN.indexOf(a) + 1 || 99) - (ORDEN.indexOf(b) + 1 || 99) || (a < b ? -1 : a > b ? 1 : 0));
     }
+    // Entries that only add parties, to a key written by a later batch or by none.
+    for (const h of pendientes) {
+      const previo = porClave.get(String(h.hecho));
+      if (!previo) {
+        avisos.push(`hecho "${String(h.hecho)}": solo añade partidos y ningún lote lo escribió; se deja fuera (para revisar)`);
+        continue;
+      }
+      const partidos = new Set([...(previo.partidos as unknown[]), ...(Array.isArray(h.partidos) ? h.partidos : [])].map(String));
+      previo.partidos = [...partidos].sort((a, b) => (ORDEN.indexOf(a) + 1 || 99) - (ORDEN.indexOf(b) + 1 || 99) || (a < b ? -1 : a > b ? 1 : 0));
+    }
     unido.hechos = hechos;
   }
-  return { valor: unido, conflictos };
+  return { valor: unido, conflictos: [] };
 }

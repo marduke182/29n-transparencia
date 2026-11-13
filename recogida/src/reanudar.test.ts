@@ -193,7 +193,7 @@ fi
     expect(readFileSync(join(ej, 'anterior', 'adjudicacion-2', 'adjudicado', 'pp.json.error.txt'), 'utf8')).toMatch(/terminó con error: error_max_budget_usd/);
     const registro = readFileSync(join(ej, 'diario.log'), 'utf8');
     expect(registro).toMatch(/llamada 1 de 1 terminó con código 1/);
-    expect(readFileSync(join(ej, 'gasto.tsv'), 'utf8')).toContain('adjudicacion-pp\t1\t0.5\n');
+    expect(readFileSync(join(ej, 'gasto.tsv'), 'utf8')).toMatch(/^adjudicacion-pp\t1\t0\.5\t\d+$/m);
   });
 
   /** A day stopped at the adjudication check, frente-amplio complete, and a stand-in claude that costs `coste` per call and fails pp's first call. */
@@ -230,9 +230,51 @@ fi
     // pp's first call failed and its retry was still made, though the reported costs add up to more than 1 dollar.
     expect(readFileSync(sesiones, 'utf8')).toBe('pp\npsoe\nvox\npp\n');
     expect(readFileSync(join(ej, 'etapas.tsv'), 'utf8')).toMatch(/^adjudicacion-completa\tok\t$/m);
-    expect(readFileSync(join(ej, 'gasto.tsv'), 'utf8')).toBe('adjudicacion-pp\t1\t0.9\nadjudicacion-psoe\t1\t0.9\nadjudicacion-vox\t1\t0.9\nadjudicacion-pp\t1\t0.9\n');
+    // Session, call, reported cost and seconds, for information.
+    expect(readFileSync(join(ej, 'gasto.tsv'), 'utf8')).toMatch(/^adjudicacion-pp\t1\t0\.9\t\d+\nadjudicacion-psoe\t1\t0\.9\t\d+\nadjudicacion-vox\t1\t0\.9\t\d+\nadjudicacion-pp\t1\t0\.9\t\d+\n$/);
     // The per-call guard is at least 100 dollars whatever N29_PRESUPUESTO_USD says.
     expect(readFileSync(join(ej, 'diario.log'), 'utf8')).not.toMatch(/presupuesto/i);
+  });
+
+  it('redoes in the second round only the adjudication batches that failed, and keeps the valid ones', () => {
+    const { ej } = adjudicacionConCoste('0.1');
+    // pp has two documents of 200 000 characters: two batches.
+    const docs = ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb'];
+    const tareas = docs.map((doc_id) => ({ doc_id, partido: 'pp', url: `https://medio.es/${doc_id}`, url_canonica: `https://medio.es/${doc_id}`, via: 'rss', consultado: FECHA, origen: ['alias'], texto: '', meta: '', salida: `clasificacion/${doc_id}.pp.json` }));
+    writeFileSync(join(ej, 'tareas-clasificar.json'), `${JSON.stringify(tareas)}\n`);
+    mkdirSync(join(ej, 'clasificacion'));
+    for (const doc_id of docs) {
+      writeFileSync(join(ej, 'clasificacion', `${doc_id}.pp.json`), JSON.stringify({ doc_id, partido: 'pp', relevante: true, seccion: 'temas' }));
+      mkdirSync(join(raiz, 'cache', 'docs', doc_id), { recursive: true });
+      writeFileSync(join(raiz, 'cache', 'docs', doc_id, 'meta.json'), JSON.stringify({ url: `https://medio.es/${doc_id}`, url_canonica: `https://medio.es/${doc_id}`, consultado: FECHA, via: 'rss' }));
+      writeFileSync(join(raiz, 'cache', 'docs', doc_id, 'texto.txt'), `${doc_id} `.repeat(12_000));
+    }
+    for (const p of ['psoe', 'vox']) writeFileSync(join(ej, 'adjudicado', `${p}.json`), `{"partido": "${p}", "propuestas": [], "decisiones": []}\n`);
+    // A stand-in that answers each batch with a decision per document it carries, but fails pp's batch of b… the first time.
+    const llamadas = join(raiz, 'llamadas.txt');
+    writeFileSync(
+      join(raiz, 'bin', 'claude'),
+      `#!/usr/bin/env node
+if (process.argv[2] === '--version') { console.log('2.1.322 (Claude Code)'); process.exit(0); }
+const fs = require('node:fs');
+const prompt = fs.readFileSync(0, 'utf8');
+const partido = /^Your party is ([a-z-]+):/m.exec(prompt)[1];
+const docs = [...prompt.matchAll(/^DOCUMENTO ([0-9a-f]{16}):$/gm)].map((m) => m[1]);
+fs.appendFileSync('${llamadas}', partido + ' ' + docs.join(',') + '\\n');
+const vistas = fs.readFileSync('${llamadas}', 'utf8').split('\\n').filter((l) => l === partido + ' ' + docs.join(',')).length;
+if (docs.includes('bbbbbbbbbbbbbbbb') && vistas === 1) { console.log(JSON.stringify({ is_error: true, subtype: 'error_during_execution' })); process.exit(1); }
+console.log(JSON.stringify({ is_error: false, total_cost_usd: 0.1, structured_output: { partido, propuestas: [], decisiones: docs.map((doc_id) => ({ doc_id, decision: 'descartado', motivo: 'x' })), objeciones_hechos: [], hosts_sin_registrar: [], avisos: [] } }));
+`,
+    );
+    chmodSync(join(raiz, 'bin', 'claude'), 0o755);
+    diario('--reanudar', sellar());
+    // The adjudication completes (this test folder has no site data, so the day stops later, at preparar).
+    expect(readFileSync(join(ej, 'etapas.tsv'), 'utf8')).toMatch(/^adjudicacion-completa\tok\t$/m);
+    // Round 1: both batches; round 2: only the failed one. The valid batch was kept, not asked again.
+    expect(readFileSync(llamadas, 'utf8')).toBe('pp aaaaaaaaaaaaaaaa\npp bbbbbbbbbbbbbbbb\npp bbbbbbbbbbbbbbbb\n');
+    expect(readFileSync(join(ej, 'diario.log'), 'utf8')).toMatch(/llamada 1 de 2: lote ya respondido bien en una ronda anterior/);
+    const pp = JSON.parse(readFileSync(join(ej, 'adjudicado', 'pp.json'), 'utf8'));
+    expect(pp.decisiones.map((d: { doc_id: string }) => d.doc_id)).toEqual(docs);
   });
 
   // A day stopped at the site checks after the merge (11 Nov 2026): the merge runs again from the kept adjudication.

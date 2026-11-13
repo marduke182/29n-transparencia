@@ -688,11 +688,12 @@ claude_pasada() {
   # Money never decides whether a call is made: --max-budget-usd (N29_PRESUPUESTO_USD, at least 100) only guards
   # each call against a runaway, far above what the largest one costs. N29_LIMITE_CLAUDE_S is for the whole
   # session; each call gets the time left. What Claude Code reports each call cost (total_cost_usd) is recorded in
-  # gasto.tsv, for information only. A call that fails, or is not made, leaves its answers missing: the gate after
+  # gasto.tsv (session, call, reported cost, seconds), for information only. A call that fails, or is not made, leaves its answers missing: the gate after
   # the pass retries them or stops the day.
-  local inicio=$SECONDS entrada tope
+  local inicio=$SECONDS entrada tope huella guardado t0
   tope="$(awk -v p="$N29_PRESUPUESTO_USD" 'BEGIN { printf "%.2f", (p > 100 ? p : 100) }')"
   : >"$PRIV/gasto.nuevo"
+  : >"$PRIV/validos.tsv"
   i=1
   while [ "$i" -le "$n" ]; do
     salida="$PRIV/$pasada.salida-$i.json"
@@ -704,7 +705,19 @@ claude_pasada() {
       { cat "$CONF/prompt-$i.txt"; glue juicio-previos --pasada hechos --salidas ${salidas[@]+"${salidas[@]}"}; } >"$entrada" || return 1
       cp "$entrada" "$PRIV/hechos.previos-$i.txt"
     fi
-    if grep -q -x -F "prompt-$i.txt" "$CONF/saltar.txt"; then
+    # An adjudication batch already answered validly in an earlier round (same prompt) is kept, not asked again:
+    # the second round redoes only the batches that failed, so a party with more batches is not likelier to fail.
+    guardado=""
+    case "$pasada" in
+      adjudicacion-*)
+        huella="$(shasum -a 256 "$entrada" | cut -c1-24)"
+        guardado="$EJ/adjudicado-lotes/${pasada#adjudicacion-}/$huella.json"
+        ;;
+    esac
+    if [ -n "$guardado" ] && [ -f "$guardado" ]; then
+      echo "llamada $i de $n: lote ya respondido bien en una ronda anterior (adjudicado-lotes/${pasada#adjudicacion-}/$huella.json), se reutiliza"
+      cp "$guardado" "$salida"
+    elif grep -q -x -F "prompt-$i.txt" "$CONF/saltar.txt"; then
       echo "llamada $i de $n: no se envía (prompt demasiado largo)"
       salida=""
     elif [ "$segundos" -lt 60 ]; then
@@ -712,6 +725,7 @@ claude_pasada() {
       salida=""
     else
       echo "llamada $i de $n ($(wc -c <"$entrada" | tr -d ' ') bytes, quedan $segundos s)"
+      t0=$SECONDS
       (
         cd "$CONF/vacio" &&
           con_limite "$segundos" env CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION="$busquedas" ${sin_web:+CLAUDE_CODE_DISABLE_WEB_FETCH=1} "$N29_CLAUDE" -p \
@@ -731,7 +745,10 @@ claude_pasada() {
             <"$entrada" >"$salida"
       ) || echo "llamada $i de $n terminó con código $? (sus respuestas faltarán; la comprobación de después decide)"
       coste="$(node -e 'try { const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); const c = Number(r.total_cost_usd); console.log(r.total_cost_usd !== undefined && Number.isFinite(c) && c >= 0 ? c : ""); } catch { console.log(""); }' "$salida")"
-      printf '%s\t%s\t%s\n' "$pasada" "$i" "${coste:-sin dato}" >>"$PRIV/gasto.nuevo"
+      printf '%s\t%s\t%s\t%s\n' "$pasada" "$i" "${coste:-sin dato}" "$((SECONDS - t0))" >>"$PRIV/gasto.nuevo"
+      if [ -n "$guardado" ] && opciones_sesion "$pasada" && glue juicio-valida "${SESION[@]}" --salida "$salida" >/dev/null 2>&1; then
+        printf '%s\t%s\n' "$salida" "$guardado" >>"$PRIV/validos.tsv"
+      fi
     fi
     salidas+=("$salida")
     i=$((i + 1))
@@ -739,6 +756,11 @@ claude_pasada() {
   verificar_sello "$pasada" || codigo=1
   # What the session's calls reported they cost, kept with the day for information (outside the seals).
   cat "$PRIV/gasto.nuevo" >>"$EJ/gasto.tsv" && rm -f "$PRIV/gasto.nuevo"
+  # The valid adjudication batches, kept for a second round (after the seal: they are the script's own files).
+  while IFS="$(printf '\t')" read -r salida guardado; do
+    [ -n "$salida" ] || continue
+    mkdir -p "$(dirname "$guardado")" && cp "$salida" "$guardado" || codigo=1
+  done <"$PRIV/validos.tsv"
   # The script, not Claude, checks the answers and writes the pass's own files.
   opciones_sesion "$pasada"
   # An answer that is missing or does not match its schema is not written: the gate after the pass (busqueda-completa,

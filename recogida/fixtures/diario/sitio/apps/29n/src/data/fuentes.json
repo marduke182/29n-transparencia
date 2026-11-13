@@ -29,6 +29,26 @@
       "tipo": "agencia"
     },
     {
+      "id": "la-razon",
+      "nombre": "La Razón",
+      "hosts": [
+        "larazon.es"
+      ],
+      "tipo": "medio",
+      "recogida": {
+        "metodo": "rss",
+        "url": "https://www.larazon.es/espana/?outputType=xml"
+      }
+    },
+    {
+      "id": "eldiario-es",
+      "nombre": "elDiario.es",
+      "hosts": [
+        "eldiario.es"
+      ],
+      "tipo": "medio"
+    },
+    {
       "id": "oficial",
       "nombre": "Organismo oficial de ejemplo",
       "hosts": [

@@ -1,0 +1,43 @@
+{
+  "emisor": "la-razon",
+  "consultas": [
+    {
+      "partido": "frente-amplio",
+      "texto": "site:larazon.es (\"Persona Uno\" OR \"Frente Amplio\")",
+      "estado": "ok",
+      "resultados": 0,
+      "saturada": false,
+      "subconsultas": [],
+      "nota": ""
+    },
+    {
+      "partido": "pp",
+      "texto": "site:larazon.es (\"Persona Dos\" OR \"Partido Popular\" OR \"PP\")",
+      "estado": "ok",
+      "resultados": 0,
+      "saturada": false,
+      "subconsultas": [],
+      "nota": ""
+    },
+    {
+      "partido": "psoe",
+      "texto": "site:larazon.es (\"Persona Tres\" OR \"PSOE\")",
+      "estado": "ok",
+      "resultados": 0,
+      "saturada": false,
+      "subconsultas": [],
+      "nota": ""
+    },
+    {
+      "partido": "vox",
+      "texto": "site:larazon.es (\"Persona Cuatro\" OR \"Vox\")",
+      "estado": "ok",
+      "resultados": 0,
+      "saturada": false,
+      "subconsultas": [],
+      "nota": ""
+    }
+  ],
+  "candidatos": [],
+  "nota": ""
+}

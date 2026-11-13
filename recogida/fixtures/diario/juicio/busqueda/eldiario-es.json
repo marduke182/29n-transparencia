@@ -1,0 +1,43 @@
+{
+  "emisor": "eldiario-es",
+  "consultas": [
+    {
+      "partido": "frente-amplio",
+      "texto": "site:eldiario.es (\"Persona Uno\" OR \"Frente Amplio\")",
+      "estado": "ok",
+      "resultados": 0,
+      "saturada": false,
+      "subconsultas": [],
+      "nota": ""
+    },
+    {
+      "partido": "pp",
+      "texto": "site:eldiario.es (\"Persona Dos\" OR \"Partido Popular\" OR \"PP\")",
+      "estado": "ok",
+      "resultados": 0,
+      "saturada": false,
+      "subconsultas": [],
+      "nota": ""
+    },
+    {
+      "partido": "psoe",
+      "texto": "site:eldiario.es (\"Persona Tres\" OR \"PSOE\")",
+      "estado": "ok",
+      "resultados": 0,
+      "saturada": false,
+      "subconsultas": [],
+      "nota": ""
+    },
+    {
+      "partido": "vox",
+      "texto": "site:eldiario.es (\"Persona Cuatro\" OR \"Vox\")",
+      "estado": "ok",
+      "resultados": 0,
+      "saturada": false,
+      "subconsultas": [],
+      "nota": ""
+    }
+  ],
+  "candidatos": [],
+  "nota": ""
+}

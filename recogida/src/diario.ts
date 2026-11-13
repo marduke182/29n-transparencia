@@ -827,6 +827,16 @@ export function tareasClasificar(entrada: {
 
 // ---------------------------------------------------------------- preparar
 
+/** A proposal that went through but cites a URL the party sheet already cites: listed in the summary for review. */
+export interface ParaRevisarFicha {
+  archivo: string;
+  indice: number;
+  partido: string;
+  url: string;
+  /** Where the sheet cites it: "ref N, <sección>". */
+  en_ficha: string;
+}
+
 export interface Descarte {
   archivo: string;
   indice: number;
@@ -883,10 +893,11 @@ export function preparar(entrada: {
   citable: (url: string) => boolean;
   /** The party sheets as the run read them (antes/): a proposal citing a URL one of their items already cites is held for review. */
   existentes: Partial<Record<PartyId, unknown>>;
-}): { porPartido: Record<PartyId, Objeto[]>; descartes: Descarte[]; deHechos: number } {
+}): { porPartido: Record<PartyId, Objeto[]>; descartes: Descarte[]; deHechos: number; revisar: ParaRevisarFicha[] } {
   const porPartido = Object.fromEntries(PARTY_IDS.map((id) => [id, [] as Objeto[]])) as Record<PartyId, Objeto[]>;
   const descartes: Descarte[] = [];
   const completa = (tipo: TipoBusqueda) => PARTY_IDS.every((p) => Array.isArray(entrada.equidad[tipo]?.[p]));
+  const revisar: ParaRevisarFicha[] = [];
   const citadasPor = new Map<PartyId, Map<string, string>>();
   const yaCitadas = (partido: PartyId) => {
     let mapa = citadasPor.get(partido);
@@ -916,9 +927,11 @@ export function preparar(entrada: {
       if (propuesta.partido !== propio) return descartar(`propuesta para "${String(propuesta.partido)}" en el archivo de ${propio}: cada adjudicador solo propone para su partido`);
       const ajena = sinRegistrar(propuesta);
       if (ajena) return descartar(ajena);
-      // A URL an item of the sheet already cites (any section, held items too): ya_publicado, for the owner to review.
+      // A URL an item of the sheet already cites (any section, held items too): it goes through, and the summary lists it
+      // for the owner to review. A source cited by several items (a programme) is normal; only an exact duplicate (URL and
+      // claim fingerprint) is dropped, by fusionar.
       const repetida = propuesta.destino === 'perfil' ? undefined : urlsFuentes(esObjeto(propuesta.item) ? propuesta.item : {}).map((u) => [u, yaCitadas(propio as PartyId).get(u)] as const).find(([, ref]) => ref);
-      if (repetida) return descartar(`ya_publicado (para revisar): ${repetida[0]} ya está en la ficha (${repetida[1]})`);
+      if (repetida) revisar.push({ archivo, indice, partido: propio, url: repetida[0], en_ficha: repetida[1]! });
       if (propuesta.destino === 'perfil') return void porPartido[propio as PartyId].push(propuesta);
       const seccion = String(propuesta.seccion);
       const item = esObjeto(propuesta.item) ? propuesta.item : {};
@@ -967,7 +980,7 @@ export function preparar(entrada: {
     }
   });
   descartes.sort((a, b) => comparar(a.archivo, b.archivo) || a.indice - b.indice);
-  return { porPartido, descartes, deHechos };
+  return { porPartido, descartes, deHechos, revisar };
 }
 
 // ---------------------------------------------------------------- ajustar
@@ -1237,7 +1250,7 @@ const apartado = (titulo: string, lineas: string[], vacio = '_Ninguno._') => [`#
 export function informe(entrada: {
   fecha: string;
   etapas: string;
-  preparar?: { descartes?: Descarte[]; deHechos?: number };
+  preparar?: { descartes?: Descarte[]; deHechos?: number; revisar?: ParaRevisarFicha[] };
   fusionar?: { rechazados?: { archivo: string; indice: number; motivo: string }[]; cambios?: { partido: string; destino: string; añadidos: unknown[]; duplicados: number }[] };
   ajustar?: { promovidos?: Promocion[]; n?: Record<string, number>; corte?: boolean; busquedas?: string[] };
   citasNuevas?: string;
@@ -1265,6 +1278,12 @@ export function informe(entrada: {
   const lineas = ['', '---', '', `# Ejecución del ${entrada.fecha}`, '', '| Etapa | Estado | Detalle |', '|---|---|---|', ...etapas, ''];
   lineas.push(...apartado('Propuestas apartadas antes de fusionar', (entrada.preparar?.descartes ?? []).map((d) => `- \`${d.archivo}\` #${d.indice}${d.partido ? ` (${d.partido})` : ''}: ${d.motivo}`)));
   lineas.push(`Elementos generados desde hechos.json: ${entrada.preparar?.deHechos ?? 0}.`, '');
+  lineas.push(
+    ...apartado(
+      'Para revisar: propuestas que citan una URL que la ficha ya cita (pasan; solo un duplicado exacto se aparta)',
+      (entrada.preparar?.revisar ?? []).map((r) => `- \`${r.archivo}\` #${r.indice} (${r.partido}): <${sinConsulta(r.url)}>, ya en la ficha (${r.en_ficha})`),
+    ),
+  );
   lineas.push(...apartado('Rechazadas por fusionar', (entrada.fusionar?.rechazados ?? []).map((r) => `- \`${r.archivo}\` #${r.indice}: ${r.motivo}`)));
   lineas.push(
     ...apartado(
@@ -1979,7 +1998,7 @@ async function main(args: string[]): Promise<number> {
       return faltas.length ? 1 : 0;
     }
     case 'preparar': {
-      const { porPartido, descartes, deHechos } = preparar({
+      const { porPartido, descartes, deHechos, revisar } = preparar({
         fecha,
         adjudicados: jsonDeCarpeta(join(ejecucion, 'adjudicado')),
         hechos: leerJsonSiExiste(join(ejecucion, 'hechos.json')),
@@ -1989,7 +2008,7 @@ async function main(args: string[]): Promise<number> {
         existentes: Object.fromEntries(PARTY_IDS.map((p) => [p, leerJsonSiExiste(join(ejecucion, 'antes', 'partidos', `${p}.json`))])),
       });
       for (const p of PARTY_IDS) escribirJson(join(ejecucion, 'fusion', `${p}.json`), { propuestas: porPartido[p] });
-      escribirJson(join(ejecucion, 'preparar.json'), { fecha, descartes, deHechos });
+      escribirJson(join(ejecucion, 'preparar.json'), { fecha, descartes, deHechos, revisar });
       return 0;
     }
     case 'ajustar': {
@@ -2147,6 +2166,18 @@ async function main(args: string[]): Promise<number> {
       }
       escribir(destino, `${JSON.stringify(valor, null, 2)}\n`);
       return 0;
+    }
+    case 'juicio-valida': {
+      // Exit 0 when one `claude -p` output (--salida) is a valid answer of the pass (diario.sh keeps it for a second round).
+      const { pasada } = sesionDeArgs(args);
+      const o = args.indexOf('--salida');
+      const archivo = o === -1 ? undefined : args[o + 1];
+      if (!archivo || !existsSync(archivo)) return 1;
+      try {
+        return respuestaEstructurada(esPasadaBusqueda(pasada) ? 'busqueda' : (pasada as PasadaJuicio), leerJson(archivo)).valor ? 0 : 1;
+      } catch {
+        return 1;
+      }
     }
     case 'juicio-previos': {
       // The facts the earlier batches of the facts pass wrote today (their valid outputs after --salidas), as the
