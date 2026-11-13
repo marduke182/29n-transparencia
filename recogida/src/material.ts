@@ -58,13 +58,17 @@ export interface Recorte {
   ventanas: number;
 }
 
-/** The terms of all four parties (names, regional brands, members, people): the same excerpt for every party. */
+/**
+ * The terms of all four parties (names, regional brands, members, people):
+ * the same excerpt for every party. Short all-caps acronyms (PP, IU) are
+ * kept; other terms need three characters. All match as whole words.
+ */
 export function terminosNeutrales(alias: Partial<Record<PartyId, Alias>>): string[] {
   const todos = PARTY_IDS.flatMap((p) => {
     const a = alias[p];
     return a ? [...a.nombres, ...a.marcas_regionales, ...a.miembros, ...a.personas] : [];
   });
-  return [...new Set(todos.map((t) => t.trim()).filter((t) => t.length >= 3))].sort(comparar);
+  return [...new Set(todos.map((t) => t.trim()).filter((t) => t.length >= 3 || /^\p{Lu}{2}$/u.test(t)))].sort(comparar);
 }
 
 /** Lowercase without accents, one character for one character, so positions match the original. */
@@ -116,12 +120,12 @@ export function extractoNeutral(texto: string, terminos: readonly string[], max 
 
 /**
  * The text of a document as a prompt carries it: whole, unless it is longer
- * than MAX_DOCUMENTO and not exempt (an equal-search document, or one only
- * this party's classifier found irrelevant, keep their whole text), then the
- * party-neutral excerpt, recorded.
+ * than MAX_DOCUMENTO, then the party-neutral excerpt, recorded. The same for
+ * every document and every party: nothing about the document's classification
+ * or origin changes it.
  */
-export function textoDocumento(doc: { id: string; meta?: Objeto; texto?: string }, terminos: readonly string[], exento = false): { texto?: string; recorte?: Recorte } {
-  if (doc.texto === undefined || doc.texto.length <= MAX_DOCUMENTO || exento) return { ...(doc.texto !== undefined ? { texto: doc.texto } : {}) };
+export function textoDocumento(doc: { id: string; meta?: Objeto; texto?: string }, terminos: readonly string[]): { texto?: string; recorte?: Recorte } {
+  if (doc.texto === undefined || doc.texto.length <= MAX_DOCUMENTO) return { ...(doc.texto !== undefined ? { texto: doc.texto } : {}) };
   const { texto, ventanas } = extractoNeutral(doc.texto, terminos);
   return {
     texto,
@@ -182,6 +186,15 @@ export function fichaResumida(ficha: unknown, secciones?: ReadonlySet<string>): 
   };
 }
 
+/** Every item of a sheet in one line each (ref, section, source URLs), held items too: in every adjudication batch, so none loses track of what the sheet already has. */
+export function fichaCompacta(ficha: unknown): Objeto[] {
+  if (!esObjeto(ficha)) return [];
+  return [
+    ...lista(ficha.secciones).flatMap((s) => (esObjeto(s) ? lista(s.items).flatMap((i) => (esObjeto(i) ? [{ ref: i.ref, seccion: s.id, fuentes: urlsDe(i), ...(i.hecho ? { hecho: i.hecho } : {}) }] : [])) : [])),
+    ...lista(ficha.en_espera).flatMap((i) => (esObjeto(i) ? [{ ref: i.ref, seccion: i.seccion, en_espera: true, fuentes: urlsDe(i) }] : [])),
+  ];
+}
+
 /** A perfil in short: its limits, and its documents, proposals and messages by id, text and URL. */
 export function perfilResumido(perfil: unknown): Objeto | undefined {
   if (!esObjeto(perfil)) return undefined;
@@ -237,6 +250,8 @@ export interface LotePrompt {
   grupos?: string[];
   secciones?: string[];
   salidas?: string[];
+  /** Characters at the start of the prompt that are the same in every batch of the pass (the cacheable part). */
+  comun?: number;
   caracteres: number;
 }
 
@@ -337,6 +352,21 @@ export function promptClasificacion(base: string, tareas: readonly TareaClasific
   return { prompts: [prompt], lotes: [{ documentos: ids, caracteres: prompt.length }], recortes };
 }
 
+/**
+ * A document's blocks for a prompt: one, or, when even alone it would pass
+ * MAX_PROMPT with the fixed context (`fijo` characters), consecutive parts
+ * that each fit, so no prompt is ever over the limit and no text is lost.
+ */
+export function bloquesDocumento(id: string, meta: Objeto | undefined, texto: string | undefined, extra: Record<string, unknown>, fijo: number, max = MAX_PROMPT): string[] {
+  const entero = bloqueDocumento(id, meta, texto, extra);
+  const sitio = max - fijo - 2_000;
+  if (texto === undefined || entero.length <= sitio) return [entero];
+  const cabida = Math.max(10_000, sitio - (entero.length - texto.length));
+  const partes: string[] = [];
+  for (let i = 0; i < texto.length; i += cabida) partes.push(texto.slice(i, i + cabida));
+  return partes.map((parte, k) => bloqueDocumento(`${id} (parte ${k + 1} de ${partes.length})`, meta, parte, extra));
+}
+
 /** The shared facts: one piece per candidate document with all its classifications, batched by event, with the registry and the published facts. */
 export function promptsHechos(
   base: string,
@@ -344,19 +374,25 @@ export function promptsHechos(
   objetivo = OBJETIVO_JUICIO,
 ): Prompts {
   const recortes: Recorte[] = [];
+  const fijo = [seccionJson('FUENTES', fuentesResumidas(e.fuentes)), seccionNoFiable('HECHOS PUBLICADOS', e.publicados)].join('\n\n');
+  // Room left for the facts the earlier batches wrote (diario.sh appends them to each later prompt).
+  const fijoLargo = base.length + AVISO_DATOS.length + fijo.length + 8 + RESERVA_HECHOS_PREVIOS;
   const piezas: Pieza[] = e.candidatos
-    .map((doc) => {
+    .flatMap((doc) => {
       const { texto, recorte } = textoDocumento(doc, e.terminos);
       if (recorte) recortes.push(recorte);
-      return { id: doc.id, bloque: bloqueDocumento(doc.id, doc.meta, texto, { clasificaciones: doc.clasificaciones }), grupo: eventoDe(doc.clasificaciones), secciones: [], resultados: [] };
+      const grupo = eventoDe(doc.clasificaciones);
+      return bloquesDocumento(doc.id, doc.meta, texto, { clasificaciones: doc.clasificaciones }, fijoLargo).map((bloque, k) => ({ id: k ? `${doc.id}#${k + 1}` : doc.id, bloque, grupo, secciones: [], resultados: [] }));
     })
     .sort((a, b) => comparar(a.grupo, b.grupo) || comparar(a.id, b.id));
-  const fijo = [seccionJson('FUENTES', fuentesResumidas(e.fuentes)), seccionNoFiable('HECHOS PUBLICADOS', e.publicados)].join('\n\n');
-  const lotes = lotesDePiezas(piezas, () => base.length + AVISO_DATOS.length + fijo.length + 8, objetivo);
+  const lotes = lotesDePiezas(piezas, () => fijoLargo, objetivo);
   const grupos = lotes.length ? lotes : [[]];
   const prompts = grupos.map((lote) => promptLote(base, fijo, lote.map((p) => p.bloque)));
   return { prompts, lotes: grupos.map((lote, i) => ({ documentos: lote.map((p) => p.id), grupos: [...new Set(lote.map((p) => p.grupo))], caracteres: prompts[i]!.length })), recortes };
 }
+
+/** Characters kept free in each facts prompt for the facts earlier batches wrote. */
+export const RESERVA_HECHOS_PREVIOS = 40_000;
 
 /** A party's adjudication material: what every batch carries and what is split among them. */
 export interface MaterialAdjudicacion {
@@ -368,7 +404,7 @@ export interface MaterialAdjudicacion {
   busquedas: unknown;
   hechos: unknown;
   /** Each document classified for the party, or found by its equal searches and cached. */
-  documentos: (DocumentoMaterial & { clasificacion?: Objeto; resultados: Objeto[]; exento: boolean })[];
+  documentos: (DocumentoMaterial & { clasificacion?: Objeto; resultados: Objeto[] })[];
   /** Equal-search results with no cached document. */
   resultadosSueltos: Objeto[];
   terminos: readonly string[];
@@ -377,22 +413,36 @@ export interface MaterialAdjudicacion {
 /**
  * A party's adjudication: one piece per document (its classification for the
  * party, its equal-search results, its whole text) and one per result with no
- * document, sorted by the sheet section they touch, then by id; batched with
- * only the sheet sections each batch touches. Every piece, and so every
- * equal-search result, is in exactly one batch.
+ * document, sorted by the sheet section they touch, then by id. Every batch
+ * starts with the same context, so the prompt cache can serve later batches:
+ * criteria, registry, the party's searches, perfil, today's facts and the whole
+ * sheet in one line per item (`fichaCompacta`); then, for the batch only, the
+ * full items of the sections it touches, and its pieces. Every piece, and so
+ * every equal-search result, is in exactly one batch.
  */
 export function promptsAdjudicacion(base: string, m: MaterialAdjudicacion, objetivo = OBJETIVO_JUICIO): Prompts {
   const recortes: Recorte[] = [];
   const seccionesDe = (clasificacion: Objeto | undefined, resultados: Objeto[]) =>
     [...new Set([...(clasificacion && typeof clasificacion.seccion === 'string' ? [clasificacion.seccion] : []), ...resultados.map((r) => SECCION_DE_TIPO[String(r.tipo)] ?? '')].filter(Boolean))].sort(comparar);
   const urls = (resultados: Objeto[]) => [...new Set(resultados.map((r) => String(r.url)))].sort(comparar);
+  const perfil = perfilResumido(m.perfil);
+  const comun = [
+    `CRITERIOS:\n${m.criterios}`,
+    seccionJson('FUENTES', fuentesResumidas(m.fuentes)),
+    seccionNoFiable('BUSQUEDAS', busquedasDelPartido(m.busquedas, m.partido)),
+    ...(perfil ? [seccionNoFiable('PERFIL', perfil)] : []),
+    seccionNoFiable('HECHOS', m.hechos ?? { hechos: [] }),
+    seccionNoFiable('FICHA COMPLETA EN UNA LÍNEA POR ELEMENTO', fichaCompacta(m.ficha).map((i) => JSON.stringify(i)).join('\n')),
+  ].join('\n\n');
+  const fijoDe = (secciones: ReadonlySet<string>) => `${comun}\n\n${seccionNoFiable('FICHA', fichaResumida(m.ficha, secciones))}`;
+  const fijoMax = base.length + AVISO_DATOS.length + fijoDe(new Set(SECCIONES_FICHA)).length + 8;
   const piezas: Pieza[] = [
-    ...m.documentos.map((doc) => {
-      const { texto, recorte } = textoDocumento(doc, m.terminos, doc.exento);
+    ...m.documentos.flatMap((doc) => {
+      const { texto, recorte } = textoDocumento(doc, m.terminos);
       if (recorte) recortes.push(recorte);
       const secciones = seccionesDe(doc.clasificacion, doc.resultados);
       const extra = { ...(doc.clasificacion ? { clasificacion: doc.clasificacion } : {}), ...(doc.resultados.length ? { resultados_equidad: doc.resultados } : {}) };
-      return { id: doc.id, bloque: bloqueDocumento(doc.id, doc.meta, texto, extra), grupo: secciones[0] ?? '~', secciones, resultados: urls(doc.resultados) };
+      return bloquesDocumento(doc.id, doc.meta, texto, extra, fijoMax).map((bloque, k) => ({ id: k ? `${doc.id}#${k + 1}` : doc.id, bloque, grupo: secciones[0] ?? '~', secciones, resultados: k ? [] : urls(doc.resultados) }));
     }),
     ...m.resultadosSueltos.map((r) => {
       const secciones = seccionesDe(undefined, [r]);
@@ -400,30 +450,24 @@ export function promptsAdjudicacion(base: string, m: MaterialAdjudicacion, objet
       return { id, bloque: `RESULTADO DE LA BÚSQUEDA IGUAL (sin documento en la caché):\n${datosNoFiables(id, JSON.stringify(r))}`, grupo: secciones[0] ?? '~', secciones, resultados: urls([r]) };
     }),
   ].sort((a, b) => comparar(a.grupo, b.grupo) || comparar(a.id, b.id));
-  const perfil = perfilResumido(m.perfil);
-  const fijoDe = (secciones: ReadonlySet<string>) =>
-    [
-      `CRITERIOS:\n${m.criterios}`,
-      seccionNoFiable('FICHA', fichaResumida(m.ficha, secciones)),
-      ...(perfil ? [seccionNoFiable('PERFIL', perfil)] : []),
-      seccionJson('FUENTES', fuentesResumidas(m.fuentes)),
-      seccionNoFiable('BUSQUEDAS', busquedasDelPartido(m.busquedas, m.partido)),
-      seccionNoFiable('HECHOS', m.hechos ?? { hechos: [] }),
-    ].join('\n\n');
   const lotes = lotesDePiezas(piezas, (s) => base.length + AVISO_DATOS.length + fijoDe(s).length + 8, objetivo);
   const grupos = lotes.length ? lotes : [[]];
   const prompts = grupos.map((lote) => promptLote(base, fijoDe(new Set(lote.flatMap((p) => p.secciones))), lote.map((p) => p.bloque)));
   return {
     prompts,
     lotes: grupos.map((lote, i) => ({
-      documentos: lote.filter((p) => !p.id.startsWith('resultado ')).map((p) => p.id),
+      documentos: [...new Set(lote.filter((p) => !p.id.startsWith('resultado ')).map((p) => p.id.replace(/#\d+$/, '')))],
       resultados: lote.flatMap((p) => p.resultados),
       secciones: [...new Set(lote.flatMap((p) => p.secciones))].sort(comparar),
+      comun: base.length + AVISO_DATOS.length + comun.length + 4,
       caracteres: prompts[i]!.length,
     })),
     recortes,
   };
 }
+
+/** The sheet sections (fusionar.ts SECCIONES): the most a batch can touch. */
+const SECCIONES_FICHA = ['candidatura', 'lema-y-frases', 'temas', 'por-escrito', 'verificacion', 'historial', 'cambios', 'criticos-defensores', 'encuestas'];
 
 // ---------------------------------------------------------------- search
 

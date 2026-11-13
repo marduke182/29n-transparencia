@@ -48,7 +48,22 @@ describe('validarEsquema and respuestaEstructurada: the answer of each pass, che
   it('joins the batches of one pass in order', () => {
     const a = { partido: 'pp', propuestas: [1], decisiones: [1], objeciones_hechos: [], hosts_sin_registrar: ['b.es'], avisos: [] };
     const b = { partido: 'pp', propuestas: [2], decisiones: [2], objeciones_hechos: [], hosts_sin_registrar: ['a.es', 'b.es'], avisos: ['x'] };
-    expect(unirRespuestas('adjudicacion', [a, b])).toEqual({ partido: 'pp', propuestas: [1, 2], decisiones: [1, 2], objeciones_hechos: [], hosts_sin_registrar: ['a.es', 'b.es'], avisos: ['x'] });
+    expect(unirRespuestas('adjudicacion', [a, b])).toEqual({ valor: { partido: 'pp', propuestas: [1, 2], decisiones: [1, 2], objeciones_hechos: [], hosts_sin_registrar: ['a.es', 'b.es'], avisos: ['x'] }, conflictos: [] });
+  });
+
+  it('merges a shared fact two facts batches wrote with the same key and item, and refuses one with a different item', () => {
+    const item = { texto: 'Debate a cuatro del 26 de noviembre.', estado: 'VERIFICADO', fuentes: [{ url: 'https://oficial.es/debate', medio: 'Oficial' }] };
+    const hecho = (partidos: string[], it: object = item) => ({ hecho: 'debate-oficial-2026-11-26', pregunta: 'Q1', seccion: 'candidatura', partidos, item: it });
+    const uno = { hechos: [hecho(['vox', 'pp'])], descartados: [], avisos: [] };
+    const dos = { hechos: [hecho(['psoe', 'pp'], { estado: 'VERIFICADO', fuentes: [{ medio: 'Oficial', url: 'https://oficial.es/debate' }], texto: 'Debate a cuatro del 26 de noviembre.' })], descartados: [{ doc_id: 'x', motivo: 'y' }], avisos: [] };
+    const { valor, conflictos } = unirRespuestas('hechos', [uno, dos]);
+    expect(conflictos).toEqual([]);
+    // Same item (key order does not matter): one fact, its parties joined in party order.
+    expect(valor.hechos).toEqual([hecho(['pp', 'psoe', 'vox'])]);
+    expect(valor.descartados).toEqual([{ doc_id: 'x', motivo: 'y' }]);
+    expect(uno.hechos[0]!.partidos).toEqual(['vox', 'pp']);
+    const otro = { hechos: [hecho(['frente-amplio'], { ...item, estado: 'PARCIAL' })], descartados: [], avisos: [] };
+    expect(unirRespuestas('hechos', [uno, otro]).conflictos).toEqual(['hecho "debate-oficial-2026-11-26": dos lotes lo escribieron con distinto item, pregunta o seccion']);
   });
 });
 
@@ -151,6 +166,24 @@ describe('juicio-guardar: the script writes only the answers each call may give'
     guardar('--pasada', 'busqueda', '--salidas', salida(3, { respuestas: [{ salida: 'equidad/bulos.vox.json', respuesta: '{"ok": true}' }], avisos: [] }), '');
     expect(existsSync(join(ej, 'equidad', 'bulos.vox.json.error.txt'))).toBe(false);
     expect(readFileSync(join(ej, 'equidad', 'bulos.vox.json'), 'utf8')).toBe('{"ok": true}\n');
+  });
+
+  it('facts in several batches: the earlier facts go to the next batch, a key merged when identical, the pass refused when not', () => {
+    const item = { texto: 'Encuesta del CIS.', estado: 'VERIFICADO', fuentes: [{ url: 'https://cis.es/e', medio: 'CIS' }] };
+    const lote = (partidos: string[], it: object = item) => ({ hechos: [{ hecho: 'encuesta-cis-2026-11-12', pregunta: 'Q7', seccion: 'encuestas', partidos, item: it }], descartados: [], avisos: [] });
+    const previos = spawnSync(process.execPath, [join(import.meta.dirname, 'diario.ts'), 'juicio-previos', '--fecha', FECHA, '--pasada', 'hechos', '--salidas', salida(1, lote(['pp', 'psoe']))], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, N29_CACHE: join(raiz, 'cache'), N29_SITIO: join(raiz, 'sitio') },
+    }).stdout;
+    expect(previos).toMatch(/^\nHECHOS YA ESCRITOS HOY \(por los lotes anteriores de esta pasada\):\n<<<DATOS NO FIABLES [0-9a-f]{24} \| HECHOS YA ESCRITOS HOY/);
+    expect(previos).toContain('"hecho": "encuesta-cis-2026-11-12"');
+    expect(guardar('--pasada', 'hechos', '--salidas', salida(1, lote(['pp', 'psoe'])), salida(2, lote(['vox', 'frente-amplio']))).codigo).toBe(0);
+    expect(JSON.parse(readFileSync(join(ej, 'hechos.json'), 'utf8')).hechos[0].partidos).toEqual(['frente-amplio', 'pp', 'psoe', 'vox']);
+    rmSync(join(ej, 'hechos.json'));
+    const r = guardar('--pasada', 'hechos', '--salidas', salida(1, lote(['pp'])), salida(2, lote(['vox'], { ...item, texto: 'Otra.' })));
+    expect(r.codigo).toBe(1);
+    expect(existsSync(join(ej, 'hechos.json'))).toBe(false);
+    expect(readFileSync(join(ej, 'hechos.json.error.txt'), 'utf8')).toContain('distinto item');
   });
 
   it('adjudication in several batches: one answer file, the lists joined in batch order; one bad batch writes nothing', () => {

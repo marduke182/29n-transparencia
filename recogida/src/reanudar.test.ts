@@ -43,6 +43,7 @@ function preparar(etapa = 'busqueda-completa') {
   return { repo, origen, wt, ej };
 }
 
+let entornoExtra: Record<string, string> = {};
 function diario(...args: string[]) {
   const r = spawnSync('bash', [SCRIPT, '--fecha', FECHA, '--sin-git', ...args], {
     encoding: 'utf8',
@@ -56,6 +57,7 @@ function diario(...args: string[]) {
       N29_BUZON: join(raiz, 'buzon'),
       N29_PRESUPUESTO_USD: '1',
       N29_CLAUDE: join(raiz, 'bin', 'claude'),
+      ...entornoExtra,
     },
   });
   return { codigo: r.status, salida: `${r.stdout}${r.stderr}` };
@@ -192,6 +194,60 @@ fi
     const registro = readFileSync(join(ej, 'diario.log'), 'utf8');
     expect(registro).toMatch(/llamada 1 de 1 terminó con código 1/);
     expect(registro).toMatch(/pasada adjudicacion-pp: 0\.5000 dólares en 1 llamadas/);
+  });
+
+  /** A day stopped at the adjudication check, frente-amplio complete, and a stand-in claude that costs `coste` per call and fails pp's first call. */
+  const adjudicacionConCoste = (coste: string) => {
+    const { ej } = preparar('adjudicacion-completa');
+    mkdirSync(join(raiz, 'tmp'));
+    writeFileSync(join(ej, 'etapas.tsv'), 'busqueda\tok\t\ntraer-busqueda\tok\t\ntareas-clasificar\tok\t\nclasificacion\tok\t\nadjudicacion\tok\t\nadjudicacion-completa\tfallo\tcódigo 1\n');
+    writeFileSync(join(ej, 'tareas-clasificar.json'), '[]\n');
+    writeFileSync(join(ej, 'hechos.json'), '{"hechos": [], "descartados": []}\n');
+    mkdirSync(join(ej, 'adjudicado'));
+    writeFileSync(join(ej, 'adjudicado', 'frente-amplio.json'), '{"partido": "frente-amplio", "propuestas": [], "decisiones": []}\n');
+    const sesiones = join(raiz, 'sesiones.txt');
+    writeFileSync(
+      join(raiz, 'bin', 'claude'),
+      `#!/bin/sh
+[ "$1" = --version ] && { echo "2.1.322 (Claude Code)"; exit 0; }
+p="$(sed -n 's/^Your party is \\([a-z-]*\\):.*/\\1/p' | head -n 1)"
+echo "$p" >>'${sesiones}'
+if [ "$p" != pp ] || [ "$(grep -c -x pp '${sesiones}')" = 2 ]; then
+  printf '{"is_error": false, "total_cost_usd": ${coste}, "structured_output": {"partido": "%s", "propuestas": [], "decisiones": [], "objeciones_hechos": [], "hosts_sin_registrar": [], "avisos": []}}\\n' "$p"
+else
+  echo '{"is_error": true, "subtype": "error_max_budget_usd", "total_cost_usd": ${coste}}'
+  exit 1
+fi
+`,
+    );
+    return { ej, sesiones };
+  };
+
+  it('shares a pass budget across its calls and retries: a retry the rest cannot cover is not made, and the gate stops the day', () => {
+    const { ej, sesiones } = adjudicacionConCoste('0.9');
+    const { salida } = diario('--reanudar', sellar());
+    expect(salida).toMatch(/FALLO en adjudicacion-completa/);
+    const registro = readFileSync(join(ej, 'diario.log'), 'utf8');
+    // pp spent 0.9 of its 1 dollar in round 1; round 2's estimate does not fit in the 0.1 left, so it is not made.
+    expect(registro).toMatch(/llamada 1 de 1: no se hace, el presupuesto que queda a la pasada \(0\.1000 de 1 dólares\) no cubre su estimación/);
+    expect(readFileSync(sesiones, 'utf8')).toBe('pp\npsoe\nvox\n');
+    expect(readFileSync(join(ej, 'gasto.tsv'), 'utf8')).toBe('adjudicacion-pp\tadjudicacion-pp\t1\t0.9\nadjudicacion-psoe\tadjudicacion-psoe\t1\t0.9\nadjudicacion-vox\tadjudicacion-vox\t1\t0.9\n');
+  });
+
+  it('stops the day with a clear message when the day budget would be passed', () => {
+    entornoExtra = { N29_PRESUPUESTO_DIA_USD: '0.7' };
+    try {
+      const { ej, sesiones } = adjudicacionConCoste('0.5');
+      const { salida } = diario('--reanudar', sellar());
+      expect(salida).toMatch(/FALLO en adjudicacion:/);
+      const registro = readFileSync(join(ej, 'diario.log'), 'utf8');
+      expect(registro).toMatch(/PRESUPUESTO DEL DÍA AGOTADO: 0\.5000 dólares gastados y la llamada 1 de adjudicacion-psoe se estima en [0-9.]+; el tope del día es 0\.7/);
+      // Nothing more is called after the cap.
+      expect(readFileSync(sesiones, 'utf8')).toBe('pp\n');
+      expect(readFileSync(join(ej, 'resumen.md'), 'utf8')).toContain('PRESUPUESTO DEL DÍA AGOTADO');
+    } finally {
+      entornoExtra = {};
+    }
   });
 
   // A day stopped at the site checks after the merge (11 Nov 2026): the merge runs again from the kept adjudication.

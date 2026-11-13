@@ -12,6 +12,8 @@ import {
   llamadasBusqueda,
   perfilResumido,
   promptClasificacion,
+  bloquesDocumento,
+  fichaCompacta,
   promptsAdjudicacion,
   promptsBusqueda,
   promptsHechos,
@@ -56,8 +58,6 @@ describe('textos: nada se recorta por longitud', () => {
     expect(texto).toMatch(/\[… \d+ caracteres omitidos por la ejecución …\]/);
     expect(recorte).toMatchObject({ doc_id: 'b', url: 'https://medio.es/b', via: 'web', caracteres: largo.texto.length, ventanas: 4 });
     expect(textoDocumento(largo, TERMINOS)).toEqual({ texto, recorte });
-    // An exempt document (equal search, or irrelevant only for this party) stays whole whatever its length.
-    expect(textoDocumento(largo, TERMINOS, true)).toEqual({ texto: largo.texto });
     // Whole words only: "Voxel" is not Vox.
     expect(extractoNeutral(`${'z'.repeat(5000)} Voxel ${'z'.repeat(5000)}`, TERMINOS, 1_000_000, 100).ventanas).toBe(1);
   });
@@ -66,6 +66,34 @@ describe('textos: nada se recorta por longitud', () => {
     const bloque = bloqueDocumento('aa11', { url: 'https://medio.es/a', url_canonica: 'https://medio.es/a', consultado: '2026-11-12', via: 'rss', origen: 'buzon-enlaces' }, 'x'.repeat(90_000), { clasificacion: { relevante: true } });
     expect(bloque).toMatch(/^DOCUMENTO aa11:\n<<<DATOS NO FIABLES [0-9a-f]{24} \| DOCUMENTO aa11>>>\nMETA: \{"doc_id":"aa11","url":"https:\/\/medio.es\/a",.*"origen":"buzon-enlaces","clasificacion":\{"relevante":true\}\}\nTEXTO:\nx{90000}\n<<<FIN DE LOS DATOS NO FIABLES [0-9a-f]{24}>>>$/);
     expect(bloqueDocumento('bb', undefined, undefined)).toContain('TEXTO: (no está en la caché)');
+  });
+});
+
+describe('extractos: los mismos términos para los cuatro partidos', () => {
+  it('keeps short all-caps acronyms (PP, IU) as whole words, so a PP sentence is kept like a PSOE one', () => {
+    const terminos = terminosNeutrales({ ...ALIAS, pp: alias(['Partido Popular', 'PP'], ['Feijóo']), 'frente-amplio': alias(['Frente Amplio', 'IU', 'Sumar'], []) });
+    expect(terminos).toEqual(expect.arrayContaining(['PP', 'IU', 'PSOE']));
+    expect(terminosNeutrales({ pp: alias(['pp', 'P', 'Pp'], []) })).toEqual([]);
+    const relleno = 'lorem ipsum '.repeat(25_000);
+    const texto = `${relleno}El PP votó en contra.${relleno}El PSOE votó a favor.${relleno}IU se abstuvo.${relleno}Un apps y un ppm no cuentan.${relleno}`;
+    const { texto: extracto, ventanas } = extractoNeutral(texto, terminos, 1_000_000, 200);
+    expect(extracto).toContain('El PP votó en contra.');
+    expect(extracto).toContain('El PSOE votó a favor.');
+    expect(extracto).toContain('IU se abstuvo.');
+    expect(extracto).not.toContain('Un apps y un ppm');
+    // The start, and one window per party sentence.
+    expect(ventanas).toBe(4);
+  });
+
+  it('splits a document that alone would pass MAX_PROMPT into parts that each fit, losing no text', () => {
+    const texto = 'abcdefghij'.repeat(60_000);
+    const bloques = bloquesDocumento('dd', { url: 'https://medio.es/dd' }, texto, {}, 300_000, 480_000);
+    expect(bloques.length).toBeGreaterThan(1);
+    for (const b of bloques) expect(b.length + 300_000).toBeLessThanOrEqual(480_000);
+    expect(bloques[0]).toContain('DOCUMENTO dd (parte 1 de');
+    const recuperado = bloques.map((b) => /TEXTO:\n([\s\S]*)\n<<<FIN/.exec(b)![1]).join('');
+    expect(recuperado).toBe(texto);
+    expect(bloquesDocumento('dd', undefined, 'corto', {}, 300_000)).toHaveLength(1);
   });
 });
 
@@ -128,17 +156,17 @@ describe('lotes de los juicios', () => {
     expect(eventoDe([c('Q2', 'temas', 'VIV'), c('Q1', 'candidatura', 'POL', false)])).toBe('Q2/temas/VIV');
     const doc = (id: string, ...cl: object[]) => ({ id, meta: { url: `https://medio.es/${id}` }, texto: 'z'.repeat(40_000), clasificaciones: cl as Record<string, unknown>[] });
     const candidatos = [doc('e1', c('Q7', 'encuestas', 'POL')), doc('d1', c('Q2', 'temas', 'VIV')), doc('e2', c('Q7', 'encuestas', 'POL')), doc('d2', c('Q2', 'temas', 'VIV')), doc('e3', c('Q7', 'encuestas', 'POL'))];
-    const r = promptsHechos('BASE', { fuentes: FUENTES, publicados: [], candidatos, terminos: TERMINOS }, 110_000);
+    const r = promptsHechos('BASE', { fuentes: FUENTES, publicados: [], candidatos, terminos: TERMINOS }, 150_000);
     expect(r.lotes.map((l) => [l.grupos, l.documentos])).toEqual([
       [['Q2/temas/VIV'], ['d1', 'd2']],
       [['Q7/encuestas/POL'], ['e1', 'e2']],
       [['Q7/encuestas/POL'], ['e3']],
     ]);
-    // The event of three polls (120 000 characters) is the only one split, because it does not fit alone.
-    const amplio = promptsHechos('BASE', { fuentes: FUENTES, publicados: [], candidatos, terminos: TERMINOS }, 140_000);
+    // The event of three polls (120 000 characters, plus the room kept for earlier facts) is the only one split, because it does not fit alone.
+    const amplio = promptsHechos('BASE', { fuentes: FUENTES, publicados: [], candidatos, terminos: TERMINOS }, 180_000);
     expect(amplio.lotes.map((l) => l.documentos)).toEqual([['d1', 'd2'], ['e1', 'e2', 'e3']]);
     expect(r.prompts.every((p) => p.includes('HECHOS PUBLICADOS:\n<<<DATOS NO FIABLES'))).toBe(true);
-    expect(promptsHechos('BASE', { fuentes: FUENTES, publicados: [], candidatos, terminos: TERMINOS }, 110_000)).toEqual(r);
+    expect(promptsHechos('BASE', { fuentes: FUENTES, publicados: [], candidatos, terminos: TERMINOS }, 150_000)).toEqual(r);
   });
 
   const material = (documentos: MaterialAdjudicacion['documentos'], resultadosSueltos: Record<string, unknown>[] = []): MaterialAdjudicacion => ({
@@ -154,13 +182,26 @@ describe('lotes de los juicios', () => {
     terminos: TERMINOS,
   });
 
+  it('starts every adjudication batch with the same context, the whole sheet in one line per item included', () => {
+    const docs: MaterialAdjudicacion['documentos'] = ['a1', 'a2', 'a3'].map((id, n) => ({ id, meta: { url: `https://medio.es/${id}` }, texto: 'q'.repeat(70_000), clasificacion: { relevante: true, seccion: ['temas', 'encuestas', 'cambios'][n] }, resultados: [] }));
+    const r = promptsAdjudicacion('BASE', material(docs), 120_000);
+    expect(r.prompts.length).toBe(3);
+    const comun = r.lotes[0]!.comun!;
+    expect(r.lotes.every((l) => l.comun === comun)).toBe(true);
+    for (const p of r.prompts) expect(p.slice(0, comun)).toBe(r.prompts[0]!.slice(0, comun));
+    expect(r.prompts[0]!.slice(0, comun)).toMatch(/CRITERIOS:[\s\S]*FUENTES \(JSON\)[\s\S]*BUSQUEDAS:[\s\S]*HECHOS:[\s\S]*FICHA COMPLETA EN UNA LÍNEA POR ELEMENTO:/);
+    // Every batch knows every item of the sheet by ref, section and URL, even of sections it does not touch.
+    for (const p of r.prompts) for (const ref of ['"ref":"1","seccion":"temas"', '"ref":"2","seccion":"encuestas"', '"ref":"3","seccion":"criticos-defensores"', '"ref":"4","seccion":"criticos-defensores","en_espera":true']) expect(p).toContain(ref);
+    expect(fichaCompacta(FICHA)).toContainEqual({ ref: '2', seccion: 'encuestas', fuentes: ['https://medio.es/b'], hecho: 'encuesta-b' });
+  });
+
   it('puts each document and each equal-search result of a party in exactly one adjudication batch, with only the sheet sections it touches', () => {
     const res = (url: string, tipo: string) => ({ url, tipo, busqueda: `diario-2026-11-12-${tipo}`, quien: 'X' });
     const docs: MaterialAdjudicacion['documentos'] = [
-      { id: 'a1', meta: { url: 'https://medio.es/a1' }, texto: 't'.repeat(60_000), clasificacion: { relevante: true, seccion: 'temas' }, resultados: [], exento: false },
-      { id: 'c1', meta: { url: 'https://medio.es/c1' }, texto: 'c'.repeat(60_000), clasificacion: { relevante: true, seccion: 'criticos-defensores' }, resultados: [res('https://medio.es/c1', 'criticos')], exento: true },
-      { id: 'c2', meta: { url: 'https://medio.es/c2' }, texto: 'd'.repeat(60_000), resultados: [res('https://medio.es/c2', 'defensores'), res('https://medio.es/c2', 'criticos')], exento: true },
-      { id: 'n1', meta: { url: 'https://medio.es/n1' }, texto: 'n'.repeat(60_000), clasificacion: { relevante: false, seccion: null }, resultados: [], exento: true },
+      { id: 'a1', meta: { url: 'https://medio.es/a1' }, texto: 't'.repeat(60_000), clasificacion: { relevante: true, seccion: 'temas' }, resultados: [] },
+      { id: 'c1', meta: { url: 'https://medio.es/c1' }, texto: 'c'.repeat(60_000), clasificacion: { relevante: true, seccion: 'criticos-defensores' }, resultados: [res('https://medio.es/c1', 'criticos')] },
+      { id: 'c2', meta: { url: 'https://medio.es/c2' }, texto: 'd'.repeat(60_000), resultados: [res('https://medio.es/c2', 'defensores'), res('https://medio.es/c2', 'criticos')] },
+      { id: 'n1', meta: { url: 'https://medio.es/n1' }, texto: 'n'.repeat(60_000), clasificacion: { relevante: false, seccion: null }, resultados: [] },
     ];
     const r = promptsAdjudicacion('BASE', material(docs, [res('https://otro.es/x', 'bulos')]), 140_000);
     const vistos = r.lotes.flatMap((l) => l.resultados ?? []);
@@ -175,6 +216,7 @@ describe('lotes de los juicios', () => {
       const prompt = r.prompts[n]!;
       expect(prompt).toContain('FICHA:\n<<<DATOS NO FIABLES');
       expect(prompt).toContain('"secciones_incluidas"');
+      // Full text of items only for the sections the batch touches (the one-line list has no text).
       if (!lote.secciones!.includes('temas')) expect(prompt).not.toContain('Propone A.');
       if (!lote.secciones!.includes('criticos-defensores')) expect(prompt).not.toContain('Critica C.');
       // Card, pending and discarded items in every batch.

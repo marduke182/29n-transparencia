@@ -197,11 +197,47 @@ export function respuestaEstructurada(pasada: PasadaJuicio, salida: unknown): { 
   return errores.length ? { errores } : { valor: valor as Objeto, errores };
 }
 
-/** Several batches' answers of a facts or adjudication pass, as one answer file (lists concatenated in batch order). */
-export function unirRespuestas(pasada: 'hechos' | 'adjudicacion', valores: readonly Objeto[]): Objeto {
+/** JSON with object keys sorted: two values are the same when their canonical forms are. */
+export const canonico = (v: unknown): string =>
+  Array.isArray(v) ? `[${v.map(canonico).join(',')}]` : esObjeto(v) ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonico(v[k])}`).join(',')}}` : JSON.stringify(v);
+
+/**
+ * Several batches' answers of a facts or adjudication pass, as one answer
+ * file: lists concatenated in batch order. Facts that share a key are one
+ * fact: merged (the union of `partidos`, in party order) when their question,
+ * section and item are identical; otherwise a conflict, and nothing is merged
+ * (the caller writes nothing and the gate retries the pass).
+ */
+export function unirRespuestas(pasada: 'hechos' | 'adjudicacion', valores: readonly Objeto[]): { valor: Objeto; conflictos: string[] } {
   const listas = pasada === 'hechos' ? ['hechos', 'descartados', 'avisos'] : ['propuestas', 'decisiones', 'objeciones_hechos', 'hosts_sin_registrar', 'avisos'];
   const unido: Objeto = pasada === 'adjudicacion' ? { partido: valores[0]?.partido } : {};
   for (const clave of listas) unido[clave] = valores.flatMap((v) => (Array.isArray(v[clave]) ? (v[clave] as unknown[]) : []));
   if (pasada === 'adjudicacion') unido.hosts_sin_registrar = [...new Set(unido.hosts_sin_registrar as string[])].sort();
-  return unido;
+  const conflictos: string[] = [];
+  if (pasada === 'hechos') {
+    const ORDEN = ['frente-amplio', 'pp', 'psoe', 'vox'];
+    const porClave = new Map<string, Objeto>();
+    const hechos: Objeto[] = [];
+    for (const h of unido.hechos as unknown[]) {
+      if (!esObjeto(h) || typeof h.hecho !== 'string') {
+        hechos.push(h as Objeto);
+        continue;
+      }
+      const previo = porClave.get(h.hecho);
+      if (!previo) {
+        const copia = { ...h, partidos: Array.isArray(h.partidos) ? [...h.partidos] : h.partidos };
+        porClave.set(h.hecho, copia);
+        hechos.push(copia);
+        continue;
+      }
+      if (canonico(previo.item) !== canonico(h.item) || previo.pregunta !== h.pregunta || previo.seccion !== h.seccion) {
+        conflictos.push(`hecho "${h.hecho}": dos lotes lo escribieron con distinto item, pregunta o seccion`);
+        continue;
+      }
+      const partidos = new Set([...(Array.isArray(previo.partidos) ? previo.partidos : []), ...(Array.isArray(h.partidos) ? h.partidos : [])].map(String));
+      previo.partidos = [...partidos].sort((a, b) => (ORDEN.indexOf(a) + 1 || 99) - (ORDEN.indexOf(b) + 1 || 99) || (a < b ? -1 : a > b ? 1 : 0));
+    }
+    unido.hechos = hechos;
+  }
+  return { valor: unido, conflictos };
 }

@@ -79,16 +79,22 @@ describe('busqueda-completa', () => {
     // 4 equal searches and 4 source queries declared ok: 5 registered over the two calls is too few.
     expect(glue('busqueda-completa')).toMatchObject({ codigo: 1 });
     expect(readFileSync(join(ej, 'busqueda-faltan.txt'), 'utf8')).toContain('declaran 8 búsquedas web hechas, pero Claude Code registró 5');
-    expect(busquedasDeSesion(ej, 'busqueda')).toBe(5);
+    expect(busquedasDeSesion(ej, 'busqueda')).toEqual({ total: 5, ilegibles: [] });
     salida(3, 3);
-    expect(busquedasDeSesion(ej, 'busqueda')).toBe(8);
+    expect(busquedasDeSesion(ej, 'busqueda')).toEqual({ total: 8, ilegibles: [] });
     expect(glue('busqueda-completa')).toMatchObject({ codigo: 0 });
-    // An older run's single output counts too; an output without the count turns the check off, as before.
+    // An older run's single output counts too; an unreadable output or one without the count is listed and counts 0,
+    // so the check stays on: here it now fails again.
     escribir(join(ej, 'claude', 'busqueda.salida.json'), { modelUsage: { m: { webSearchRequests: 1 } } });
-    expect(busquedasDeSesion(ej, 'busqueda')).toBe(9);
+    expect(busquedasDeSesion(ej, 'busqueda')).toEqual({ total: 9, ilegibles: [] });
+    rmSync(join(ej, 'claude', 'busqueda.salida-3.json'));
+    escribir(join(ej, 'claude', 'busqueda.salida-3.json'), 'no es JSON');
     salida(4, undefined);
-    expect(busquedasDeSesion(ej, 'busqueda')).toBeUndefined();
-    expect(busquedasDeSesion(ej, 'busqueda-reintento')).toBeUndefined();
+    expect(busquedasDeSesion(ej, 'busqueda')).toEqual({ total: 6, ilegibles: ['claude/busqueda.salida-3.json', 'claude/busqueda.salida-4.json'] });
+    const r = glue('busqueda-completa');
+    expect(r.codigo).toBe(1);
+    expect(r.salida).toContain('claude/busqueda.salida-3.json: sin recuento de búsquedas web legible; cuenta 0');
+    expect(busquedasDeSesion(ej, 'busqueda-reintento')).toEqual({ ilegibles: [] });
   });
 
   it('does not offer a retry for gaps another session cannot fix', () => {

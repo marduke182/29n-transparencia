@@ -31,6 +31,8 @@ import { citableEn, hostsRegistrados } from './citas.ts';
 import { ESQUEMAS, respuestaEstructurada, unirRespuestas, type PasadaJuicio } from './juicio.ts';
 import {
   MAX_PROMPT,
+  RESERVA_HECHOS_PREVIOS,
+  seccionNoFiable,
   MAX_TAREAS_CLASIFICACION,
   OBJETIVO_CLASIFICACION,
   lotesDePiezas,
@@ -880,10 +882,26 @@ export function preparar(entrada: {
   equidad: Partial<Record<TipoBusqueda, Partial<Record<PartyId, string[]>>>>;
   /** Whether a URL may back a published item (citas.ts, citableEn). */
   citable: (url: string) => boolean;
+  /** The party sheets as the run read them (antes/): a proposal citing a URL one of their items already cites is held for review. */
+  existentes: Partial<Record<PartyId, unknown>>;
 }): { porPartido: Record<PartyId, Objeto[]>; descartes: Descarte[]; deHechos: number } {
   const porPartido = Object.fromEntries(PARTY_IDS.map((id) => [id, [] as Objeto[]])) as Record<PartyId, Objeto[]>;
   const descartes: Descarte[] = [];
   const completa = (tipo: TipoBusqueda) => PARTY_IDS.every((p) => Array.isArray(entrada.equidad[tipo]?.[p]));
+  const citadasPor = new Map<PartyId, Map<string, string>>();
+  const yaCitadas = (partido: PartyId) => {
+    let mapa = citadasPor.get(partido);
+    if (!mapa) {
+      mapa = new Map();
+      const ficha = entrada.existentes[partido];
+      const items = esObjeto(ficha)
+        ? [...lista(ficha.secciones).flatMap((s) => (esObjeto(s) ? lista(s.items).map((i) => [String(s.id), i] as const) : [])), ...lista(ficha.en_espera).map((i) => [`${esObjeto(i) ? String(i.seccion) : ''}, en espera`, i] as const)]
+        : [];
+      for (const [seccion, item] of items) if (esObjeto(item)) for (const url of urlsFuentes(item)) if (!mapa.has(url)) mapa.set(url, `ref ${String(item.ref)}, ${seccion}`);
+      citadasPor.set(partido, mapa);
+    }
+    return mapa;
+  };
   const sinRegistrar = (valor: unknown) => {
     const url = urlsEn(valor).find((u) => !entrada.citable(u));
     return url === undefined ? undefined : `${sinConsulta(url)}: host sin registrar en fuentes.json; no se publica sin revisión`;
@@ -899,6 +917,9 @@ export function preparar(entrada: {
       if (propuesta.partido !== propio) return descartar(`propuesta para "${String(propuesta.partido)}" en el archivo de ${propio}: cada adjudicador solo propone para su partido`);
       const ajena = sinRegistrar(propuesta);
       if (ajena) return descartar(ajena);
+      // A URL an item of the sheet already cites (any section, held items too): ya_publicado, for the owner to review.
+      const repetida = propuesta.destino === 'perfil' ? undefined : urlsFuentes(esObjeto(propuesta.item) ? propuesta.item : {}).map((u) => [u, yaCitadas(propio as PartyId).get(u)] as const).find(([, ref]) => ref);
+      if (repetida) return descartar(`ya_publicado (para revisar): ${repetida[0]} ya está en la ficha (${repetida[1]})`);
       if (propuesta.destino === 'perfil') return void porPartido[propio as PartyId].push(propuesta);
       const seccion = String(propuesta.seccion);
       const item = esObjeto(propuesta.item) ? propuesta.item : {};
@@ -1750,7 +1771,7 @@ function documentoCache(cache: string, id: string): { meta?: Objeto; texto?: str
  * shared-fact candidates by event; a party's documents, equal-search results,
  * sheet, perfil, registry, searches, facts and criteria.
  */
-function materialJuicio(e: { fecha: string; pasada: Pasada; lote?: string; partido?: PartyId; ejecucion: string; cache: string; t: string; datos: string; emisores: Emisor[]; base: string }): Prompts {
+export function materialJuicio(e: { fecha: string; pasada: Pasada; lote?: string; partido?: PartyId; ejecucion: string; cache: string; t: string; datos: string; emisores: Emisor[]; base: string; objetivo?: number }): Prompts {
   const antes = join(e.ejecucion, 'antes');
   const alias = (leerJsonSiExiste(join(e.datos, 'partidos-alias.json')) ?? {}) as Partial<Record<PartyId, Alias>>;
   const terminos = terminosNeutrales(alias);
@@ -1768,7 +1789,7 @@ function materialJuicio(e: { fecha: string; pasada: Pasada; lote?: string; parti
       return r.length >= 2 || r.some((x) => x.respuesta.hecho_compartido === true || lista(x.respuesta.otros_partidos).length > 0);
     });
     const candidatos = ids.map((id) => ({ ...documento(id), clasificaciones: clasificaciones.filter((c) => c.tarea.doc_id === id).map((c) => c.respuesta) }));
-    return promptsHechos(e.base, { fuentes: e.emisores, publicados: hechosPublicados(fichas), candidatos, terminos });
+    return promptsHechos(e.base, { fuentes: e.emisores, publicados: hechosPublicados(fichas), candidatos, terminos }, e.objetivo);
   }
   const p = e.partido!;
   const criterios = ['preguntas.md', 'verificacion.md', 'enlaces.md', 'neutralidad.md', 'equidad.md'].map((f) => `### ${f}\n${readFileSync(join(e.t, 'criterios', f), 'utf8')}`).join('\n\n');
@@ -1776,28 +1797,7 @@ function materialJuicio(e: { fecha: string; pasada: Pasada; lote?: string; parti
   const resultados = leerEquidad(e.ejecucion, e.fecha)
     .salidas.filter(({ salida }) => salida.partido === p)
     .flatMap(({ salida }) => lista(salida.resultados).flatMap((r): Objeto[] => (esObjeto(r) && typeof r.url === 'string' ? [{ ...r, tipo: salida.tipo, busqueda: salida.busqueda }] : [])));
-  const porDoc = new Map<string, Objeto[]>();
-  const sueltos: Objeto[] = [];
-  for (const r of resultados) {
-    const canonica = canonicaSegura(String(r.url));
-    const id = canonica ? idDocumento(canonica) : undefined;
-    if (id && existsSync(join(e.cache, 'docs', id, 'meta.json'))) porDoc.set(id, [...(porDoc.get(id) ?? []), r as Objeto]);
-    else sueltos.push(r as Objeto);
-  }
-  const suyas = new Map(clasificaciones.filter((c) => c.tarea.partido === p).map((c) => [c.tarea.doc_id, c]));
-  const ids = [...new Set([...suyas.keys(), ...porDoc.keys()])].sort(comparar);
-  const documentos = ids.map((id) => {
-    const c = suyas.get(id);
-    // Whole text kept for a document of the equal search, and for one only this party's classifier found irrelevant.
-    const otras = clasificaciones.filter((x) => x.tarea.doc_id === id && x.tarea.partido !== p);
-    const relevanteParaOtro = otras.some((x) => x.respuesta.relevante === true);
-    const exento = porDoc.has(id) || (c?.respuesta.relevante === false && relevanteParaOtro);
-    // A document no classifier found relevant for any party, and no equal search found, goes in by its classification
-    // only: the same rule for the four parties, so none gets text another does not.
-    const ninguno = !porDoc.has(id) && c?.respuesta.relevante !== true && !relevanteParaOtro;
-    const doc = documento(id);
-    return { ...doc, ...(ninguno && doc.texto !== undefined ? { texto: SIN_TEXTO_IRRELEVANTE } : {}), ...(c ? { clasificacion: c.respuesta } : {}), resultados: porDoc.get(id) ?? [], exento };
-  });
+  const documentos = documentosAdjudicacion(p, clasificaciones, resultados, documento, (id) => existsSync(join(e.cache, 'docs', id, 'meta.json')));
   return promptsAdjudicacion(e.base, {
     partido: p,
     criterios,
@@ -1806,36 +1806,91 @@ function materialJuicio(e: { fecha: string; pasada: Pasada; lote?: string; parti
     fuentes: e.emisores,
     busquedas: leerJsonSiExiste(join(antes, 'busquedas.json')),
     hechos: leerJsonSiExiste(join(e.ejecucion, 'hechos.json')),
-    documentos,
-    resultadosSueltos: sueltos,
+    documentos: documentos.documentos,
+    resultadosSueltos: documentos.sueltos,
     terminos,
-  });
+  }, e.objetivo);
 }
 
-/** The text an adjudication gets for a document no classifier found relevant for any party (and no equal search found). */
-export const SIN_TEXTO_IRRELEVANTE = '(Texto no incluido: ningún clasificador encontró este documento relevante para ningún partido; la misma regla para los cuatro. Decide con su clasificación.)';
+/**
+ * A party's adjudication documents: each document classified for it, with its
+ * classification, and each cached document its equal searches found, with
+ * those results; every one with its whole text, whatever its classification
+ * (the same for the four parties). Results whose document is not cached are
+ * returned apart (`sueltos`).
+ */
+export function documentosAdjudicacion(
+  partido: PartyId,
+  clasificaciones: readonly { tarea: Pick<TareaClasificar, 'doc_id' | 'partido'>; respuesta: Objeto }[],
+  resultados: readonly Objeto[],
+  documento: (id: string) => DocumentoMaterial,
+  enCache: (id: string) => boolean,
+): { documentos: (DocumentoMaterial & { clasificacion?: Objeto; resultados: Objeto[] })[]; sueltos: Objeto[] } {
+  const porDoc = new Map<string, Objeto[]>();
+  const sueltos: Objeto[] = [];
+  for (const r of resultados) {
+    const canonica = canonicaSegura(String(r.url));
+    const id = canonica ? idDocumento(canonica) : undefined;
+    if (id && enCache(id)) porDoc.set(id, [...(porDoc.get(id) ?? []), r]);
+    else sueltos.push(r);
+  }
+  const suyas = new Map(clasificaciones.filter((c) => c.tarea.partido === partido).map((c) => [c.tarea.doc_id, c.respuesta]));
+  const ids = [...new Set([...suyas.keys(), ...porDoc.keys()])].sort(comparar);
+  return { documentos: ids.map((id) => ({ ...documento(id), ...(suyas.has(id) ? { clasificacion: suyas.get(id)! } : {}), resultados: porDoc.get(id) ?? [] })), sueltos };
+}
+
+/**
+ * Prices (dollars per million tokens) for the cost estimate of a call, from
+ * the environment, with defaults on the high side of what the runs of 11–12
+ * Nov 2026 paid: N29_PRECIO_{OPUS,HAIKU}_{ENTRADA,SALIDA}_USD_MTOK.
+ */
+export const PRECIOS_POR_DEFECTO = { opus: { entrada: 5, salida: 25 }, haiku: { entrada: 1, salida: 5 } } as const;
+/** Output tokens counted on top of the prompt: a call's answer at most, roughly. */
+export const SALIDA_ESTIMADA_TOKENS = { opus: 16_000, haiku: 8_000 } as const;
+/** Dollars per search task (its Haiku subagent's searches and fetches), N29_COSTE_TAREA_BUSQUEDA_USD; the live call of 13 Nov paid 0.14. */
+export const COSTE_TAREA_BUSQUEDA_POR_DEFECTO = 0.4;
+
+const precio = (variable: string, porDefecto: number) => {
+  const valor = Number(process.env[variable]);
+  return Number.isFinite(valor) && valor > 0 ? valor : porDefecto;
+};
+
+/** The estimated cost of one call: its prompt (characters ÷ 3.5 tokens) and an output margin at the model's prices, plus its search tasks. */
+export function estimarCoste(modelo: 'opus' | 'haiku', caracteres: number, tareasBusqueda = 0): number {
+  const M = modelo.toUpperCase();
+  const entrada = precio(`N29_PRECIO_${M}_ENTRADA_USD_MTOK`, PRECIOS_POR_DEFECTO[modelo].entrada);
+  const salida = precio(`N29_PRECIO_${M}_SALIDA_USD_MTOK`, PRECIOS_POR_DEFECTO[modelo].salida);
+  const porTarea = precio('N29_COSTE_TAREA_BUSQUEDA_USD', COSTE_TAREA_BUSQUEDA_POR_DEFECTO);
+  return ((caracteres / 3.5) * entrada + SALIDA_ESTIMADA_TOKENS[modelo] * salida) / 1e6 + tareasBusqueda * porTarea;
+}
 
 /** The name of a Claude session: the pass, with its batch or party (diario.sh: busqueda, clasificacion-01, adjudicacion-pp…). */
 const nombreSesion = (pasada: Pasada, lote?: string, partido?: string) => (lote ? `${pasada}-${lote}` : partido ? `${pasada}-${partido}` : pasada);
 
-/** WebSearch calls Claude Code registered for a search session, over every call of it (claude/<sesión>.salida-<n>.json, and the single file of older runs); undefined when any lacks the count. */
-export function busquedasDeSesion(ejecucion: string, sesion: string): number | undefined {
+/**
+ * WebSearch calls Claude Code registered for a search session, summed over
+ * every call of it (claude/<sesión>.salida-<n>.json, and the single file of
+ * older runs). An output that cannot be read or has no count is listed in
+ * `ilegibles` and counts 0: the check stays on (a missing count can only make
+ * it stricter). `total` is undefined only when the session left no output.
+ */
+export function busquedasDeSesion(ejecucion: string, sesion: string): { total?: number; ilegibles: string[] } {
   const carpeta = join(ejecucion, 'claude');
   const archivos = (existsSync(carpeta) ? readdirSync(carpeta) : []).filter((f) => f === `${sesion}.salida.json` || new RegExp(`^${sesion}\\.salida-\\d+\\.json$`).test(f)).sort(comparar);
-  if (!archivos.length) return undefined;
+  if (!archivos.length) return { ilegibles: [] };
   let total = 0;
+  const ilegibles: string[] = [];
   for (const archivo of archivos) {
-    let salida: unknown;
+    let n: number | undefined;
     try {
-      salida = leerJson(join(carpeta, archivo));
+      n = busquedasRegistradas(leerJson(join(carpeta, archivo)));
     } catch {
-      return undefined;
+      n = undefined;
     }
-    const n = busquedasRegistradas(salida);
-    if (n === undefined) return undefined;
-    total += n;
+    if (n === undefined) ilegibles.push(`claude/${archivo}`);
+    else total += n;
   }
-  return total;
+  return { total, ilegibles };
 }
 
 async function main(args: string[]): Promise<number> {
@@ -1957,6 +2012,7 @@ async function main(args: string[]): Promise<number> {
         equidad: leerEquidad(ejecucion, fecha).urls,
         // The registry as the run read it (antes/), and the owner's own documents in the cache.
         citable: citableEn(cache, hostsRegistrados(leerJson(join(ejecucion, 'antes', 'fuentes.json')))),
+        existentes: Object.fromEntries(PARTY_IDS.map((p) => [p, leerJsonSiExiste(join(ejecucion, 'antes', 'partidos', `${p}.json`))])),
       });
       for (const p of PARTY_IDS) escribirJson(join(ejecucion, 'fusion', `${p}.json`), { propuestas: porPartido[p] });
       escribirJson(join(ejecucion, 'preparar.json'), { fecha, descartes, deHechos });
@@ -2021,6 +2077,13 @@ async function main(args: string[]): Promise<number> {
       const previstas = esPasadaBusqueda(pasada) ? Math.max(0, ...llamadasBusqueda(fuentes, iguales).map((l) => busquedasWebPrevistas(l.fuentes, l.iguales))) : 0;
       writeFileSync(join(dir, 'busquedas-web.txt'), `${limiteBusquedasWeb(pasada, previstas)}\n`);
       // A prompt over MAX_PROMPT is not sent (diario.sh skips it): said here, so the log shows why.
+      // The estimated cost of each call (estimarCoste): diario.sh skips a call the pass's remaining budget cannot cover.
+      const modelo = esPasadaBusqueda(pasada) ? 'opus' : MODELO_JUICIO[pasada as keyof typeof MODELO_JUICIO];
+      const tareasPorLlamada = esPasadaBusqueda(pasada) ? llamadasBusqueda(fuentes, iguales).map((l) => l.fuentes.length + l.iguales.length) : [];
+      writeFileSync(
+        join(dir, 'estimaciones.txt'),
+        material.prompts.map((x, n) => `prompt-${n + 1}.txt ${estimarCoste(modelo, x.length + (pasada === 'hechos' && n > 0 ? RESERVA_HECHOS_PREVIOS : 0), tareasPorLlamada[n] ?? 0).toFixed(4)}\n`).join(''),
+      );
       const largos = material.prompts.flatMap((x, n) => (x.length > MAX_PROMPT ? [`prompt-${n + 1}.txt`] : []));
       writeFileSync(join(dir, 'saltar.txt'), largos.map((x) => `${x}\n`).join(''));
       process.stdout.write(`${material.prompts.length} llamadas: ${material.prompts.map((x) => x.length).join(', ')} caracteres${material.recortes.length ? `; ${material.recortes.length} documentos reducidos a extractos` : ''}\n`);
@@ -2109,7 +2172,32 @@ async function main(args: string[]): Promise<number> {
         escribir(`${destino}.error.txt`, `una respuesta es de otro partido que ${partido}\n`);
         return 1;
       }
-      escribir(destino, `${JSON.stringify(unirRespuestas(tipo, validos), null, 2)}\n`);
+      const { valor, conflictos } = unirRespuestas(tipo, validos);
+      if (conflictos.length) {
+        for (const c of conflictos) process.stdout.write(`no vale: ${c}\n`);
+        escribir(`${destino}.error.txt`, `${conflictos.join('\n')}\n`);
+        return 1;
+      }
+      escribir(destino, `${JSON.stringify(valor, null, 2)}\n`);
+      return 0;
+    }
+    case 'juicio-previos': {
+      // The facts the earlier batches of the facts pass wrote today (their valid outputs after --salidas), as the
+      // section diario.sh appends to the next batch's prompt: untrusted, model-written data.
+      const s = args.indexOf('--salidas');
+      const resto = s === -1 ? [] : args.slice(s + 1);
+      const fin = resto.findIndex((a) => a.startsWith('--'));
+      const archivos = (fin === -1 ? resto : resto.slice(0, fin)).filter(Boolean);
+      const valores = archivos.flatMap((archivo) => {
+        try {
+          const r = respuestaEstructurada('hechos', leerJson(archivo));
+          return r.valor ? [r.valor] : [];
+        } catch {
+          return [];
+        }
+      });
+      const hechos = lista(unirRespuestas('hechos', valores).valor.hechos);
+      process.stdout.write(`\n${seccionNoFiable('HECHOS YA ESCRITOS HOY (por los lotes anteriores de esta pasada)', hechos)}\n`);
       return 0;
     }
     case 'juicio-ensayo': {
@@ -2186,7 +2274,11 @@ async function main(args: string[]): Promise<number> {
         return existsSync(`${ruta}.error.txt`) ? { error: true } : undefined;
       };
       // Summed over every call of the session (the search runs in several calls).
-      const registradas = (pasada: string) => busquedasDeSesion(ejecucion, pasada);
+      const registradas = (pasada: string) => {
+        const { total, ilegibles } = busquedasDeSesion(ejecucion, pasada);
+        for (const archivo of ilegibles) process.stdout.write(`${archivo}: sin recuento de búsquedas web legible; cuenta 0\n`);
+        return total;
+      };
       // After a retry, its answers are checked against its own count, the rest against pass 1's.
       const reintentoHecho = existsSync(join(ejecucion, 'busqueda-reintento.iniciado'));
       const revision = revisarBusqueda({

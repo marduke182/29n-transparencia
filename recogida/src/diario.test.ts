@@ -29,6 +29,7 @@ import {
   lotesClasificar,
   motivoNoArticulo,
   nombreLote,
+  documentosAdjudicacion,
   NOMBRE_LOTE,
   busquedasDeSesion,
   prefiltrarTareas,
@@ -369,6 +370,7 @@ describe('preparar', () => {
   it('keeps own-party proposals and drops other parties, adjudicator hechos and unsearched critics', () => {
     const { porPartido, descartes } = preparar({
       citable: () => true,
+      existentes: {},
       fecha: FECHA,
       equidad: equidadCompleta,
       hechos: undefined,
@@ -402,6 +404,7 @@ describe('preparar', () => {
   it('drops a kind whose equal search lacks a party, and polls during the ban', () => {
     const { porPartido, descartes } = preparar({
       citable: () => true,
+      existentes: {},
       fecha: '2026-11-24',
       equidad: { criticos: { pp: ['https://medio.es/critica'] } },
       hechos: undefined,
@@ -428,6 +431,7 @@ describe('preparar', () => {
     };
     const { porPartido, descartes } = preparar({
       citable: () => true,
+      existentes: {},
       fecha: FECHA,
       equidad: {},
       hechos,
@@ -460,6 +464,7 @@ describe('preparar', () => {
     const causa = item('Un juzgado admite una querella.', urls[0]!, { busqueda: 'diario-2026-11-10-causas' });
     const { porPartido, descartes } = preparar({
       citable: () => true,
+      existentes: {},
       fecha: FECHA,
       equidad,
       hechos: undefined,
@@ -471,7 +476,7 @@ describe('preparar', () => {
 
   it('copies each shared fact identically to every party it names', () => {
     const hecho = { hecho: 'debate-rtve-2026-11-09', seccion: 'candidatura', partidos: ['psoe', 'pp', 'pp'], item: item('Debate a dos.', 'https://rtve.es/d') };
-    const { porPartido, deHechos, descartes } = preparar({ citable: () => true, fecha: FECHA, equidad: {}, adjudicados: [], hechos: { hechos: [hecho, { ...hecho }, { hecho: 'solo', seccion: 'temas', partidos: ['pp'], item: item('Uno.', 'https://a.es/x') }] } });
+    const { porPartido, deHechos, descartes } = preparar({ citable: () => true, existentes: {}, fecha: FECHA, equidad: {}, adjudicados: [], hechos: { hechos: [hecho, { ...hecho }, { hecho: 'solo', seccion: 'temas', partidos: ['pp'], item: item('Uno.', 'https://a.es/x') }] } });
     expect(deHechos).toBe(2);
     expect(porPartido.pp[0]).toEqual({ partido: 'pp', seccion: 'candidatura', item: { ...hecho.item, hecho: 'debate-rtve-2026-11-09' } });
     expect(porPartido.psoe[0]!.item).toEqual(porPartido.pp[0]!.item);
@@ -487,6 +492,7 @@ describe('preparar: hosts sin registrar', () => {
       fecha: FECHA,
       equidad: {},
       citable,
+      existentes: { pp: { secciones: [{ id: 'temas', items: [{ ref: '7', fuentes: [{ url: 'https://medio.es/ya' }] }] }], en_espera: [{ ref: '8', seccion: 'criticos-defensores', fuentes: [{ url: 'https://medio.es/espera' }] }] } },
       adjudicados: [
         {
           archivo: 'pp.json',
@@ -496,6 +502,9 @@ describe('preparar: hosts sin registrar', () => {
               { partido: 'pp', seccion: 'temas', pregunta: 'Q2', item: item('https://inyectado.com/a') },
               { partido: 'pp', seccion: 'temas', pregunta: 'Q2', item: item('https://medio.es/b', { cita: { texto: 'x', url: 'https://inyectado.com/b' } }) },
               { partido: 'pp', destino: 'perfil', tipo: 'documento', documento: { titulo: 'T', url: 'https://inyectado.com/c' } },
+              // A URL the sheet already cites, in another section or among the held items: ya_publicado, for review.
+              { partido: 'pp', seccion: 'historial', pregunta: 'Q4', item: item('https://www.medio.es/ya?utm_source=x') },
+              { partido: 'pp', seccion: 'temas', pregunta: 'Q2', item: item('https://medio.es/espera') },
             ],
           },
         },
@@ -508,7 +517,29 @@ describe('preparar: hosts sin registrar', () => {
       ['pp.json', 1, 'https://inyectado.com/a: host sin registrar en fuentes.json; no se publica sin revisión'],
       ['pp.json', 2, 'https://inyectado.com/b: host sin registrar en fuentes.json; no se publica sin revisión'],
       ['pp.json', 3, 'https://inyectado.com/c: host sin registrar en fuentes.json; no se publica sin revisión'],
+      ['pp.json', 4, 'ya_publicado (para revisar): https://medio.es/ya ya está en la ficha (ref 7, temas)'],
+      ['pp.json', 5, 'ya_publicado (para revisar): https://medio.es/espera ya está en la ficha (ref 8, criticos-defensores, en espera)'],
     ]);
+  });
+});
+
+describe('documentosAdjudicacion (materialJuicio)', () => {
+  it('gives a party every document classified for it and every cached document its equal searches found, all with their whole text, whatever their classification', () => {
+    const cl = (doc_id: string, partido: string, relevante: boolean) => ({ tarea: { doc_id, partido: partido as PartyId }, respuesta: { doc_id, partido, relevante } });
+    const clasificaciones = [cl('rel', 'pp', true), cl('solo-aqui', 'pp', false), cl('solo-aqui', 'vox', true), cl('nadie', 'pp', false), cl('nadie', 'vox', false), cl('otro', 'vox', true)];
+    const igual = idDocumento('https://medio.es/igual');
+    const resultados = [{ url: 'https://medio.es/igual', tipo: 'criticos' }, { url: 'https://suelto.es/x', tipo: 'bulos' }];
+    const documento = (id: string) => ({ id, meta: { url: `https://medio.es/${id}` }, texto: `texto de ${id}` });
+    const { documentos, sueltos } = documentosAdjudicacion('pp', clasificaciones, resultados, documento, (id) => id === igual);
+    expect(documentos.map((d) => d.id)).toEqual([igual, 'nadie', 'rel', 'solo-aqui'].sort());
+    // No document loses its text: not by its classification, not by who found it.
+    for (const d of documentos) expect(d.texto).toBe(`texto de ${d.id}`);
+    expect(documentos.find((d) => d.id === 'nadie')!.clasificacion).toEqual({ doc_id: 'nadie', partido: 'pp', relevante: false });
+    expect(documentos.find((d) => d.id === igual)).toMatchObject({ resultados: [{ url: 'https://medio.es/igual', tipo: 'criticos' }] });
+    expect(documentos.find((d) => d.id === igual)!.clasificacion).toBeUndefined();
+    expect(sueltos).toEqual([{ url: 'https://suelto.es/x', tipo: 'bulos' }]);
+    // The same rule for another party: vox gets its own classifications, and no equal-search results.
+    expect(documentosAdjudicacion('vox', clasificaciones, [], documento, () => true).documentos.map((d) => [d.id, d.texto])).toEqual(['nadie', 'otro', 'solo-aqui'].map((id) => [id, `texto de ${id}`]));
   });
 });
 
@@ -717,6 +748,7 @@ describe('búsqueda igual: bloqueada para todos', () => {
     expect(estadoSalida(tarea!, { resultados: [], consultas: [{ texto: 'PP critica', estado: 'ok' }, { texto: 'PP critica', estado: 'error', nota: 'HTTP 500' }] })).toBe('incompleta');
     const { porPartido, descartes } = preparar({
       citable: () => true,
+      existentes: {},
       fecha: FECHA,
       equidad: { criticos: Object.fromEntries(PARTIDOS.filter((p) => p !== 'pp').map((p) => [p, ['https://medio.es/c']])) },
       hechos: undefined,
