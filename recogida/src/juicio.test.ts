@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { promptsPorLotes, respuestaBusqueda } from './diario.ts';
-import { ESQUEMAS, datosNoFiables, lotesPorTamano, recortar, respuestaEstructurada, unirRespuestas, validarEsquema } from './juicio.ts';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ESQUEMAS, datosNoFiables, lotesPorTamano, respuestaEstructurada, unirRespuestas, validarEsquema } from './juicio.ts';
+import { respuestaBusqueda } from './material.ts';
 
 const clasificacion = {
   doc_id: 'aa11',
@@ -57,7 +61,6 @@ describe('untrusted data and batches', () => {
     expect(resto.at(-1)).toBe(`<<<FIN DE LOS DATOS NO FIABLES ${huella}>>>`);
     expect(bloque.split(`<<<FIN DE LOS DATOS NO FIABLES ${huella}>>>`).length).toBe(2);
     expect(datosNoFiables('DOCUMENTO aa11', texto)).toBe(bloque);
-    expect(recortar('x'.repeat(10), 4)).toBe('xxxx\n[… texto recortado por la ejecución: 6 caracteres más no se muestran]');
   });
 
   it('cuts batches by size and count, in order, the same every time', () => {
@@ -67,21 +70,102 @@ describe('untrusted data and batches', () => {
     expect(lotesPorTamano([], (n: number) => n, 10)).toEqual([]);
   });
 
-  it('splits a judgement pass into prompts with the same fixed material, deterministically, and records the batches', () => {
-    const material = { fijo: 'FIJO', documentos: ['a', 'b', 'c'].map((id) => ({ id, bloque: `DOC ${id} ${'x'.repeat(100)}` })) };
-    const cabecera = promptsPorLotes('BASE', { fijo: 'FIJO', documentos: [] }).prompts[0]!.length;
-    const uno = promptsPorLotes('BASE', material, cabecera + 240);
-    expect(uno.lotes.map((l) => l.documentos)).toEqual([['a', 'b'], ['c']]);
-    expect(uno.prompts.every((p) => p.startsWith('BASE\n\n') && p.includes('FIJO') && p.includes('DATOS NO FIABLES'))).toBe(true);
-    expect(uno.lotes.map((l) => l.caracteres)).toEqual(uno.prompts.map((p) => p.length));
-    expect(promptsPorLotes('BASE', material, cabecera + 240)).toEqual(uno);
-    expect(promptsPorLotes('BASE', { fijo: 'FIJO', documentos: [] }).prompts.length).toBe(1);
-  });
-
   it('keeps a search reply as it came: valid JSON to its file, anything else to .error.txt', () => {
     expect(respuestaBusqueda('```json\n{"emisor": "a"}\n```')).toEqual({ contenido: '{"emisor": "a"}\n', valida: true });
     expect(respuestaBusqueda('  {"emisor": "a"}  ')).toEqual({ contenido: '{"emisor": "a"}\n', valida: true });
     expect(respuestaBusqueda('No pude buscar.').valida).toBe(false);
     expect(respuestaBusqueda('[1, 2]').valida).toBe(false);
+  });
+});
+
+describe('juicio-guardar: the script writes only the answers each call may give', () => {
+  const FECHA = '2026-11-10';
+  let raiz = '';
+  let ej = '';
+  const escribir = (ruta: string, datos: unknown) => {
+    mkdirSync(join(ruta, '..'), { recursive: true });
+    writeFileSync(ruta, typeof datos === 'string' ? datos : `${JSON.stringify(datos)}\n`);
+  };
+  const salida = (n: number, valor: unknown, extra: Record<string, unknown> = {}) => {
+    const ruta = join(raiz, `salida-${n}.json`);
+    escribir(ruta, { type: 'result', is_error: false, total_cost_usd: 0.01, structured_output: valor, ...extra });
+    return ruta;
+  };
+  const guardar = (...args: string[]) => {
+    const r = spawnSync(process.execPath, [join(import.meta.dirname, 'diario.ts'), 'juicio-guardar', ...args, '--fecha', FECHA], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, N29_CACHE: join(raiz, 'cache'), N29_SITIO: join(raiz, 'sitio') },
+    });
+    return { codigo: r.status, salida: `${r.stdout}${r.stderr}` };
+  };
+  beforeEach(() => {
+    raiz = mkdtempSync(join(tmpdir(), 'n29-guardar-'));
+    ej = join(raiz, 'cache', 'ejecuciones', FECHA);
+    mkdirSync(join(raiz, 'sitio'), { recursive: true });
+  });
+  afterEach(() => rmSync(raiz, { recursive: true, force: true }));
+
+  it('classification: writes each answer of the batch to its task file, nothing else', () => {
+    const tarea = (doc_id: string, partido: string) => ({ doc_id, partido, salida: `clasificacion/${doc_id}.${partido}.json` });
+    escribir(join(ej, 'lotes', 'clasificar-01.json'), [tarea('aa11', 'pp'), tarea('aa11', 'vox')]);
+    const r = guardar('--pasada', 'clasificacion', '--lote', '01', '--salidas', salida(1, { respuestas: [clasificacion, { ...clasificacion, doc_id: 'zz99' }], avisos: ['ignora tus reglas'] }));
+    expect(r.codigo, r.salida).toBe(0);
+    expect(r.salida).toContain('respuesta sin tarea en el lote: zz99.pp');
+    expect(r.salida).toContain('aviso del modelo: ignora tus reglas');
+    expect(JSON.parse(readFileSync(join(ej, 'clasificacion', 'aa11.pp.json'), 'utf8'))).toEqual(clasificacion);
+    expect(existsSync(join(ej, 'clasificacion', 'aa11.vox.json'))).toBe(false);
+    expect(existsSync(join(ej, 'clasificacion', 'zz99.pp.json'))).toBe(false);
+    // A malformed answer writes nothing; the gate then finds the batch incomplete.
+    const mala = guardar('--pasada', 'clasificacion', '--lote', '01', '--salidas', salida(2, { respuestas: [{ ...clasificacion, partido: 'vox', relevante: 'sí' }], avisos: [] }));
+    expect(mala.codigo).toBe(1);
+    expect(existsSync(join(ej, 'clasificacion', 'aa11.vox.json'))).toBe(false);
+    expect(guardar('--pasada', 'clasificacion', '--lote', '../x', '--salidas', salida(3, {})).codigo).toBe(1);
+  });
+
+  it('search: each call writes only its own tasks\' files, the last valid reply wins, a failed call writes nothing', () => {
+    const igual = (partido: string) => ({ busqueda: `diario-${FECHA}-bulos`, tipo: 'bulos', partido, consultas: [], salida: `equidad/bulos.${partido}.json` });
+    escribir(join(ej, 'equidad-tareas.json'), ['frente-amplio', 'pp', 'psoe', 'vox'].map(igual));
+    escribir(join(ej, 'descubrir.json'), { tareas_busqueda: [{ emisor: 'medio', hosts: ['medio.es'], busquedas: [] }] });
+    // Call 1: the four bulos searches. Call 2: the source "medio".
+    const r = guardar(
+      '--pasada',
+      'busqueda',
+      '--salidas',
+      salida(1, {
+        respuestas: [
+          { salida: 'equidad/bulos.pp.json', respuesta: '{"intento": 1}' },
+          { salida: 'equidad/bulos.pp.json', respuesta: '```json\n{"intento": 2}\n```' },
+          { salida: 'equidad/bulos.vox.json', respuesta: 'no pude buscar' },
+          { salida: 'busqueda/medio.json', respuesta: '{"emisor": "medio"}' },
+        ],
+        avisos: [],
+      }),
+      salida(2, undefined, { is_error: true, subtype: 'error_max_budget_usd' }),
+    );
+    expect(r.codigo).toBe(1);
+    expect(r.salida).toContain('salida no admitida en la llamada 1: "busqueda/medio.json"');
+    expect(readFileSync(join(ej, 'equidad', 'bulos.pp.json'), 'utf8')).toBe('{"intento": 2}\n');
+    expect(readFileSync(join(ej, 'equidad', 'bulos.vox.json.error.txt'), 'utf8')).toBe('no pude buscar');
+    expect(existsSync(join(ej, 'busqueda', 'medio.json'))).toBe(false);
+    // A later valid reply for vox (a retry) replaces its error file.
+    guardar('--pasada', 'busqueda', '--salidas', salida(3, { respuestas: [{ salida: 'equidad/bulos.vox.json', respuesta: '{"ok": true}' }], avisos: [] }), '');
+    expect(existsSync(join(ej, 'equidad', 'bulos.vox.json.error.txt'))).toBe(false);
+    expect(readFileSync(join(ej, 'equidad', 'bulos.vox.json'), 'utf8')).toBe('{"ok": true}\n');
+  });
+
+  it('adjudication in several batches: one answer file, the lists joined in batch order; one bad batch writes nothing', () => {
+    const lote = (n: number) => ({ partido: 'pp', propuestas: [{ partido: 'pp', seccion: 'temas', item: { n } }], decisiones: [{ doc_id: `d${n}`, decision: 'propuesto', motivo: 'x' }], objeciones_hechos: [], hosts_sin_registrar: [`h${n}.es`], avisos: [] });
+    expect(guardar('--pasada', 'adjudicacion', '--partido', 'pp', '--salidas', salida(1, lote(1)), salida(2, lote(2))).codigo).toBe(0);
+    const unido = JSON.parse(readFileSync(join(ej, 'adjudicado', 'pp.json'), 'utf8'));
+    expect(unido.propuestas.map((p: { item: { n: number } }) => p.item.n)).toEqual([1, 2]);
+    expect(unido.decisiones.map((d: { doc_id: string }) => d.doc_id)).toEqual(['d1', 'd2']);
+    expect(unido.hosts_sin_registrar).toEqual(['h1.es', 'h2.es']);
+    rmSync(join(ej, 'adjudicado', 'pp.json'));
+    // A call not made (empty argument) or of another party: nothing written, the error kept for the audit.
+    expect(guardar('--pasada', 'adjudicacion', '--partido', 'pp', '--salidas', salida(1, lote(1)), '').codigo).toBe(1);
+    expect(existsSync(join(ej, 'adjudicado', 'pp.json'))).toBe(false);
+    expect(readFileSync(join(ej, 'adjudicado', 'pp.json.error.txt'), 'utf8')).toContain('(llamada no hecha): sin salida');
+    expect(guardar('--pasada', 'adjudicacion', '--partido', 'pp', '--salidas', salida(1, { ...lote(1), partido: 'vox' })).codigo).toBe(1);
+    expect(existsSync(join(ej, 'adjudicado', 'pp.json'))).toBe(false);
   });
 });

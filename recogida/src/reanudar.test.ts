@@ -165,7 +165,9 @@ echo "$p" >>'${sesiones}'
 if [ "$p" != pp ] || [ "$(grep -c -x pp '${sesiones}')" = 2 ]; then
   printf '{"is_error": false, "structured_output": {"partido": "%s", "propuestas": [], "decisiones": [], "objeciones_hechos": [], "hosts_sin_registrar": [], "avisos": []}}\\n' "$p"
 else
-  echo '{"is_error": false, "result": "sin salida estructurada"}'
+  # As claude -p does on an error (here, the budget): JSON on stdout with the cost so far, exit 1.
+  echo '{"is_error": true, "subtype": "error_max_budget_usd", "total_cost_usd": 0.5}'
+  exit 1
 fi
 `,
     );
@@ -185,7 +187,11 @@ fi
     expect(readFileSync(join(ej, 'claude', 'adjudicacion-pp.prompt-1.txt'), 'utf8')).toContain('Your party is pp:');
     // The script wrote the answer from the structured output; pp's failed first call left only its error file, set aside.
     expect(JSON.parse(readFileSync(join(ej, 'adjudicado', 'pp.json'), 'utf8')).partido).toBe('pp');
-    expect(readFileSync(join(ej, 'anterior', 'adjudicacion-2', 'adjudicado', 'pp.json.error.txt'), 'utf8')).toMatch(/structured_output/);
+    // A failed call does not end the day: its answer is missing, and the second round redoes it.
+    expect(readFileSync(join(ej, 'anterior', 'adjudicacion-2', 'adjudicado', 'pp.json.error.txt'), 'utf8')).toMatch(/terminó con error: error_max_budget_usd/);
+    const registro = readFileSync(join(ej, 'diario.log'), 'utf8');
+    expect(registro).toMatch(/llamada 1 de 1 terminó con código 1/);
+    expect(registro).toMatch(/pasada adjudicacion-pp: 0\.5000 dólares en 1 llamadas/);
   });
 
   // A day stopped at the site checks after the merge (11 Nov 2026): the merge runs again from the kept adjudication.

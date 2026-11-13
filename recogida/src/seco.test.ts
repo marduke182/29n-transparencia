@@ -50,7 +50,7 @@ describe('diario.sh --seco', () => {
       if (!busqueda) expect(ajustes.permissions.allow, sesion).toEqual(['StructuredOutput']);
       expect(JSON.parse(leer(`${sesion}.esquema.json`)).type, sesion).toBe('object');
       expect(JSON.parse(leer(`${sesion}.agentes.json`)), sesion).toEqual(busqueda ? expect.objectContaining({ 'buscador-fuente': expect.anything() }) : {});
-      expect(JSON.parse(leer(`${sesion}.lotes.json`)).length, sesion).toBe(busqueda ? 0 : readdirSync(claude).filter((f) => f.startsWith(`${sesion}.prompt-`)).length);
+      expect(JSON.parse(leer(`${sesion}.lotes.json`)).length, sesion).toBe(readdirSync(claude).filter((f) => f.startsWith(`${sesion}.prompt-`)).length);
     }
   });
 

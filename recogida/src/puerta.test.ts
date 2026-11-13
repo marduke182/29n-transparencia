@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { consultasFuente } from './descubrir.ts';
+import { busquedasDeSesion } from './diario.ts';
 
 const FECHA = '2026-11-10';
 const PARTIDOS = ['frente-amplio', 'pp', 'psoe', 'vox'];
@@ -66,6 +67,30 @@ describe('busqueda-completa', () => {
     expect(glue('busqueda-completa')).toMatchObject({ codigo: 1, salida: 'faltan equidad-tareas.json\n' });
   });
 
+  it('compares the searches the answers declare with the sum Claude Code registered over every call of the pass', () => {
+    // A stub claude's outputs, one per call, as diario.sh copies them to claude/.
+    const psoe = join(ej, 'equidad', 'causas.psoe.json');
+    writeFileSync(psoe, readFileSync(`${psoe}.error.txt`, 'utf8').replace(/\]\}\n$/, '\n'));
+    rmSync(`${psoe}.error.txt`);
+    const salida = (n: number, busquedas: number | undefined) =>
+      escribir(join(ej, 'claude', `busqueda.salida-${n}.json`), { type: 'result', is_error: false, total_cost_usd: 0.1, structured_output: {}, modelUsage: busquedas === undefined ? { 'claude-opus': {} } : { 'claude-opus': { webSearchRequests: 0 }, 'claude-haiku': { webSearchRequests: busquedas } } });
+    salida(1, 3);
+    salida(2, 2);
+    // 4 equal searches and 4 source queries declared ok: 5 registered over the two calls is too few.
+    expect(glue('busqueda-completa')).toMatchObject({ codigo: 1 });
+    expect(readFileSync(join(ej, 'busqueda-faltan.txt'), 'utf8')).toContain('declaran 8 búsquedas web hechas, pero Claude Code registró 5');
+    expect(busquedasDeSesion(ej, 'busqueda')).toBe(5);
+    salida(3, 3);
+    expect(busquedasDeSesion(ej, 'busqueda')).toBe(8);
+    expect(glue('busqueda-completa')).toMatchObject({ codigo: 0 });
+    // An older run's single output counts too; an output without the count turns the check off, as before.
+    escribir(join(ej, 'claude', 'busqueda.salida.json'), { modelUsage: { m: { webSearchRequests: 1 } } });
+    expect(busquedasDeSesion(ej, 'busqueda')).toBe(9);
+    salida(4, undefined);
+    expect(busquedasDeSesion(ej, 'busqueda')).toBeUndefined();
+    expect(busquedasDeSesion(ej, 'busqueda-reintento')).toBeUndefined();
+  });
+
   it('does not offer a retry for gaps another session cannot fix', () => {
     const tareas = JSON.parse(readFileSync(join(ej, 'equidad-tareas.json'), 'utf8')) as unknown[];
     escribir(join(ej, 'equidad-tareas.json'), tareas.slice(0, 3));
@@ -87,7 +112,9 @@ describe('clasificacion-completa', () => {
     expect(existsSync(join(ej, 'clasificacion', 'aa.vox.json'))).toBe(true);
     expect(glue('clasificacion-completa', '--preparar-reintento').codigo).toBe(3);
     expect(existsSync(join(ej, 'reintento-anterior', 'clasificacion', 'aa.vox.json'))).toBe(true);
-    expect(readFileSync(join(ej, 'lotes', 'clasificar-reintento.rutas.txt'), 'utf8')).toBe('./clasificacion/aa.vox.json\n./clasificacion/bb.psoe.json\n');
+    // The retry is batched like the first round: one batch here (two small documents), named reintento-01.
+    expect(readFileSync(join(ej, 'lotes', 'clasificar-reintento-01.rutas.txt'), 'utf8')).toBe('./clasificacion/aa.vox.json\n./clasificacion/bb.psoe.json\n');
+    expect(glue('clasificacion-completa', '--lote', 'reintento-01').codigo).toBe(1);
     escribir(join(ej, 'clasificacion', 'aa.vox.json'), { doc_id: 'aa', partido: 'vox' });
     escribir(join(ej, 'clasificacion', 'bb.psoe.json'), { doc_id: 'bb', partido: 'psoe' });
     expect(glue('clasificacion-completa', '--lote', '01').codigo).toBe(0);

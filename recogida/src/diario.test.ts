@@ -29,6 +29,8 @@ import {
   lotesClasificar,
   motivoNoArticulo,
   nombreLote,
+  NOMBRE_LOTE,
+  busquedasDeSesion,
   prefiltrarTareas,
   problemaClasificacion,
   TAMANO_LOTE_CLASIFICAR,
@@ -326,20 +328,27 @@ describe('clasificación por lotes', () => {
     expect(new Set(descartados_previos.map((d) => d.motivo)).size).toBe(1);
   });
 
-  it('cuts fixed batches sorted by task id, blind to the party', () => {
+  it('cuts batches sorted by task id, blind to the party, never splitting a document\'s tasks, each document counted once', () => {
     const tareas = ['c3', 'a1', 'b2'].flatMap((id) => [...PARTIDOS].reverse().map((p) => tarea(id, p)));
+    const ids = (lotes: { doc_id: string; partido: string }[][]) => lotes.map((l) => l.map((t) => `${t.doc_id}.${t.partido}`));
+    // By count: a document's four tasks stay together, so a batch of 5 holds one document.
     const lotes = lotesClasificar(tareas, 5);
-    expect(lotes.map((l) => l.length)).toEqual([5, 5, 2]);
+    expect(lotes.map((l) => l.length)).toEqual([4, 4, 4]);
     expect(lotes.flat().map((t) => t.salida)).toEqual([...tareas.map((t) => t.salida)].sort());
-    expect(lotes[0]!.map((t) => `${t.doc_id}.${t.partido}`)).toEqual(['a1.frente-amplio', 'a1.pp', 'a1.psoe', 'a1.vox', 'b2.frente-amplio']);
+    expect(lotesClasificar(tareas, 8).map((l) => l.length)).toEqual([8, 4]);
     expect(lotesClasificar(tareas, 5)).toEqual(lotesClasificar([...tareas].reverse(), 5));
-    expect(TAMANO_LOTE_CLASIFICAR).toBe(25);
-    expect(lotesClasificar(Array.from({ length: 617 }, (_, n) => tarea(`d${String(n).padStart(3, '0')}`, 'pp'))).length).toBe(25);
-    // By size too: each batch carries at most 120 000 characters of documents, and a larger document goes alone.
-    const porTamano = lotesClasificar(tareas, 25, (t) => (t.doc_id === 'b2' ? 200_000 : 50_000));
-    expect(porTamano.map((l) => l.map((t) => `${t.doc_id}.${t.partido}`))).toEqual([['a1.frente-amplio', 'a1.pp'], ['a1.psoe', 'a1.vox'], ['b2.frente-amplio'], ['b2.pp'], ['b2.psoe'], ['b2.vox'], ['c3.frente-amplio', 'c3.pp'], ['c3.psoe', 'c3.vox']]);
-    expect(porTamano).toEqual(lotesClasificar([...tareas].reverse(), 25, (t) => (t.doc_id === 'b2' ? 200_000 : 50_000)));
+    expect(TAMANO_LOTE_CLASIFICAR).toBe(20);
+    expect(lotesClasificar(Array.from({ length: 617 }, (_, n) => tarea(`d${String(n).padStart(3, '0')}`, 'pp'))).length).toBe(31);
+    // By size: each document's length counts once (not once per party); one longer than the target goes alone.
+    const largo = (id: string) => (id === 'b2' ? 200_000 : 25_000);
+    const porTamano = lotesClasificar(tareas, 20, largo);
+    expect(ids(porTamano)).toEqual([PARTIDOS.map((p) => `a1.${p}`), PARTIDOS.map((p) => `b2.${p}`), PARTIDOS.map((p) => `c3.${p}`)]);
+    expect(ids(lotesClasificar(tareas, 20, () => 25_000))).toEqual([[...PARTIDOS.map((p) => `a1.${p}`), ...PARTIDOS.map((p) => `b2.${p}`)], PARTIDOS.map((p) => `c3.${p}`)]);
+    expect(porTamano).toEqual(lotesClasificar([...tareas].reverse(), 20, largo));
     expect(nombreLote(3)).toBe('03');
+    expect(nombreLote(123)).toBe('123');
+    for (const bueno of ['01', '99', '123', 'reintento-01', 'reintento-100']) expect(NOMBRE_LOTE.test(bueno), bueno).toBe(true);
+    for (const malo of ['1', '1234', 'reintento', 'reintento-1', '01a', '../01']) expect(NOMBRE_LOTE.test(malo), malo).toBe(false);
   });
 
   it('accepts a saved classification only as a JSON object for the task\'s doc_id and party', () => {
@@ -1029,7 +1038,7 @@ describe('faltasBusqueda', () => {
     // Pass 1: a (4) + 16 equal searches × their unblocked queries (28) = 32; the retry: the atrasos task's 4.
     expect(faltasBusqueda({ ...todas, busquedasReales: 32, reintento: { ...reintento, busquedasReales: 4 } })).toEqual([]);
     expect(faltasBusqueda({ ...todas, busquedasReales: 32, reintento: { ...reintento, busquedasReales: 3 } })).toEqual([
-      'claude/busqueda-reintento.salida.json: las respuestas reintentadas declaran 4 búsquedas web hechas, pero Claude Code registró 3',
+      'claude/busqueda-reintento.salida-*.json: las respuestas reintentadas declaran 4 búsquedas web hechas, pero Claude Code registró 3',
     ]);
     // The day task of the same source is not counted as retried: only its own path is.
     expect(faltasBusqueda({ ...todas, busquedasReales: 31, reintento: { ...reintento, busquedasReales: 500 } })).toHaveLength(1);
@@ -1077,7 +1086,7 @@ describe('faltasBusqueda', () => {
     const sinVox = iguales.filter((t) => !(t.tipo === 'defensores' && t.partido === 'vox'));
     expect(revisarBusqueda({ ...base, iguales: sinVox, busquedasReales: 1 }).definitivas).toEqual([
       'equidad: defensores sin tarea para vox',
-      'claude/busqueda.salida.json: las respuestas de la pasada declaran 34 búsquedas web hechas, pero Claude Code registró 1',
+      'claude/busqueda.salida-*.json: las respuestas de la pasada declaran 34 búsquedas web hechas, pero Claude Code registró 1',
     ]);
   });
 
@@ -1117,13 +1126,13 @@ describe('faltasBusqueda', () => {
     // Declared: 4 queries × 2 sources, plus 4 parties × (2 + 2 + 2 + 1 unblocked queries: one bulos query is blocked) = 8 + 28 = 36.
     expect(faltasBusqueda({ ...base, busquedasReales: 36 })).toEqual([]);
     expect(faltasBusqueda({ ...base, busquedasReales: 203 })).toEqual([]);
-    expect(faltasBusqueda({ ...base, busquedasReales: 35 })).toEqual(['claude/busqueda.salida.json: las respuestas de la pasada declaran 36 búsquedas web hechas, pero Claude Code registró 35']);
+    expect(faltasBusqueda({ ...base, busquedasReales: 35 })).toEqual(['claude/busqueda.salida-*.json: las respuestas de la pasada declaran 36 búsquedas web hechas, pero Claude Code registró 35']);
     // After a retry, each session's answers are checked against that session's own count.
     const reintento = { fuentes: ['b'], iguales: PARTIDOS.map((p) => `equidad/causas.${p}.json`) };
     // Retried: source b (4) + causas × 4 parties × 2 queries (8) = 12; pass 1: the other 24.
     expect(faltasBusqueda({ ...base, busquedasReales: 24, reintento: { ...reintento, busquedasReales: 12 } })).toEqual([]);
     expect(faltasBusqueda({ ...base, busquedasReales: 24, reintento: { ...reintento, busquedasReales: 11 } })).toEqual([
-      'claude/busqueda-reintento.salida.json: las respuestas reintentadas declaran 12 búsquedas web hechas, pero Claude Code registró 11',
+      'claude/busqueda-reintento.salida-*.json: las respuestas reintentadas declaran 12 búsquedas web hechas, pero Claude Code registró 11',
     ]);
     // A large retry count does not cover answers that came from pass 1.
     expect(faltasBusqueda({ ...base, busquedasReales: 23, reintento: { ...reintento, busquedasReales: 500 } })).toHaveLength(1);

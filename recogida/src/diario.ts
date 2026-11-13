@@ -28,7 +28,25 @@ import { PARTY_IDS, idDocumento, raizCache, rutaDeEntorno, urlCanonica, type Met
 import { accesoDesdeRegistro, leerRegistro, salidaTarea, terminosDe, type Alias, type Candidato, type Descubrimiento, type Emisor, type TareaBusqueda } from './descubrir.ts';
 import { clavesDe, urlsEn, VEDA_ENCUESTAS } from './fusionar.ts';
 import { citableEn, hostsRegistrados } from './citas.ts';
-import { AVISO_DATOS, ESQUEMAS, MAX_CARACTERES_CLASIFICACION, MAX_TEXTO_DOCUMENTO, MAX_CARACTERES_JUICIO, MAX_TAREAS_CLASIFICACION, datosNoFiables, lotesPorTamano, recortar, respuestaEstructurada, unirRespuestas, type PasadaJuicio } from './juicio.ts';
+import { ESQUEMAS, respuestaEstructurada, unirRespuestas, type PasadaJuicio } from './juicio.ts';
+import {
+  MAX_PROMPT,
+  MAX_TAREAS_CLASIFICACION,
+  OBJETIVO_CLASIFICACION,
+  lotesDePiezas,
+  llamadasBusqueda,
+  promptClasificacion,
+  promptsAdjudicacion,
+  promptsBusqueda,
+  promptsHechos,
+  hechosPublicados,
+  respuestasQueCuentan,
+  salidasBusqueda,
+  terminosNeutrales,
+  type DocumentoMaterial,
+  type Prompts,
+  type Recorte,
+} from './material.ts';
 import { motivoContexto, motivoPregunta, type Pregunta } from './preguntas.ts';
 import { PARTY_SHORT } from './resumen.ts';
 import { esVideo } from './transcripciones.ts';
@@ -436,11 +454,11 @@ export function revisarBusqueda(entrada: {
   // An equal search is redone for the four parties of its kind together, never for one alone.
   revision.reintentables.iguales = entrada.iguales.filter((t) => tiposConFaltas.has(t.tipo));
   if (entrada.busquedasReales !== undefined && declaradas.pasada > entrada.busquedasReales) {
-    definitiva(`claude/busqueda.salida.json: las respuestas de la pasada declaran ${declaradas.pasada} búsquedas web hechas, pero Claude Code registró ${entrada.busquedasReales}`);
+    definitiva(`claude/busqueda.salida-*.json: las respuestas de la pasada declaran ${declaradas.pasada} búsquedas web hechas, pero Claude Code registró ${entrada.busquedasReales}`);
   }
   const reales = entrada.reintento?.busquedasReales;
   if (reales !== undefined && declaradas.reintento > reales) {
-    definitiva(`claude/busqueda-reintento.salida.json: las respuestas reintentadas declaran ${declaradas.reintento} búsquedas web hechas, pero Claude Code registró ${reales}`);
+    definitiva(`claude/busqueda-reintento.salida-*.json: las respuestas reintentadas declaran ${declaradas.reintento} búsquedas web hechas, pero Claude Code registró ${reales}`);
   }
   return revision;
 }
@@ -712,12 +730,35 @@ export const TAMANO_LOTE_CLASIFICAR = MAX_TAREAS_CLASIFICACION;
 
 /**
  * Batches of classification tasks, one `claude -p` call each: sorted by task
- * id (doc_id, then party), then cut at `tamano` tasks or MAX_CARACTERES_CLASIFICACION
- * characters of document text (`largo`, the length the prompt carries). Deterministic and blind to the party.
+ * id (doc_id, then party); a document's tasks always stay together, and each
+ * document counts once (`largo`, the length of its text). A batch closes
+ * before passing `tamano` tasks or OBJETIVO_CLASIFICACION characters, so one
+ * long document goes alone and cannot crowd many others. Deterministic and
+ * blind to the party.
  */
-export function lotesClasificar(tareas: TareaClasificar[], tamano = TAMANO_LOTE_CLASIFICAR, largo: (tarea: TareaClasificar) => number = () => 0): TareaClasificar[][] {
+export function lotesClasificar(tareas: TareaClasificar[], tamano = TAMANO_LOTE_CLASIFICAR, largo: (docId: string) => number = () => 0, objetivo = OBJETIVO_CLASIFICACION): TareaClasificar[][] {
   const ordenadas = [...tareas].sort((a, b) => comparar(a.salida, b.salida));
-  return lotesPorTamano(ordenadas, largo, MAX_CARACTERES_CLASIFICACION, tamano);
+  const grupos: TareaClasificar[][] = [];
+  for (const t of ordenadas) {
+    const ultimo = grupos.at(-1);
+    if (ultimo && ultimo[0]!.doc_id === t.doc_id) ultimo.push(t);
+    else grupos.push([t]);
+  }
+  const lotes: TareaClasificar[][] = [];
+  let actual: TareaClasificar[] = [];
+  let caracteres = 0;
+  for (const grupo of grupos) {
+    const n = largo(grupo[0]!.doc_id);
+    if (actual.length && (caracteres + n > objetivo || actual.length + grupo.length > tamano)) {
+      lotes.push(actual);
+      actual = [];
+      caracteres = 0;
+    }
+    actual.push(...grupo);
+    caracteres += n;
+  }
+  if (actual.length) lotes.push(actual);
+  return lotes;
 }
 
 /** Why a saved classification is not usable, or undefined: it must be a JSON object for the task's doc_id and party. */
@@ -1191,6 +1232,8 @@ export function informe(entrada: {
   clasificar?: Pick<TareaClasificar, 'url_canonica' | 'partido'>[];
   /** descubrir.busqueda.json `para_revisar`: equal-search results on hosts fuentes.json does not list, never fetched or published. */
   paraRevisar?: ParaRevisar[];
+  /** recortes/<sesión>.json: the documents a Claude call got as a party-neutral excerpt (longer than MAX_DOCUMENTO), by session. */
+  recortes?: { sesion: string; recorte: Recorte }[];
 }): string {
   const etapas = entrada.etapas
     .split('\n')
@@ -1237,6 +1280,13 @@ export function informe(entrada: {
       'Para revisar: resultados de búsquedas iguales en hosts sin registrar en fuentes.json (no se traen ni se publican)',
       (entrada.paraRevisar ?? []).map((r) => `- ${r.partido} (${r.busqueda}): <${sinConsulta(r.url)}>`),
       '_Ninguno._',
+    ),
+  );
+  lineas.push(
+    ...apartado(
+      'Documentos reducidos a un extracto (más largos que el máximo; ventanas alrededor de los términos de los cuatro partidos, el mismo extracto para todos)',
+      (entrada.recortes ?? []).map(({ sesion, recorte: r }) => `- ${sesion}: \`${r.doc_id}\` <${sinConsulta(r.url)}> (via ${r.via}): ${r.caracteres} caracteres, extracto de ${r.extracto} en ${r.ventanas} ventanas`),
+      '_Ninguno: todos los documentos llegaron enteros._',
     ),
   );
   return lineas.join('\n').replace(/\n+$/, '\n');
@@ -1527,111 +1577,6 @@ export function carpetasDe(pasada: Pasada, valores: Record<string, string>): str
   });
 }
 
-// ---------------------------------------------------------------- material of the calls
-
-/** The material of one judgement call: what every batch carries (`fijo`) and one block per document, in order. */
-export interface Material {
-  fijo: string;
-  documentos: { id: string; bloque: string }[];
-}
-
-/** One batch of a call: the documents it carries and the size of its prompt. */
-export interface LotePrompt {
-  documentos: string[];
-  caracteres: number;
-}
-
-/**
- * The prompts of one pass: the instructions, the rule on untrusted data, the
- * fixed material and as many document blocks as fit in `max` characters; the
- * rest go to the next prompt, in order, with the same fixed material. At least
- * one prompt. Deterministic.
- */
-export function promptsPorLotes(base: string, material: Material, max = MAX_CARACTERES_JUICIO): { prompts: string[]; lotes: LotePrompt[] } {
-  const cabecera = `${base.trimEnd()}\n\n${AVISO_DATOS}\n\n${material.fijo.trimEnd()}\n`;
-  const grupos = material.documentos.length ? lotesPorTamano(material.documentos, (d) => d.bloque.length + 2, Math.max(1, max - cabecera.length)) : [[]];
-  const prompts = grupos.map((grupo) => (grupo.length ? `${cabecera}\n${grupo.map((d) => d.bloque).join('\n\n')}\n` : cabecera));
-  return { prompts, lotes: grupos.map((grupo, i) => ({ documentos: grupo.map((d) => d.id), caracteres: prompts[i]!.length })) };
-}
-
-/** A named section of a prompt with JSON the script wrote itself (trusted): the site registry, the tasks of the search. */
-export const seccionJson = (nombre: string, valor: unknown) => `${nombre} (JSON):\n${JSON.stringify(valor)}`;
-/** A named section with JSON that came from the web or a model: untrusted, between delimiters. */
-export const seccionNoFiable = (nombre: string, valor: unknown) => `${nombre}:\n${datosNoFiables(nombre, typeof valor === 'string' ? valor : JSON.stringify(valor, null, 1))}`;
-
-/** One cached document as a prompt block: its meta (the fields the agents use) and its text, cut to MAX_TEXTO_DOCUMENTO, as untrusted data. */
-export function bloqueDocumento(id: string, meta: Objeto | undefined, texto: string | undefined, extra: Record<string, unknown> = {}): { id: string; bloque: string } {
-  const m = meta ?? {};
-  const cabecera = { doc_id: id, url: m.url, url_canonica: m.url_canonica, consultado: m.consultado, via: m.via, ...(m.origen ? { origen: m.origen } : {}), ...extra };
-  const cuerpo = `META: ${JSON.stringify(cabecera)}\n${texto === undefined ? 'TEXTO: (no está en la caché)' : `TEXTO:\n${recortar(texto)}`}`;
-  return { id, bloque: `DOCUMENTO ${id}:\n${datosNoFiables(`DOCUMENTO ${id}`, cuerpo)}` };
-}
-
-/** The source registry as the agents need it: id, name, hosts and kind of each emisor. */
-export const fuentesResumidas = (emisores: readonly Emisor[]) => emisores.map((e) => ({ id: e.id, nombre: e.nombre, hosts: e.hosts, tipo: e.tipo }));
-
-/** A party sheet in short, to avoid repeats: each item's ref, section, text, state, shared-fact key and source URLs. */
-export function fichaResumida(ficha: unknown): Objeto {
-  const item = (seccion: unknown, i: Objeto) => ({
-    ref: i.ref,
-    seccion,
-    texto: i.texto,
-    estado: i.estado,
-    ...(i.hecho ? { hecho: i.hecho } : {}),
-    ...(i.busqueda ? { busqueda: i.busqueda } : {}),
-    fuentes: lista(i.fuentes).flatMap((f) => (esObjeto(f) && typeof f.url === 'string' ? [f.url] : [])),
-  });
-  if (!esObjeto(ficha)) return {};
-  return {
-    id: ficha.id,
-    corte: ficha.corte,
-    items: lista(ficha.secciones).flatMap((s) => (esObjeto(s) ? lista(s.items).flatMap((i) => (esObjeto(i) ? [item(s.id, i)] : [])) : [])),
-    en_espera: lista(ficha.en_espera).flatMap((i) => (esObjeto(i) ? [item(i.seccion, i)] : [])),
-  };
-}
-
-/** A perfil in short: its documents, proposals and messages by id, text and URL. */
-export function perfilResumido(perfil: unknown): Objeto | undefined {
-  if (!esObjeto(perfil)) return undefined;
-  const de = (clave: string, campos: string[]) => lista(perfil[clave]).flatMap((x) => (esObjeto(x) ? [Object.fromEntries(campos.filter((c) => x[c] !== undefined).map((c) => [c, x[c]]))] : []));
-  return { partido: perfil.partido, periodo: perfil.periodo, documentos: de('documentos', ['id', 'titulo', 'fecha', 'tipo', 'url']), propuestas: de('propuestas', ['id', 'tema', 'texto', 'documentos']), mensajes: de('mensajes', ['id', 'tipo', 'texto', 'documentos']) };
-}
-
-/** The shared facts already published, from the four sheets: one entry per key, with every party that carries it. */
-export function hechosPublicados(fichas: Partial<Record<PartyId, unknown>>): Objeto[] {
-  const porClave = new Map<string, Objeto & { partidos: string[] }>();
-  for (const partido of PARTY_IDS) {
-    const ficha = fichas[partido];
-    if (!esObjeto(ficha)) continue;
-    for (const s of lista(ficha.secciones)) {
-      if (!esObjeto(s)) continue;
-      for (const i of lista(s.items)) {
-        if (!esObjeto(i) || typeof i.hecho !== 'string') continue;
-        const previo = porClave.get(i.hecho);
-        if (previo) previo.partidos.push(partido);
-        else porClave.set(i.hecho, { hecho: i.hecho, seccion: s.id, texto: i.texto, estado: i.estado, ...(i.matiz ? { matiz: i.matiz } : {}), fuentes: lista(i.fuentes).flatMap((f) => (esObjeto(f) && typeof f.url === 'string' ? [f.url] : [])), partidos: [partido] });
-      }
-    }
-  }
-  return [...porClave.values()].sort((a, b) => comparar(String(a.hecho), String(b.hecho)));
-}
-
-/** The tasks of a classification call as the model sees them (no paths). */
-export const tareasVisibles = (tareas: readonly TareaClasificar[]) => tareas.map(({ doc_id, partido, url, url_canonica, via, consultado, origen }) => ({ doc_id, partido, url, url_canonica, via, consultado, origen }));
-
-/** The answer files of a search pass: each source task's (salidaTarea) and each equal search's. */
-export const salidasBusqueda = (fuentes: readonly TareaBusqueda[], iguales: readonly Pick<TareaEquidad, 'salida'>[]) => [...fuentes.map(salidaTarea), ...iguales.map((t) => t.salida)];
-
-/** A reply as the search session returned it, without a surrounding ``` fence: its file, and whether it is valid JSON (else it goes to <salida>.error.txt). */
-export function respuestaBusqueda(texto: string): { contenido: string; valida: boolean } {
-  const sinCerco = texto.trim().replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-  try {
-    return { contenido: `${sinCerco.trim()}\n`, valida: esObjeto(JSON.parse(sinCerco)) };
-  } catch {
-    return { contenido: texto, valida: false };
-  }
-}
-
 // ---------------------------------------------------------------- CLI
 
 const leerJson = (ruta: string): unknown => JSON.parse(readFileSync(ruta, 'utf8'));
@@ -1732,8 +1677,16 @@ const rutaDeEntornoHome = () => {
   return home;
 };
 
-/** Name of the n-th classification batch (two digits, so the files sort in order). */
+/** Name of the n-th classification batch (two digits, three from 100; diario.sh takes both). */
 export const nombreLote = (n: number) => String(n).padStart(2, '0');
+/** A classification batch name: nn, nnn, or reintento-nn(n) for the retry. */
+export const NOMBRE_LOTE = /^(?:reintento-)?\d{2,3}$/;
+
+/** The length of a cached document's text (0 when not cached). */
+const largoDocumento = (cache: string) => (id: string) => {
+  const ruta = join(cache, 'docs', id, 'texto.txt');
+  return existsSync(ruta) ? readFileSync(ruta, 'utf8').length : 0;
+};
 
 /** A batch's tasks (lotes/clasificar-<nombre>.json) and the only files its session may create (.rutas.txt, as `find` prints them). */
 function escribirLote(ejecucion: string, nombre: string, tareas: TareaClasificar[]) {
@@ -1768,7 +1721,7 @@ function sesionDeArgs(args: string[]): { pasada: Pasada; lote?: string; partido?
   const pasada = valor('--pasada');
   if (!esPasada(pasada)) throw new Error('Falta --pasada busqueda|busqueda-reintento|clasificacion|hechos|adjudicacion');
   const lote = valor('--lote');
-  if ((pasada === 'clasificacion') !== (lote !== undefined) || (lote !== undefined && !/^(?:\d{2}|reintento)$/.test(lote))) throw new Error('--lote <nn|reintento> va con --pasada clasificacion y solo con ella');
+  if ((pasada === 'clasificacion') !== (lote !== undefined) || (lote !== undefined && !NOMBRE_LOTE.test(lote))) throw new Error('--lote <nn|reintento-nn> va con --pasada clasificacion y solo con ella');
   const partido = valor('--partido');
   if ((pasada === 'adjudicacion') !== (partido !== undefined) || (partido !== undefined && !(PARTY_IDS as readonly string[]).includes(partido))) throw new Error(`--partido <${PARTY_IDS.join('|')}> va con --pasada adjudicacion y solo con ella`);
   return { pasada, ...(lote ? { lote } : {}), ...(partido ? { partido: partido as PartyId } : {}) };
@@ -1791,65 +1744,98 @@ function documentoCache(cache: string, id: string): { meta?: Objeto; texto?: str
   return { ...(esObjeto(meta) ? { meta } : {}), ...(existsSync(join(dir, 'texto.txt')) ? { texto: readFileSync(join(dir, 'texto.txt'), 'utf8') } : {}) };
 }
 
-/** Everything a judgement call needs, read by the script: its fixed material and its documents (README of 08-diario.md, «Pasada 2»). */
-function materialJuicio(e: { fecha: string; pasada: Pasada; lote?: string; partido?: PartyId; ejecucion: string; cache: string; t: string; emisores: Emisor[] }): Material {
+/**
+ * Everything a judgement call needs, read by the script, as its prompts and
+ * batches (material.ts): a classification batch's tasks and documents; the
+ * shared-fact candidates by event; a party's documents, equal-search results,
+ * sheet, perfil, registry, searches, facts and criteria.
+ */
+function materialJuicio(e: { fecha: string; pasada: Pasada; lote?: string; partido?: PartyId; ejecucion: string; cache: string; t: string; datos: string; emisores: Emisor[]; base: string }): Prompts {
   const antes = join(e.ejecucion, 'antes');
+  const alias = (leerJsonSiExiste(join(e.datos, 'partidos-alias.json')) ?? {}) as Partial<Record<PartyId, Alias>>;
+  const terminos = terminosNeutrales(alias);
+  const documento = (id: string): DocumentoMaterial => ({ id, ...documentoCache(e.cache, id) });
   if (e.pasada === 'clasificacion') {
     const tareas = leerJson(join(e.ejecucion, 'lotes', `clasificar-${e.lote}.json`)) as TareaClasificar[];
-    const ids = [...new Set(tareas.map((t) => t.doc_id))];
-    return {
-      fijo: seccionNoFiable('TAREAS', tareasVisibles(tareas)),
-      documentos: ids.map((id) => {
-        const { meta, texto } = documentoCache(e.cache, id);
-        return bloqueDocumento(id, meta, texto);
-      }),
-    };
+    return promptClasificacion(e.base, tareas, new Map([...new Set(tareas.map((t) => t.doc_id))].map((id) => [id, documento(id)])), terminos);
   }
   const clasificaciones = clasificadas(e.ejecucion).hechas.map((t) => ({ tarea: t, respuesta: leerJson(join(e.ejecucion, t.salida)) as Objeto }));
   const fichas = Object.fromEntries(PARTY_IDS.map((p) => [p, leerJsonSiExiste(join(antes, 'partidos', `${p}.json`))]));
-  const fuentes = seccionJson('FUENTES', fuentesResumidas(e.emisores));
-  const porDocumento = (lista_: { tarea: TareaClasificar; respuesta: Objeto }[]) => {
-    const ids = [...new Set(lista_.map((c) => c.tarea.doc_id))].sort(comparar);
-    return ids.map((id) => {
-      const suyas = lista_.filter((c) => c.tarea.doc_id === id).map((c) => c.respuesta);
-      const relevante = suyas.some((r) => r.relevante === true);
-      const { meta, texto } = documentoCache(e.cache, id);
-      // A document no classifier found relevant goes in by its classification only.
-      return bloqueDocumento(id, meta, relevante ? texto : '(no relevante según la clasificación: texto omitido)', { clasificaciones: suyas });
-    });
-  };
   if (e.pasada === 'hechos') {
     const relevantes = (id: string) => clasificaciones.filter((c) => c.tarea.doc_id === id && c.respuesta.relevante === true);
-    const candidatas = clasificaciones.filter((c) => {
-      const r = relevantes(c.tarea.doc_id);
+    const ids = [...new Set(clasificaciones.map((c) => c.tarea.doc_id))].sort(comparar).filter((id) => {
+      const r = relevantes(id);
       return r.length >= 2 || r.some((x) => x.respuesta.hecho_compartido === true || lista(x.respuesta.otros_partidos).length > 0);
     });
-    return { fijo: [fuentes, seccionJson('HECHOS PUBLICADOS', hechosPublicados(fichas))].join('\n\n'), documentos: porDocumento(candidatas) };
+    const candidatos = ids.map((id) => ({ ...documento(id), clasificaciones: clasificaciones.filter((c) => c.tarea.doc_id === id).map((c) => c.respuesta) }));
+    return promptsHechos(e.base, { fuentes: e.emisores, publicados: hechosPublicados(fichas), candidatos, terminos });
   }
   const p = e.partido!;
   const criterios = ['preguntas.md', 'verificacion.md', 'enlaces.md', 'neutralidad.md', 'equidad.md'].map((f) => `### ${f}\n${readFileSync(join(e.t, 'criterios', f), 'utf8')}`).join('\n\n');
-  const equidad = TIPOS_BUSQUEDA.flatMap((tipo) => {
-    const ruta = join(e.ejecucion, 'equidad', `${tipo}.${p}.json`);
-    let contenido: unknown;
-    try {
-      contenido = leerJsonSiExiste(ruta);
-    } catch {
-      contenido = undefined;
-    }
-    return esObjeto(contenido) ? [{ tipo, busqueda: idDiario(e.fecha, tipo), resultados: lista(contenido.resultados) }] : [];
+  // The party's equal-search results (the run's own reading: in period, not blocked), each with its kind, by its document.
+  const resultados = leerEquidad(e.ejecucion, e.fecha)
+    .salidas.filter(({ salida }) => salida.partido === p)
+    .flatMap(({ salida }) => lista(salida.resultados).flatMap((r): Objeto[] => (esObjeto(r) && typeof r.url === 'string' ? [{ ...r, tipo: salida.tipo, busqueda: salida.busqueda }] : [])));
+  const porDoc = new Map<string, Objeto[]>();
+  const sueltos: Objeto[] = [];
+  for (const r of resultados) {
+    const canonica = canonicaSegura(String(r.url));
+    const id = canonica ? idDocumento(canonica) : undefined;
+    if (id && existsSync(join(e.cache, 'docs', id, 'meta.json'))) porDoc.set(id, [...(porDoc.get(id) ?? []), r as Objeto]);
+    else sueltos.push(r as Objeto);
+  }
+  const suyas = new Map(clasificaciones.filter((c) => c.tarea.partido === p).map((c) => [c.tarea.doc_id, c]));
+  const ids = [...new Set([...suyas.keys(), ...porDoc.keys()])].sort(comparar);
+  const documentos = ids.map((id) => {
+    const c = suyas.get(id);
+    // Whole text kept for a document of the equal search, and for one only this party's classifier found irrelevant.
+    const otras = clasificaciones.filter((x) => x.tarea.doc_id === id && x.tarea.partido !== p);
+    const relevanteParaOtro = otras.some((x) => x.respuesta.relevante === true);
+    const exento = porDoc.has(id) || (c?.respuesta.relevante === false && relevanteParaOtro);
+    // A document no classifier found relevant for any party, and no equal search found, goes in by its classification
+    // only: the same rule for the four parties, so none gets text another does not.
+    const ninguno = !porDoc.has(id) && c?.respuesta.relevante !== true && !relevanteParaOtro;
+    const doc = documento(id);
+    return { ...doc, ...(ninguno && doc.texto !== undefined ? { texto: SIN_TEXTO_IRRELEVANTE } : {}), ...(c ? { clasificacion: c.respuesta } : {}), resultados: porDoc.get(id) ?? [], exento };
   });
-  const perfil = perfilResumido(leerJsonSiExiste(join(antes, 'perfiles', `${p}.json`)));
-  return {
-    fijo: [
-      `CRITERIOS:\n${criterios}`,
-      seccionJson('FICHA', fichaResumida(fichas[p])),
-      ...(perfil ? [seccionJson('PERFIL', perfil)] : []),
-      fuentes,
-      seccionNoFiable('HECHOS', leerJsonSiExiste(join(e.ejecucion, 'hechos.json')) ?? { hechos: [] }),
-      seccionNoFiable('EQUIDAD', equidad),
-    ].join('\n\n'),
-    documentos: porDocumento(clasificaciones.filter((c) => c.tarea.partido === p)),
-  };
+  return promptsAdjudicacion(e.base, {
+    partido: p,
+    criterios,
+    ficha: fichas[p],
+    perfil: leerJsonSiExiste(join(antes, 'perfiles', `${p}.json`)),
+    fuentes: e.emisores,
+    busquedas: leerJsonSiExiste(join(antes, 'busquedas.json')),
+    hechos: leerJsonSiExiste(join(e.ejecucion, 'hechos.json')),
+    documentos,
+    resultadosSueltos: sueltos,
+    terminos,
+  });
+}
+
+/** The text an adjudication gets for a document no classifier found relevant for any party (and no equal search found). */
+export const SIN_TEXTO_IRRELEVANTE = '(Texto no incluido: ningún clasificador encontró este documento relevante para ningún partido; la misma regla para los cuatro. Decide con su clasificación.)';
+
+/** The name of a Claude session: the pass, with its batch or party (diario.sh: busqueda, clasificacion-01, adjudicacion-pp…). */
+const nombreSesion = (pasada: Pasada, lote?: string, partido?: string) => (lote ? `${pasada}-${lote}` : partido ? `${pasada}-${partido}` : pasada);
+
+/** WebSearch calls Claude Code registered for a search session, over every call of it (claude/<sesión>.salida-<n>.json, and the single file of older runs); undefined when any lacks the count. */
+export function busquedasDeSesion(ejecucion: string, sesion: string): number | undefined {
+  const carpeta = join(ejecucion, 'claude');
+  const archivos = (existsSync(carpeta) ? readdirSync(carpeta) : []).filter((f) => f === `${sesion}.salida.json` || new RegExp(`^${sesion}\\.salida-\\d+\\.json$`).test(f)).sort(comparar);
+  if (!archivos.length) return undefined;
+  let total = 0;
+  for (const archivo of archivos) {
+    let salida: unknown;
+    try {
+      salida = leerJson(join(carpeta, archivo));
+    } catch {
+      return undefined;
+    }
+    const n = busquedasRegistradas(salida);
+    if (n === undefined) return undefined;
+    total += n;
+  }
+  return total;
 }
 
 async function main(args: string[]): Promise<number> {
@@ -1920,12 +1906,12 @@ async function main(args: string[]): Promise<number> {
       escribirJson(join(ejecucion, 'tareas-clasificar.json'), tareas);
       escribirJson(join(ejecucion, 'clasificar-descartados.json'), { descartados_previos });
       // One Claude session per batch; each may create only its own answer files.
-      // Batches by size too: each call carries its documents' text (cut to MAX_TEXTO_DOCUMENTO), so a batch fits one prompt.
-      const largo = new Map(documentos.map((doc) => [doc.id, Math.min(doc.texto.length, MAX_TEXTO_DOCUMENTO) + 600]));
-      const lotes = lotesClasificar(tareas, TAMANO_LOTE_CLASIFICAR, (t) => largo.get(t.doc_id) ?? 600);
+      // Batches by size too: each call carries its documents' whole text, each document once.
+      const largo = new Map(documentos.map((doc) => [doc.id, doc.texto.length + 600]));
+      const lotes = lotesClasificar(tareas, TAMANO_LOTE_CLASIFICAR, (id) => largo.get(id) ?? 600);
       rmSync(join(ejecucion, 'lotes'), { recursive: true, force: true });
       lotes.forEach((lote, i) => escribirLote(ejecucion, nombreLote(i + 1), lote));
-      process.stdout.write(`${todas.length} tareas, ${descartados_previos.length} descartadas antes (no son artículos), ${tareas.length} en ${lotes.length} lotes de ${TAMANO_LOTE_CLASIFICAR} tareas y ${MAX_CARACTERES_CLASIFICACION} caracteres como máximo\n`);
+      process.stdout.write(`${todas.length} tareas, ${descartados_previos.length} descartadas antes (no son artículos), ${tareas.length} en ${lotes.length} lotes (hasta ${TAMANO_LOTE_CLASIFICAR} tareas y ${OBJETIVO_CLASIFICACION} caracteres; un documento más largo, solo)\n`);
       return 0;
     }
     case 'clasificacion-completa': {
@@ -1935,7 +1921,7 @@ async function main(args: string[]): Promise<number> {
       // --lote <nn>: only that batch, read-only (exit 0 when all its answers are there and valid).
       const l = args.indexOf('--lote');
       const lote = l === -1 ? undefined : args[l + 1];
-      if (lote !== undefined && (!/^\d{2}$/.test(lote) || preparar)) throw new Error('--lote <nn> sin --preparar-reintento');
+      if (lote !== undefined && (!NOMBRE_LOTE.test(lote) || preparar)) throw new Error('--lote <nn|reintento-nn> sin --preparar-reintento');
       const tareas = (leerJsonSiExiste(join(ejecucion, lote === undefined ? 'tareas-clasificar.json' : join('lotes', `clasificar-${lote}.json`))) ?? []) as TareaClasificar[];
       const faltas = tareas.flatMap((tarea) => {
         const ruta = join(ejecucion, tarea.salida);
@@ -1949,7 +1935,10 @@ async function main(args: string[]): Promise<number> {
           mkdirSync(join(ejecucion, 'reintento-anterior', 'clasificacion'), { recursive: true });
           renameSync(join(ejecucion, tarea.salida), join(ejecucion, 'reintento-anterior', tarea.salida));
         }
-        escribirLote(ejecucion, 'reintento', faltas.map((f) => f.tarea));
+        // The retry is batched like the first round: by document, each document once.
+        for (const viejo of existsSync(join(ejecucion, 'lotes')) ? readdirSync(join(ejecucion, 'lotes')) : []) if (viejo.startsWith('clasificar-reintento')) rmSync(join(ejecucion, 'lotes', viejo));
+        const largo = largoDocumento(cache);
+        lotesClasificar(faltas.map((f) => f.tarea), TAMANO_LOTE_CLASIFICAR, (id) => largo(id) + 600).forEach((l, n) => escribirLote(ejecucion, `reintento-${nombreLote(n + 1)}`, l));
         writeFileSync(join(ejecucion, 'clasificacion-reintentadas.txt'), faltas.map((f) => `- ${f.problema}\n`).join(''));
         process.stdout.write(`${faltas.length} clasificaciones que faltan o no valen: se reintentan en una sesión más\n`);
         return 3;
@@ -2010,12 +1999,16 @@ async function main(args: string[]): Promise<number> {
       const { fuentes, iguales } = tareasDeBusqueda(ejecucion, pasada);
       const valoresAjustes = { EJ: ejecucion, N29_CACHE: cache, T: t, HOME: rutaDeEntornoHome(), CONF: dir };
       writeFileSync(join(dir, 'settings.json'), ajustesClaude(plantilla, valoresAjustes, pasada, hostsSinClaude(emisores, vetos), esPasadaBusqueda(pasada) ? hostsWebFetch(emisores, iguales) : []));
-      // The prompts, one per call (prompt-1.txt…), and their batches.
-      const { prompts: textos, lotes } = esPasadaBusqueda(pasada)
-        ? { prompts: [`${salida[pasada].trimEnd()}\n\n${seccionJson('TAREAS_EQUIDAD', iguales)}\n\n${seccionJson('TAREAS_FUENTES', fuentes)}\n`], lotes: [] as LotePrompt[] }
-        : promptsPorLotes(salida[pasada], materialJuicio({ fecha, pasada, lote, partido, ejecucion, cache, t, emisores }), pasada === 'clasificacion' ? Number.POSITIVE_INFINITY : MAX_CARACTERES_JUICIO);
-      textos.forEach((texto, i) => writeFileSync(join(dir, `prompt-${i + 1}.txt`), texto));
-      escribirJson(join(dir, 'lotes.json'), lotes.map((l, i) => ({ prompt: `prompt-${i + 1}.txt`, ...l })));
+      // The prompts, one per call (prompt-1.txt…), their batches, and the documents reduced (recortes/<sesión>.json, for the summary).
+      const material: Prompts = esPasadaBusqueda(pasada)
+        ? { ...promptsBusqueda(salida[pasada], fuentes, iguales), recortes: [] }
+        : materialJuicio({ fecha, pasada, lote, partido, ejecucion, cache, t, datos, emisores, base: salida[pasada] });
+      material.prompts.forEach((texto, n) => writeFileSync(join(dir, `prompt-${n + 1}.txt`), texto));
+      escribirJson(join(dir, 'lotes.json'), material.lotes.map((l, n) => ({ prompt: `prompt-${n + 1}.txt`, ...l })));
+      const sesion = nombreSesion(pasada, lote, partido);
+      const rutaRecortes = join(ejecucion, 'recortes', `${sesion}.json`);
+      if (material.recortes.length) escribirJson(rutaRecortes, material.recortes);
+      else if (existsSync(rutaRecortes)) rmSync(rutaRecortes);
       writeFileSync(join(dir, 'esquema.json'), `${JSON.stringify(ESQUEMAS[esPasadaBusqueda(pasada) ? 'busqueda' : (pasada as PasadaJuicio)])}\n`);
       writeFileSync(join(dir, 'modelo.txt'), `${esPasadaBusqueda(pasada) ? 'opus' : MODELO_JUICIO[pasada as keyof typeof MODELO_JUICIO]}\n`);
       // Only the pass's own subagents are defined (the judgement calls have none).
@@ -2024,34 +2017,43 @@ async function main(args: string[]): Promise<number> {
       // `claude --tools` and `--add-dir` of the pass (diario.sh reads them from here and checks them).
       writeFileSync(join(dir, 'herramientas.txt'), `${herramientasDe(pasada).join(',')}\n`);
       writeFileSync(join(dir, 'carpetas.txt'), carpetasDe(pasada, valoresAjustes).map((c) => `${c}\n`).join(''));
-      const previstas = esPasadaBusqueda(pasada) ? busquedasWebPrevistas(fuentes, iguales) : 0;
+      // The WebSearch cap of each call: its own tasks' worst case (diario.sh gives it to every call of the pass, so the largest).
+      const previstas = esPasadaBusqueda(pasada) ? Math.max(0, ...llamadasBusqueda(fuentes, iguales).map((l) => busquedasWebPrevistas(l.fuentes, l.iguales))) : 0;
       writeFileSync(join(dir, 'busquedas-web.txt'), `${limiteBusquedasWeb(pasada, previstas)}\n`);
-      process.stdout.write(`${textos.length} llamadas: ${textos.map((x) => x.length).join(', ')} caracteres\n`);
+      // A prompt over MAX_PROMPT is not sent (diario.sh skips it): said here, so the log shows why.
+      const largos = material.prompts.flatMap((x, n) => (x.length > MAX_PROMPT ? [`prompt-${n + 1}.txt`] : []));
+      writeFileSync(join(dir, 'saltar.txt'), largos.map((x) => `${x}\n`).join(''));
+      process.stdout.write(`${material.prompts.length} llamadas: ${material.prompts.map((x) => x.length).join(', ')} caracteres${material.recortes.length ? `; ${material.recortes.length} documentos reducidos a extractos` : ''}\n`);
+      for (const largo of largos) process.stdout.write(`demasiado largo, no se envía: ${largo} (más de ${MAX_PROMPT} caracteres)\n`);
       return 0;
     }
     case 'juicio-guardar': {
-      // The answers of one pass, from the `claude -p --output-format json` outputs given after --salidas: checked
-      // against the schema and written by the script to the only files the pass may produce.
+      // The answers of one pass, from the `claude -p --output-format json` outputs given after --salidas, one per call in
+      // order (a missing call: an empty argument): checked against the schema and written by the script to the only
+      // files the pass may produce. Missing answers are the gate's business.
       const { pasada, lote, partido } = sesionDeArgs(args);
       const s = args.indexOf('--salidas');
-      const archivos = s === -1 ? [] : args.slice(s + 1);
+      // Every argument after --salidas up to the next option (an empty one: a call not made).
+      const resto = s === -1 ? [] : args.slice(s + 1);
+      const fin = resto.findIndex((a) => a.startsWith('--'));
+      const archivos = fin === -1 ? resto : resto.slice(0, fin);
       if (!archivos.length) throw new Error('Faltan --salidas');
       const tipo: PasadaJuicio = esPasadaBusqueda(pasada) ? 'busqueda' : (pasada as PasadaJuicio);
-      const valores: Objeto[] = [];
+      const valores: (Objeto | undefined)[] = [];
       const errores: string[] = [];
       for (const archivo of archivos) {
         let salidaClaude: unknown;
         try {
-          salidaClaude = leerJson(archivo);
+          salidaClaude = archivo ? leerJson(archivo) : undefined;
         } catch (error) {
+          salidaClaude = undefined;
           errores.push(`${archivo}: ${(error as Error).message}`);
-          continue;
         }
-        const r = respuestaEstructurada(tipo, salidaClaude);
-        if (r.valor) valores.push(r.valor);
-        else errores.push(...r.errores.slice(0, 20).map((e) => `${archivo}: ${e}`));
+        const r = salidaClaude === undefined ? { errores: [`${archivo || '(llamada no hecha)'}: sin salida`] } : respuestaEstructurada(tipo, salidaClaude);
+        valores.push(r.valor);
+        if (!r.valor) errores.push(...r.errores.slice(0, 20).map((e) => (e.startsWith(archivo) ? e : `${archivo}: ${e}`)));
       }
-      const avisos = valores.flatMap((v) => lista(v.avisos).filter(esTexto));
+      const avisos = valores.flatMap((v) => lista(v?.avisos).filter(esTexto));
       for (const aviso of avisos) process.stdout.write(`aviso del modelo: ${aviso.slice(0, 300)}\n`);
       for (const error of errores) process.stdout.write(`no vale: ${error}\n`);
       const escribir = (relativa: string, contenido: string) => {
@@ -2059,23 +2061,22 @@ async function main(args: string[]): Promise<number> {
         writeFileSync(join(ejecucion, relativa), contenido);
       };
       if (tipo === 'busqueda') {
+        // Each call may answer only its own tasks; the last valid reply for a file wins.
         const { fuentes, iguales } = tareasDeBusqueda(ejecucion, pasada);
-        const admitidas = new Set(salidasBusqueda(fuentes, iguales));
-        const hechas = new Set<string>();
-        for (const v of valores) {
-          for (const r of lista(v.respuestas) as { salida: string; respuesta: string }[]) {
-            if (!admitidas.has(r.salida)) {
-              process.stdout.write(`salida no admitida: ${JSON.stringify(r.salida).slice(0, 200)}\n`);
-              continue;
-            }
-            if (hechas.has(r.salida)) continue;
-            hechas.add(r.salida);
-            const { contenido, valida } = respuestaBusqueda(r.respuesta);
-            escribir(valida ? r.salida : `${r.salida}.error.txt`, contenido);
+        const llamadas = llamadasBusqueda(fuentes, iguales);
+        let guardadas = 0;
+        valores.forEach((v, n) => {
+          const llamada = llamadas[n];
+          if (!v || !llamada) return;
+          const { porSalida, rechazadas } = respuestasQueCuentan(lista(v.respuestas) as { salida: string; respuesta: string }[], new Set(salidasBusqueda(llamada.fuentes, llamada.iguales)));
+          for (const r of rechazadas) process.stdout.write(`salida no admitida en la llamada ${n + 1}: ${JSON.stringify(r).slice(0, 200)}\n`);
+          for (const [salida, { contenido, valida }] of porSalida) {
+            if (valida && existsSync(join(ejecucion, `${salida}.error.txt`))) rmSync(join(ejecucion, `${salida}.error.txt`));
+            escribir(valida ? salida : `${salida}.error.txt`, contenido);
+            guardadas++;
           }
-        }
-        process.stdout.write(`${hechas.size} de ${admitidas.size} respuestas guardadas\n`);
-        // Missing answers are the gate's business (busqueda-completa), as before.
+        });
+        process.stdout.write(`${guardadas} de ${salidasBusqueda(fuentes, iguales).length} respuestas guardadas en ${llamadas.length} llamadas\n`);
         return errores.length ? 1 : 0;
       }
       if (tipo === 'clasificacion') {
@@ -2083,7 +2084,7 @@ async function main(args: string[]): Promise<number> {
         const porClave = new Map(tareas.map((t) => [`${t.doc_id}.${t.partido}`, t]));
         let n = 0;
         for (const v of valores) {
-          for (const r of lista(v.respuestas) as Objeto[]) {
+          for (const r of lista(v?.respuestas) as Objeto[]) {
             const tarea = porClave.get(`${String(r.doc_id)}.${String(r.partido)}`);
             if (!tarea) {
               process.stdout.write(`respuesta sin tarea en el lote: ${String(r.doc_id)}.${String(r.partido)}\n`);
@@ -2095,47 +2096,59 @@ async function main(args: string[]): Promise<number> {
           }
         }
         process.stdout.write(`${n} de ${tareas.length} clasificaciones guardadas\n`);
-        // Missing ones are the gate's business (clasificacion-completa, with its retry).
         return errores.length ? 1 : 0;
       }
-      // Facts and adjudication: every batch must be valid, or nothing is written (the gate then fails the day).
+      // Facts and adjudication: every batch must be valid, or nothing is written (the gate then retries or fails).
       const destino = tipo === 'hechos' ? 'hechos.json' : `adjudicado/${partido}.json`;
-      if (errores.length || valores.length !== archivos.length) {
+      if (errores.length || valores.some((v) => !v)) {
         escribir(`${destino}.error.txt`, `${errores.join('\n')}\n`);
         return 1;
       }
-      const unido = unirRespuestas(tipo, valores);
-      if (tipo === 'adjudicacion' && valores.some((v) => v.partido !== partido)) {
+      const validos = valores as Objeto[];
+      if (tipo === 'adjudicacion' && validos.some((v) => v.partido !== partido)) {
         escribir(`${destino}.error.txt`, `una respuesta es de otro partido que ${partido}\n`);
         return 1;
       }
-      escribir(destino, `${JSON.stringify(unido, null, 2)}\n`);
+      escribir(destino, `${JSON.stringify(unirRespuestas(tipo, validos), null, 2)}\n`);
       return 0;
     }
     case 'juicio-ensayo': {
-      // --seco: the answer a pass would give, built from the fixture's answer files (--fijos DIR, repeatable), as one
-      // `claude -p --output-format json` output on stdout, so the same checks and writes as a live run apply.
+      // --seco: the answers a pass would give, built from the fixture's answer files (--fijos DIR, repeatable), as
+      // `claude -p --output-format json` outputs, one per call (--llamadas N), written to <--salida>-<n>.json, so the
+      // same checks and writes as a live run apply. A facts or adjudication answer goes whole in the first call.
       const { pasada, lote, partido } = sesionDeArgs(args);
-      const fijos = args.flatMap((a, i) => (a === '--fijos' && args[i + 1] ? [args[i + 1]!] : []));
+      const fijos = args.flatMap((a, n) => (a === '--fijos' && args[n + 1] ? [args[n + 1]!] : []));
+      const o = args.indexOf('--salida');
+      const base = o === -1 ? undefined : args[o + 1];
+      const l = args.indexOf('--llamadas');
+      const llamadas = l === -1 ? 1 : Number(args[l + 1]);
+      if (!base || !Number.isInteger(llamadas) || llamadas < 1) throw new Error('Faltan --salida y --llamadas');
       const buscar = (relativa: string) => fijos.map((f) => join(f, relativa)).find((ruta) => existsSync(ruta));
-      let valor: Objeto;
+      const vacia = (): Objeto =>
+        esPasadaBusqueda(pasada) || pasada === 'clasificacion' ? { respuestas: [], avisos: [] } : pasada === 'hechos' ? { hechos: [], descartados: [], avisos: [] } : { partido, propuestas: [], decisiones: [], objeciones_hechos: [], hosts_sin_registrar: [], avisos: [] };
+      const valores: Objeto[] = Array.from({ length: llamadas }, vacia);
       if (esPasadaBusqueda(pasada)) {
         const { fuentes, iguales } = tareasDeBusqueda(ejecucion, pasada);
-        const respuestas = salidasBusqueda(fuentes, iguales).flatMap((s) => {
-          const ruta = buscar(s) ?? buscar(`${s}.error.txt`);
-          return ruta ? [{ salida: s, respuesta: readFileSync(ruta, 'utf8') }] : [];
+        llamadasBusqueda(fuentes, iguales).forEach((llamada, n) => {
+          if (n >= llamadas) return;
+          valores[n] = {
+            respuestas: salidasBusqueda(llamada.fuentes, llamada.iguales).flatMap((s) => {
+              const ruta = buscar(s) ?? buscar(`${s}.error.txt`);
+              return ruta ? [{ salida: s, respuesta: readFileSync(ruta, 'utf8') }] : [];
+            }),
+            avisos: [],
+          };
         });
-        valor = { respuestas, avisos: [] };
       } else if (pasada === 'clasificacion') {
         const tareas = leerJson(join(ejecucion, 'lotes', `clasificar-${lote}.json`)) as TareaClasificar[];
-        valor = { respuestas: tareas.flatMap((t) => (buscar(t.salida) ? [leerJson(buscar(t.salida)!)] : [])), avisos: [] };
+        valores[0] = { respuestas: tareas.flatMap((t) => (buscar(t.salida) ? [leerJson(buscar(t.salida)!)] : [])), avisos: [] };
       } else {
         const ruta = buscar(pasada === 'hechos' ? 'hechos.json' : `adjudicado/${partido}.json`);
-        valor = { objeciones_hechos: [], hosts_sin_registrar: [], descartados: [], ...(ruta ? (leerJson(ruta) as Objeto) : {}), avisos: [] };
-        if (pasada === 'hechos') for (const clave of ['objeciones_hechos', 'hosts_sin_registrar']) delete valor[clave];
-        else delete valor.descartados;
+        const fijo: Objeto = { ...vacia(), ...(ruta ? (leerJson(ruta) as Objeto) : {}), avisos: [] };
+        if (pasada === 'hechos') for (const clave of ['objeciones_hechos', 'hosts_sin_registrar', 'partido', 'propuestas', 'decisiones']) delete fijo[clave];
+        valores[0] = fijo;
       }
-      process.stdout.write(`${JSON.stringify({ type: 'result', is_error: false, structured_output: valor })}\n`);
+      valores.forEach((valor, n) => writeFileSync(`${base}-${n + 1}.json`, `${JSON.stringify({ type: 'result', is_error: false, total_cost_usd: 0, structured_output: valor })}\n`));
       return 0;
     }
     case 'busqueda-completa': {
@@ -2172,10 +2185,8 @@ async function main(args: string[]): Promise<number> {
         }
         return existsSync(`${ruta}.error.txt`) ? { error: true } : undefined;
       };
-      const registradas = (pasada: string) => {
-        const salida = leer(join('claude', `${pasada}.salida.json`));
-        return salida && 'contenido' in salida ? busquedasRegistradas(salida.contenido) : undefined;
-      };
+      // Summed over every call of the session (the search runs in several calls).
+      const registradas = (pasada: string) => busquedasDeSesion(ejecucion, pasada);
       // After a retry, its answers are checked against its own count, the rest against pass 1's.
       const reintentoHecho = existsSync(join(ejecucion, 'busqueda-reintento.iniciado'));
       const revision = revisarBusqueda({
@@ -2289,6 +2300,9 @@ async function main(args: string[]): Promise<number> {
           enlaces: leerJsonSiExiste(join(ejecucion, 'enlaces.json')) as never,
           clasificar: (leerJsonSiExiste(join(ejecucion, 'tareas-clasificar.json')) ?? []) as TareaClasificar[],
           paraRevisar: lista((leerJsonSiExiste(join(ejecucion, 'descubrir.busqueda.json')) as { para_revisar?: unknown } | undefined)?.para_revisar) as ParaRevisar[],
+          recortes: (existsSync(join(ejecucion, 'recortes')) ? readdirSync(join(ejecucion, 'recortes')).filter((f) => f.endsWith('.json')).sort(comparar) : []).flatMap((f) =>
+            (lista(leerJson(join(ejecucion, 'recortes', f))) as Recorte[]).map((recorte) => ({ sesion: f.replace(/\.json$/, ''), recorte })),
+          ),
         }),
       );
       return 0;

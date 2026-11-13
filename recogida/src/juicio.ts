@@ -18,16 +18,7 @@ import { createHash } from 'node:crypto';
 type Objeto = Record<string, unknown>;
 const esObjeto = (v: unknown): v is Objeto => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-// ---------------------------------------------------------------- sizes
-
-/** Characters of one cached document put into a prompt; a longer text is cut, and the cut is marked. */
-export const MAX_TEXTO_DOCUMENTO = 40_000;
-/** Characters of the documents of one classification call (Haiku). */
-export const MAX_CARACTERES_CLASIFICACION = 120_000;
-/** Tasks in one classification call at most. */
-export const MAX_TAREAS_CLASIFICACION = 25;
-/** Characters of one facts or adjudication prompt (Opus), fixed context included. */
-export const MAX_CARACTERES_JUICIO = 400_000;
+// ---------------------------------------------------------------- batches
 
 /**
  * Splits items in order into batches of at most `max` characters (by
@@ -53,11 +44,6 @@ export function lotesPorTamano<T>(items: readonly T[], tamano: (item: T) => numb
 }
 
 // ---------------------------------------------------------------- untrusted data
-
-/** A text cut to `max` characters, with the cut said in the text. */
-export function recortar(texto: string, max = MAX_TEXTO_DOCUMENTO): string {
-  return texto.length <= max ? texto : `${texto.slice(0, max)}\n[… texto recortado por la ejecución: ${texto.length - max} caracteres más no se muestran]`;
-}
 
 /**
  * Untrusted data between delimiters that carry the sha256 of the data itself:

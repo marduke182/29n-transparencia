@@ -669,7 +669,7 @@ prompts_pasada() {
 }
 
 claude_pasada() {
-  local pasada="$1" codigo=0 resto busquedas herramientas modelo sin_web="" n i salidas=()
+  local pasada="$1" codigo=0 resto busquedas herramientas modelo sin_web="" n i salidas=() gastado=0 restante segundos coste salida
   preparar_conf "$pasada" || return $?
   (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || { echo "la configuración de Claude cambió antes de usarla"; return 1; }
   herramientas="$(herramientas_pasada "$pasada")" || return 1
@@ -678,36 +678,57 @@ claude_pasada() {
   n="$(prompts_pasada)" || return 1
   # A pass without WebFetch also has it switched off in Claude Code itself (on top of --tools and the deny rule).
   case ",$herramientas," in *,WebFetch,*) ;; *) sin_web=1 ;; esac
-  # One WebSearch cap shared by every subagent of the pass, sized for all of it (diario.ts, limiteBusquedasWeb).
+  # One WebSearch cap per call, sized for its tasks (diario.ts, limiteBusquedasWeb).
   busquedas="$(cat "$CONF/busquedas-web.txt")" || return 1
   case "$busquedas" in '' | *[!0-9]* | 0*) echo "límite de búsquedas no válido: $busquedas"; return 1 ;; esac
   sellar "$pasada" || return $?
   # One call per prompt (a batch). --restricted ignores user, project and local settings files: only --settings
   # applies. The answer comes back on stdout as structured output (--json-schema); the pass writes nothing.
+  # N29_PRESUPUESTO_USD and N29_LIMITE_CLAUDE_S are for the whole pass: each call gets what is left (Claude Code
+  # reports each call's total_cost_usd, also on error). A call that fails, or is not made, leaves its answers
+  # missing: the gate after the pass retries them or stops the day, as for any missing answer.
+  local inicio=$SECONDS
   i=1
   while [ "$i" -le "$n" ]; do
-    echo "llamada $i de $n ($(wc -c <"$CONF/prompt-$i.txt" | tr -d ' ') caracteres)"
-    (
-      cd "$CONF/vacio" &&
-        con_limite "$LIMITE_CLAUDE" env CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION="$busquedas" ${sin_web:+CLAUDE_CODE_DISABLE_WEB_FETCH=1} "$N29_CLAUDE" -p \
-          --model "$modelo" \
-          --restricted \
-          --settings "$CONF/settings.json" \
-          --strict-mcp-config \
-          --agents "$CONF/agentes.json" \
-          --tools "$herramientas" \
-          --permission-mode dontAsk \
-          --permission-prompts none \
-          ${ADD_DIRS[@]+"${ADD_DIRS[@]}"} \
-          --no-session-persistence \
-          --output-format json \
-          --json-schema "$(cat "$CONF/esquema.json")" \
-          --max-budget-usd "$N29_PRESUPUESTO_USD" \
-          <"$CONF/prompt-$i.txt" >"$PRIV/$pasada.salida-$i.json"
-    ) || codigo=$?
-    salidas+=("$PRIV/$pasada.salida-$i.json")
+    salida="$PRIV/$pasada.salida-$i.json"
+    restante="$(awk -v p="$N29_PRESUPUESTO_USD" -v g="$gastado" 'BEGIN { r = p - g; if (r < 0) r = 0; printf "%.4f", r }')"
+    segundos=$((LIMITE_CLAUDE - (SECONDS - inicio)))
+    if grep -q -x -F "prompt-$i.txt" "$CONF/saltar.txt"; then
+      echo "llamada $i de $n: no se envía (prompt demasiado largo)"
+      salida=""
+    elif awk -v r="$restante" 'BEGIN { exit !(r < 0.01) }'; then
+      echo "llamada $i de $n: no se hace, presupuesto de la pasada agotado ($gastado de $N29_PRESUPUESTO_USD dólares)"
+      salida=""
+    elif [ "$segundos" -lt 60 ]; then
+      echo "llamada $i de $n: no se hace, tiempo de la pasada agotado"
+      salida=""
+    else
+      echo "llamada $i de $n ($(wc -c <"$CONF/prompt-$i.txt" | tr -d ' ') bytes, quedan $restante dólares y $segundos s)"
+      (
+        cd "$CONF/vacio" &&
+          con_limite "$segundos" env CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION="$busquedas" ${sin_web:+CLAUDE_CODE_DISABLE_WEB_FETCH=1} "$N29_CLAUDE" -p \
+            --model "$modelo" \
+            --restricted \
+            --settings "$CONF/settings.json" \
+            --strict-mcp-config \
+            --agents "$CONF/agentes.json" \
+            --tools "$herramientas" \
+            --permission-mode dontAsk \
+            --permission-prompts none \
+            ${ADD_DIRS[@]+"${ADD_DIRS[@]}"} \
+            --no-session-persistence \
+            --output-format json \
+            --json-schema "$(cat "$CONF/esquema.json")" \
+            --max-budget-usd "$restante" \
+            <"$CONF/prompt-$i.txt" >"$salida"
+      ) || echo "llamada $i de $n terminó con código $? (sus respuestas faltarán; la comprobación de después decide)"
+      coste="$(node -e 'try { const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); const c = Number(r.total_cost_usd); console.log(Number.isFinite(c) && c >= 0 ? c : 0); } catch { console.log(0); }' "$salida")"
+      gastado="$(awk -v g="$gastado" -v c="$coste" 'BEGIN { printf "%.4f", g + c }')"
+    fi
+    salidas+=("$salida")
     i=$((i + 1))
   done
+  echo "pasada $pasada: $gastado dólares en $n llamadas"
   verificar_sello "$pasada" || codigo=1
   # The script, not Claude, checks the answers and writes the pass's own files.
   opciones_sesion "$pasada"
@@ -725,8 +746,9 @@ claude_pasada() {
   fi
   # Audit copy of what ran, made after the check so the pass cannot have touched it.
   auditar_conf "$pasada" || codigo=1
-  for i in "${salidas[@]}"; do [ ! -f "$i" ] || cp "$i" "$EJ/claude/" || codigo=1; done
+  for i in "${salidas[@]}"; do [ -z "$i" ] || [ ! -f "$i" ] || cp "$i" "$EJ/claude/" || codigo=1; done
   borrar_conf
+  # Only a broken seal or configuration ends the day here.
   return $codigo
 }
 
@@ -759,15 +781,37 @@ ensayar_sesion() {
   for f in "$@"; do fijos+=(--fijos "$f"); done
   preparar_conf "$nombre" || return $?
   (cd "$CONF" && shasum -a 256 -c --status "$PRIV/conf.sha") || return 1
-  herramientas_pasada "$nombre" >/dev/null && carpetas_pasada && modelo_pasada >/dev/null && prompts_pasada >/dev/null || return 1
+  local n i salidas=()
+  herramientas_pasada "$nombre" >/dev/null && carpetas_pasada && modelo_pasada >/dev/null || return 1
+  n="$(prompts_pasada)" || return 1
   auditar_conf "$nombre" || return $?
   CONF="$CONF" perl -pi -e 's{\Q$ENV{CONF}\E}{<CONF>}g' "$EJ/claude/$nombre".* || return $?
   borrar_conf
   opciones_sesion "$nombre"
-  glue juicio-ensayo "${SESION[@]}" "${fijos[@]}" >"$PRIV/$nombre.salida-1.json" || return 1
+  glue juicio-ensayo "${SESION[@]}" "${fijos[@]}" --salida "$PRIV/$nombre.salida" --llamadas "$n" || return 1
+  for i in $(seq 1 "$n"); do salidas+=("$PRIV/$nombre.salida-$i.json"); done
   sellar "$nombre" || return $?
-  glue juicio-guardar "${SESION[@]}" --salidas "$PRIV/$nombre.salida-1.json" || echo "la sesión $nombre dejó respuestas que no valen: las comprobaciones siguientes deciden"
+  glue juicio-guardar "${SESION[@]}" --salidas "${salidas[@]}" || echo "la sesión $nombre dejó respuestas que no valen: las comprobaciones siguientes deciden"
   verificar_sello "$nombre" || return 1
+}
+
+# LOTES: the classification batches of a round, in order: <nn> or <nnn> (prefix ""), or reintento-<nn> (prefix
+# "reintento-"); any other file in lotes/ named clasificar-*.json stops the stage.
+lotes_clasificacion() {
+  local prefijo="$1" f nombre
+  LOTES=()
+  for f in "$EJ"/lotes/clasificar-*.json; do
+    [ -e "$f" ] || continue
+    nombre="$(basename "$f" .json)"
+    nombre="${nombre#clasificar-}"
+    case "$nombre" in
+      reintento-[0-9][0-9] | reintento-[0-9][0-9][0-9]) [ "$prefijo" = reintento- ] && LOTES+=("$nombre") ;;
+      [0-9][0-9] | [0-9][0-9][0-9]) [ -z "$prefijo" ] && LOTES+=("$nombre") ;;
+      *) echo "lote de clasificación con un nombre no admitido: $f"; return 1 ;;
+    esac
+  done
+  # Numeric order (01…99, then 100…).
+  [ ${#LOTES[@]} -eq 0 ] || LOTES=($(printf '%s\n' "${LOTES[@]}" | awk '{ n = $0; sub(/^reintento-/, "", n); print length(n), $0 }' | LC_ALL=C sort -k1,1n -k2,2 | cut -d' ' -f2))
 }
 
 # The classification: one Claude session per batch (lotes/clasificar-<nn>.json),
@@ -775,9 +819,9 @@ ensayar_sesion() {
 # (clasificacion-reintento), and the check again, final.
 paso_clasificacion() {
   local lote nombre codigo=0
-  for lote in "$EJ"/lotes/clasificar-[0-9][0-9].json; do
-    [ -e "$lote" ] || continue
-    nombre="clasificacion-$(basename "$lote" .json | sed 's/^clasificar-//')"
+  lotes_clasificacion "" || return 1
+  for lote in ${LOTES[@]+"${LOTES[@]}"}; do
+    nombre="clasificacion-$lote"
     # A resumed day does not redo a batch whose answers are all there and valid.
     if glue clasificacion-completa --lote "${nombre#clasificacion-}" >/dev/null; then echo "== $nombre: completo"; continue; fi
     echo "== $nombre"
@@ -789,7 +833,12 @@ paso_clasificacion() {
   [ "$codigo" = 3 ] || return $codigo
   echo "== clasificacion-reintento"
   : >"$EJ/clasificacion-reintento.iniciado"
-  if [ "$SECO" = 1 ]; then ensayar_sesion clasificacion-reintento "$FIJOS/juicio-reintento" || return $?; else claude_pasada clasificacion-reintento || return $?; fi
+  # The retry is batched like the first round (lotes/clasificar-reintento-<nn>.json).
+  lotes_clasificacion reintento- || return 1
+  for lote in ${LOTES[@]+"${LOTES[@]}"}; do
+    echo "== clasificacion-$lote"
+    if [ "$SECO" = 1 ]; then ensayar_sesion "clasificacion-$lote" "$FIJOS/juicio-reintento" || return $?; else claude_pasada "clasificacion-$lote" || return $?; fi
+  done
   glue clasificacion-completa
 }
 
